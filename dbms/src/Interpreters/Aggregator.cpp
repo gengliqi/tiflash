@@ -22,6 +22,7 @@
 #include <Common/ThreadManager.h>
 #include <Common/typeid_cast.h>
 #include <Common/wrapInvocable.h>
+#include <Common/FailPoint.h>
 #include <DataStreams/IProfilingBlockInputStream.h>
 #include <DataStreams/NativeBlockOutputStream.h>
 #include <DataStreams/NullBlockInputStream.h>
@@ -37,6 +38,10 @@
 #include <iomanip>
 #include <thread>
 
+#ifdef FIU_ENABLE
+#include <Common/randomSeed.h>
+#include <pcg_random.hpp>
+#endif
 
 namespace ProfileEvents
 {
@@ -60,6 +65,11 @@ extern const int EMPTY_DATA_PASSED;
 extern const int CANNOT_MERGE_DIFFERENT_AGGREGATED_DATA_VARIANTS;
 extern const int LOGICAL_ERROR;
 } // namespace ErrorCodes
+
+namespace FailPoints
+{
+extern const char random_aggregate_failpoint[];
+} // namespace FailPoints
 
 
 AggregatedDataVariants::~AggregatedDataVariants()
@@ -330,6 +340,7 @@ void Aggregator::createAggregateStates(AggregateDataPtr & aggregate_data) const
               * In order that then everything is properly destroyed, we "roll back" some of the created states.
               * The code is not very convenient.
               */
+            FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_aggregate_failpoint);
             aggregate_functions[j]->create(aggregate_data + offsets_of_aggregate_states[j]);
         }
         catch (...)

@@ -107,6 +107,9 @@
 
 #ifdef FIU_ENABLE
 #include <fiu.h>
+#include <fiu-control.h>
+#include <fiu-local.h>
+
 #endif
 
 
@@ -191,6 +194,11 @@ extern const int SUPPORT_IS_DISABLED;
 extern const int ARGUMENT_OUT_OF_BOUND;
 extern const int INVALID_CONFIG_PARAMETER;
 } // namespace ErrorCodes
+
+namespace FailPoints
+{
+extern const char random_aggregate_failpoint[];
+}
 
 namespace Debug
 {
@@ -1396,6 +1404,10 @@ int Server::main(const std::vector<std::string> & /*args*/)
             size = std::thread::hardware_concurrency();
         GRPCCompletionQueuePool::global_instance = std::make_unique<GRPCCompletionQueuePool>(size);
     }
+#ifdef FIU_ENABLE
+    fiu_init(0);
+#endif
+    fiu_enable_random(FailPoints::random_aggregate_failpoint, 1, nullptr, 0, 0.01);
 
     /// Then, startup grpc server to serve raft and/or flash services.
     FlashGrpcServerHolder flash_grpc_server_holder(*this, raft_config, log);

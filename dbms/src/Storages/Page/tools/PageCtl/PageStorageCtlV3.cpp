@@ -393,7 +393,7 @@ private:
 
         FmtBuffer error_msg;
         size_t error_count = 0;
-        for (const auto & [version, entry_or_del] : it->second->entries)
+        for (const auto & [_, entry_or_del] : it->second->entries)
         {
             if (entry_or_del.isEntry() && it->second->type == EditRecordType::VAR_ENTRY)
             {
