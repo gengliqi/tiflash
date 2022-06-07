@@ -1405,9 +1405,8 @@ int Server::main(const std::vector<std::string> & /*args*/)
         GRPCCompletionQueuePool::global_instance = std::make_unique<GRPCCompletionQueuePool>(size);
     }
 #ifdef FIU_ENABLE
-    fiu_init(0);
-#endif
     fiu_enable_random(FailPoints::random_aggregate_failpoint, 1, nullptr, 0, 0.01);
+#endif
 
     /// Then, startup grpc server to serve raft and/or flash services.
     FlashGrpcServerHolder flash_grpc_server_holder(*this, raft_config, log);
