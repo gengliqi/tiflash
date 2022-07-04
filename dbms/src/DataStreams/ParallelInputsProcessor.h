@@ -237,6 +237,8 @@ private:
             {
                 handler.onFinish();
             }
+
+            return;
         }
 
         {
