@@ -118,6 +118,8 @@ private:
             key_columns.resize(keys_size);
             aggregate_columns.resize(aggregates_size);
         }
+
+        char padding[256];
     };
 
     std::vector<ThreadData> threads_data;
