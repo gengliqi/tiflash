@@ -446,7 +446,7 @@ void MPPTask::handleError(const String & error_msg)
 void MPPTask::abort(const String & message, AbortType abort_type)
 {
     String abort_type_string;
-    TaskStatus next_task_status;
+    TaskStatus next_task_status = FAILED;
     switch (abort_type)
     {
     case AbortType::ONCANCELLATION:

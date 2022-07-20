@@ -113,8 +113,9 @@ bool pushPacket(size_t source_index,
             push_succeed = msg_channels[i]->push(std::move(recv_msg));
             if constexpr (is_sync)
                 fiu_do_on(FailPoints::random_receiver_sync_msg_push_failure_failpoint, push_succeed = false;);
-            else
+            else {
                 fiu_do_on(FailPoints::random_receiver_async_msg_push_failure_failpoint, push_succeed = false;);
+            }
 
             // Only the first ExchangeReceiverInputStream need to handle resp.
             resp_ptr = nullptr;
@@ -141,8 +142,9 @@ bool pushPacket(size_t source_index,
             push_succeed = msg_channels[0]->push(std::move(recv_msg));
             if constexpr (is_sync)
                 fiu_do_on(FailPoints::random_receiver_sync_msg_push_failure_failpoint, push_succeed = false;);
-            else
+            else {
                 fiu_do_on(FailPoints::random_receiver_async_msg_push_failure_failpoint, push_succeed = false;);
+            }
         }
     }
     LOG_FMT_DEBUG(log, "push recv_msg to msg_channels(size: {}) succeed:{}, enable_fine_grained_shuffle: {}", msg_channels.size(), push_succeed, enable_fine_grained_shuffle);
