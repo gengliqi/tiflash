@@ -197,10 +197,6 @@ extern const int INVALID_CONFIG_PARAMETER;
 extern const int IP_ADDRESS_NOT_ALLOWED;
 } // namespace ErrorCodes
 
-namespace FailPoints
-{
-extern const char random_aggregate_failpoint[];
-}
 
 namespace Debug
 {
@@ -1428,7 +1424,8 @@ int Server::main(const std::vector<std::string> & /*args*/)
         GRPCCompletionQueuePool::global_instance = std::make_unique<GRPCCompletionQueuePool>(size);
     }
 #ifdef FIU_ENABLE
-    fiu_enable_random(FailPoints::random_aggregate_failpoint, 1, nullptr, 0, 0.01);
+    FailPointHelper::enableRandomFailPoint("random_aggregate_create_state_failpoint", 0.01);
+    //fiu_enable_random(FailPoints::random_aggregate_create_state_failpoint, 1, nullptr, 0, 0.01);
 #endif
 
     /// Then, startup grpc server to serve raft and/or flash services.

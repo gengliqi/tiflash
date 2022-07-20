@@ -23,7 +23,6 @@
 #include <Common/ThreadManager.h>
 #include <Common/typeid_cast.h>
 #include <Common/wrapInvocable.h>
-#include <Common/FailPoint.h>
 #include <DataStreams/IProfilingBlockInputStream.h>
 #include <DataStreams/NativeBlockOutputStream.h>
 #include <DataStreams/NullBlockInputStream.h>
