@@ -16,9 +16,7 @@
 
 #include <Storages/Transaction/RegionDataRead.h>
 #include <Storages/Transaction/RegionManager.h>
-#include <Storages/Transaction/RegionPersister.h>
 #include <Storages/Transaction/StorageEngineType.h>
-
 
 namespace TiDB
 {
@@ -26,10 +24,11 @@ struct TableInfo;
 }
 namespace DB
 {
+class Context;
 namespace RegionBench
 {
 extern void concurrentBatchInsert(const TiDB::TableInfo &, Int64, Int64, Int64, UInt64, UInt64, Context &);
-}
+} // namespace RegionBench
 namespace DM
 {
 enum class FileConvertJobType;
@@ -40,7 +39,6 @@ namespace tests
 class RegionKVStoreTest;
 }
 
-class Context;
 class IAST;
 using ASTPtr = std::shared_ptr<IAST>;
 using ASTs = std::vector<ASTPtr>;
@@ -71,6 +69,8 @@ using RegionPreDecodeBlockDataPtr = std::unique_ptr<RegionPreDecodeBlockData>;
 class ReadIndexWorkerManager;
 using BatchReadIndexRes = std::vector<std::pair<kvrpcpb::ReadIndexResponse, uint64_t>>;
 class ReadIndexStressTest;
+struct FileUsageStatistics;
+class RegionPersister;
 
 /// TODO: brief design document.
 class KVStore final : private boost::noncopyable
@@ -91,7 +91,7 @@ public:
 
     void tryPersist(RegionID region_id);
 
-    static void tryFlushRegionCacheInStorage(TMTContext & tmt, const Region & region, Poco::Logger * log);
+    static bool tryFlushRegionCacheInStorage(TMTContext & tmt, const Region & region, Poco::Logger * log, bool try_until_succeed = true);
 
     size_t regionSize() const;
     EngineStoreApplyRes handleAdminRaftCmd(raft_cmdpb::AdminRequest && request,
@@ -107,6 +107,9 @@ public:
         UInt64 term,
         TMTContext & tmt);
     EngineStoreApplyRes handleWriteRaftCmd(const WriteCmdsView & cmds, UInt64 region_id, UInt64 index, UInt64 term, TMTContext & tmt);
+
+    bool needFlushRegionData(UInt64 region_id, TMTContext & tmt);
+    bool tryFlushRegionData(UInt64 region_id, bool try_until_succeed, TMTContext & tmt);
 
     void handleApplySnapshot(metapb::Region && region, uint64_t peer_id, const SSTViewVec, uint64_t index, uint64_t term, TMTContext & tmt);
 
@@ -157,10 +160,7 @@ public:
 
     ~KVStore();
 
-    FileUsageStatistics getFileUsageStatistics() const
-    {
-        return region_persister.getFileUsageStatistics();
-    }
+    FileUsageStatistics getFileUsageStatistics() const;
 
 private:
     friend class MockTiDB;
@@ -222,6 +222,11 @@ private:
         UInt64 term,
         TMTContext & tmt);
 
+    /// Notice that if flush_if_possible is set to false, we only check if a flush is allowed by rowsize/size/interval.
+    /// It will not check if a flush will eventually succeed.
+    /// In other words, `canFlushRegionDataImpl(flush_if_possible=true)` can return false.
+    bool canFlushRegionDataImpl(const RegionPtr & curr_region_ptr, UInt8 flush_if_possible, bool try_until_succeed, TMTContext & tmt, const RegionTaskLock & region_task_lock);
+
     void persistRegion(const Region & region, const RegionTaskLock & region_task_lock, const char * caller);
     void releaseReadIndexWorkers();
     void handleDestroy(UInt64 region_id, TMTContext & tmt, const KVStoreTaskLock &);
@@ -229,7 +234,7 @@ private:
 private:
     RegionManager region_manager;
 
-    RegionPersister region_persister;
+    std::unique_ptr<RegionPersister> region_persister;
 
     std::atomic<Timepoint> last_gc_time = Timepoint::min();
 
@@ -242,9 +247,9 @@ private:
 
     Poco::Logger * log;
 
-    std::atomic<UInt64> REGION_COMPACT_LOG_PERIOD;
-    std::atomic<UInt64> REGION_COMPACT_LOG_MIN_ROWS;
-    std::atomic<UInt64> REGION_COMPACT_LOG_MIN_BYTES;
+    std::atomic<UInt64> region_compact_log_period;
+    std::atomic<UInt64> region_compact_log_min_rows;
+    std::atomic<UInt64> region_compact_log_min_bytes;
 
     mutable std::mutex bg_gc_region_data_mutex;
     std::list<RegionDataReadInfoList> bg_gc_region_data;

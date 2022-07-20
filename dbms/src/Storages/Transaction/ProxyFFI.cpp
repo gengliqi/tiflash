@@ -24,6 +24,8 @@
 #include <Storages/Transaction/TMTContext.h>
 #include <kvproto/diagnosticspb.pb.h>
 
+#include <ext/scope_guard.h>
+
 #define CHECK_PARSE_PB_BUFF_IMPL(n, a, b, c)                                              \
     do                                                                                    \
     {                                                                                     \
@@ -118,6 +120,34 @@ EngineStoreApplyRes HandleAdminRaftCmd(
             header.index,
             header.term,
             *server->tmt);
+    }
+    catch (...)
+    {
+        tryLogCurrentException(__PRETTY_FUNCTION__);
+        exit(-1);
+    }
+}
+
+uint8_t NeedFlushData(EngineStoreServerWrap * server, uint64_t region_id)
+{
+    try
+    {
+        auto & kvstore = server->tmt->getKVStore();
+        return kvstore->needFlushRegionData(region_id, *server->tmt);
+    }
+    catch (...)
+    {
+        tryLogCurrentException(__PRETTY_FUNCTION__);
+        exit(-1);
+    }
+}
+
+uint8_t TryFlushData(EngineStoreServerWrap * server, uint64_t region_id, uint8_t until_succeed)
+{
+    try
+    {
+        auto & kvstore = server->tmt->getKVStore();
+        return kvstore->tryFlushRegionData(region_id, until_succeed, *server->tmt);
     }
     catch (...)
     {

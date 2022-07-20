@@ -37,6 +37,13 @@ namespace DB
 class Context;
 class MPPTunnelSet;
 class ExchangeReceiver;
+using ExchangeReceiverPtr = std::shared_ptr<ExchangeReceiver>;
+/// key: executor_id of ExchangeReceiver nodes in dag.
+using ExchangeReceiverMap = std::unordered_map<String, ExchangeReceiverPtr>;
+class MPPReceiverSet;
+using MPPReceiverSetPtr = std::shared_ptr<MPPReceiverSet>;
+class CoprocessorReader;
+using CoprocessorReaderPtr = std::shared_ptr<CoprocessorReader>;
 
 class Join;
 using JoinPtr = std::shared_ptr<Join>;
@@ -109,6 +116,13 @@ constexpr UInt64 NO_ENGINE_SUBSTITUTION = 1ul << 30ul;
 constexpr UInt64 ALLOW_INVALID_DATES = 1ul << 32ul;
 } // namespace TiDBSQLMode
 
+inline bool enableFineGrainedShuffle(uint64_t stream_count)
+{
+    return stream_count > 0;
+}
+
+extern const String enableFineGrainedShuffleExtraInfo;
+
 /// A context used to track the information that needs to be passed around during DAG planning.
 class DAGContext
 {
@@ -119,7 +133,6 @@ public:
         , collect_execution_summaries(dag_request->has_collect_execution_summaries() && dag_request->collect_execution_summaries())
         , is_mpp_task(false)
         , is_root_mpp_task(false)
-        , tunnel_set(nullptr)
         , flags(dag_request->flags())
         , sql_mode(dag_request->sql_mode())
         , max_recorded_error_count(getMaxErrorCount(*dag_request))
@@ -139,7 +152,6 @@ public:
         , return_executor_id(true)
         , is_mpp_task(true)
         , is_root_mpp_task(is_root_mpp_task_)
-        , tunnel_set(nullptr)
         , flags(dag_request->flags())
         , sql_mode(dag_request->sql_mode())
         , mpp_task_meta(meta_)
@@ -161,7 +173,6 @@ public:
         , collect_execution_summaries(false)
         , is_mpp_task(false)
         , is_root_mpp_task(false)
-        , tunnel_set(nullptr)
         , flags(0)
         , sql_mode(0)
         , max_recorded_error_count(max_error_count_)
@@ -176,7 +187,6 @@ public:
         , initialize_concurrency(concurrency)
         , is_mpp_task(true)
         , is_root_mpp_task(false)
-        , tunnel_set(nullptr)
         , log(Logger::get(log_identifier))
         , flags(dag_request->flags())
         , sql_mode(dag_request->sql_mode())
@@ -254,7 +264,6 @@ public:
         return io;
     }
 
-    int getNewThreadCountOfExchangeReceiver() const;
     UInt64 getFlags() const
     {
         return flags;
@@ -297,12 +306,20 @@ public:
         return sql_mode & f;
     }
 
+    void updateFinalConcurrency(size_t cur_streams_size, size_t streams_upper_limit);
+
     bool isTest() const { return is_test; }
+    void setColumnsForTest(std::unordered_map<String, ColumnsWithTypeAndName> & columns_for_test_map_) { columns_for_test_map = columns_for_test_map_; }
+    ColumnsWithTypeAndName columnsForTest(String executor_id);
 
-    void cancelAllExchangeReceiver();
+    bool columnsForTestEmpty() { return columns_for_test_map.empty(); }
 
-    void initExchangeReceiverIfMPP(Context & context, size_t max_streams);
-    const std::unordered_map<String, std::shared_ptr<ExchangeReceiver>> & getMPPExchangeReceiverMap() const;
+    ExchangeReceiverPtr getMPPExchangeReceiver(const String & executor_id) const;
+    void setMPPReceiverSet(const MPPReceiverSetPtr & receiver_set)
+    {
+        mpp_receiver_set = receiver_set;
+    }
+    void addCoprocessorReader(const CoprocessorReaderPtr & coprocessor_reader);
 
     void addSubquery(const String & subquery_id, SubqueryForSet && subquery);
     bool hasSubquery() const { return !subqueries.empty(); }
@@ -317,11 +334,12 @@ public:
     Clock::time_point read_wait_index_end_timestamp{Clock::duration::zero()};
     String table_scan_executor_id;
     String tidb_host = "Unknown";
-    bool collect_execution_summaries;
-    bool return_executor_id;
+    bool collect_execution_summaries{};
+    bool return_executor_id{};
     bool is_mpp_task = false;
     bool is_root_mpp_task = false;
     bool is_batch_cop = false;
+    // `tunnel_set` is always set by `MPPTask` and is intended to be used for `DAGQueryBlockInterpreter`.
     MPPTunnelSetPtr tunnel_set;
     TablesRegionsInfo tables_regions_info;
     // part of regions_for_local_read + regions_for_remote_read, only used for batch-cop
@@ -337,6 +355,10 @@ public:
     std::vector<tipb::FieldType> output_field_types;
     std::vector<Int32> output_offsets;
 
+    /// Hold the order of list based executors.
+    /// It is used to ensure that the order of Execution summary of list based executors is the same as the order of list based executors.
+    std::vector<String> list_based_executors_order;
+
 private:
     void initExecutorIdToJoinIdMap();
     void initOutputInfo();
@@ -344,7 +366,7 @@ private:
 private:
     /// Hold io for correcting the destruction order.
     BlockIO io;
-    /// profile_streams_map is a map that maps from executor_id to profile BlockInputStreams
+    /// profile_streams_map is a map that maps from executor_id to profile BlockInputStreams.
     std::unordered_map<String, BlockInputStreams> profile_streams_map;
     /// executor_id_to_join_id_map is a map that maps executor id to all the join executor id of itself and all its children.
     std::unordered_map<String, std::vector<String>> executor_id_to_join_id_map;
@@ -363,15 +385,14 @@ private:
     ConcurrentBoundedQueue<tipb::Error> warnings;
     /// warning_count is the actual warning count during the entire execution
     std::atomic<UInt64> warning_count;
-    int new_thread_count_of_exchange_receiver = 0;
-    /// key: executor_id of ExchangeReceiver nodes in dag.
-    std::unordered_map<String, std::shared_ptr<ExchangeReceiver>> mpp_exchange_receiver_map;
-    bool mpp_exchange_receiver_map_inited = false;
+
+    MPPReceiverSetPtr mpp_receiver_set;
     /// vector of SubqueriesForSets(such as join build subquery).
     /// The order of the vector is also the order of the subquery.
     std::vector<SubqueriesForSets> subqueries;
 
     bool is_test = false; /// switch for test, do not use it in production.
+    std::unordered_map<String, ColumnsWithTypeAndName> columns_for_test_map; /// <exector_id, columns>, for multiple sources
 };
 
 } // namespace DB

@@ -25,7 +25,6 @@
 #include <Server/IServer.h>
 #include <Server/RaftConfigParser.h>
 #include <Storages/Transaction/ProxyFFI.h>
-#include <Storages/Transaction/TMTContext.h>
 #include <daemon/BaseDaemon.h>
 #include <pingcap/Config.h>
 
@@ -127,6 +126,8 @@ CLIService<Func, Args>::TiFlashProxyConfig::TiFlashProxyConfig(Poco::Util::Layer
         args.push_back(v.first.data());
         args.push_back(v.second.data());
     }
+    // Start the decryption service without starting the raftstore service
+    args.push_back("--only-decryption");
     is_proxy_runnable = true;
 }
 template <typename Func, typename Args>

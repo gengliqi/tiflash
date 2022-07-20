@@ -21,7 +21,7 @@ macro(grep_gtest_sources BASE_DIR DST_VAR)
 endmacro()
 # attach all dm gtest sources
 grep_gtest_sources(${TiFlash_SOURCE_DIR}/dbms/src/Storages/DeltaMerge/tests dm_gtest_sources)
-add_executable(gtests_dm EXCLUDE_FROM_ALL ${dm_gtest_sources} dm_basic_include.h)
+add_executable(gtests_dm EXCLUDE_FROM_ALL ${dm_gtest_sources} DMTestEnv.h)
 target_link_libraries(gtests_dm gtest_main dbms clickhouse_functions)
 add_check(gtests_dm)
 
@@ -41,6 +41,9 @@ target_link_libraries(dm_test_storage_delta_merge
 
 add_executable(dm_test_delta_merge_store EXCLUDE_FROM_ALL gtest_dm_delta_merge_store.cpp)
 target_link_libraries(dm_test_delta_merge_store dbms gtest_main clickhouse_functions)
+
+add_executable(dm_test_delta_merge_store_for_fast_mode EXCLUDE_FROM_ALL gtest_dm_delta_merge_store_for_fast_mode.cpp)
+target_link_libraries(dm_test_delta_merge_store_for_fast_mode dbms gtest_main clickhouse_functions)
 
 add_executable(dm_test_segment EXCLUDE_FROM_ALL gtest_dm_segment.cpp)
 target_link_libraries(dm_test_segment dbms gtest_main clickhouse_functions)
