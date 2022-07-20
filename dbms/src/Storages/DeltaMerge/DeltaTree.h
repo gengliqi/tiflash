@@ -1440,6 +1440,7 @@ typename DT_CLASS::InternPtr DT_CLASS::afterNodeUpdated(T * node)
     case Impl::DeltaTreeVariant::AVX512:
         return afterNodeUpdatedAVX512(node);
     }
+    return afterNodeUpdatedAVX512(node);
 }
 #endif
 
