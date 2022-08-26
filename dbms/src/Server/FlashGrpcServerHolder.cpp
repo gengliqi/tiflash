@@ -127,11 +127,15 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(Context & context, Poco::Util::Laye
     builder.SetMaxSendMessageSize(-1);
     thread_manager = DB::newThreadManager();
     int async_cq_num = context.getSettingsRef().async_cqs;
+    int cq_num = std::thread::hardware_concurrency();
     if (enable_async_server)
     {
-        for (int i = 0; i < async_cq_num; ++i)
+        for (int i = 0; i < cq_num; ++i)
         {
             cqs.emplace_back(builder.AddCompletionQueue());
+        }
+        for (int i = 0; i < async_cq_num; ++i)
+        {
             notify_cqs.emplace_back(builder.AddCompletionQueue());
         }
     }
@@ -148,15 +152,19 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(Context & context, Poco::Util::Laye
         int pollers_per_cq = context.getSettingsRef().async_pollers_per_cq;
         for (int i = 0; i < async_cq_num * pollers_per_cq; ++i)
         {
-            auto * cq = cqs[i / pollers_per_cq].get();
-            auto * notify_cq = notify_cqs[i / pollers_per_cq].get();
+            auto * cq = cqs[i % cq_num].get();
+            auto * notify_cq = notify_cqs[i % async_cq_num].get();
             for (int j = 0; j < preallocated_request_count_per_poller; ++j)
             {
                 // EstablishCallData will handle its lifecycle by itself.
                 EstablishCallData::spawn(assert_cast<AsyncFlashService *>(flash_service.get()), cq, notify_cq, is_shutdown);
             }
-            thread_manager->schedule(false, "async_poller", [cq, this] { handleRpcs(cq, log); });
             thread_manager->schedule(false, "async_poller", [notify_cq, this] { handleRpcs(notify_cq, log); });
+        }
+        for (int i = 0; i < cq_num * pollers_per_cq; ++i)
+        {
+            auto * cq = cqs[i].get();
+            thread_manager->schedule(false, "async_poller", [cq, this] { handleRpcs(cq, log); });
         }
     }
 }
