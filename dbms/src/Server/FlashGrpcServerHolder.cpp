@@ -127,7 +127,7 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(Context & context, Poco::Util::Laye
     builder.SetMaxSendMessageSize(-1);
     thread_manager = DB::newThreadManager();
     int async_cq_num = context.getSettingsRef().async_cqs;
-    int cq_num = std::thread::hardware_concurrency();
+    int cq_num = 1;
     if (enable_async_server)
     {
         for (int i = 0; i < cq_num; ++i)
@@ -161,9 +161,10 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(Context & context, Poco::Util::Laye
             }
             thread_manager->schedule(false, "async_poller", [notify_cq, this] { handleRpcs(notify_cq, log); });
         }
-        for (int i = 0; i < cq_num * pollers_per_cq; ++i)
+        int thread_num = std::thread::hardware_concurrency();
+        for (int i = 0; i < thread_num; ++i)
         {
-            auto * cq = cqs[i].get();
+            auto * cq = cqs[i % cq_num].get();
             thread_manager->schedule(false, "async_poller", [cq, this] { handleRpcs(cq, log); });
         }
     }
