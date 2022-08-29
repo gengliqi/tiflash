@@ -126,8 +126,8 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(Context & context, Poco::Util::Laye
     builder.SetMaxReceiveMessageSize(-1);
     builder.SetMaxSendMessageSize(-1);
     thread_manager = DB::newThreadManager();
-    int async_cq_num = context.getSettingsRef().async_cqs;
-    int cq_num = 1;
+    int async_cq_num = 1;
+    int cq_num = context.getSettingsRef().async_cqs;
     if (enable_async_server)
     {
         for (int i = 0; i < cq_num; ++i)
