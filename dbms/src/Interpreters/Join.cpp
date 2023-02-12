@@ -476,6 +476,7 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
     build_concurrency = std::max(1, build_concurrency_);
     active_build_key_holders_concurrency = build_concurrency;
 
+    blocks_for_build.resize(build_concurrency_);
     segment_key_holders.resize(build_concurrency);
     for (size_t i = 0; i < build_concurrency; ++i)
     {
@@ -678,13 +679,6 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers(key_columns.size());
     size_t segment_size = map.getSegmentSize();
-    std::vector<std::vector<Join::SegmentKeyHolder::Data>> holders;
-    holders.resize(segment_size);
-    size_t rows_per_seg = rows / segment_size;
-    for (size_t i = 0; i < segment_size; ++i)
-    {
-        holders[i].reserve(rows_per_seg);
-    }
     for (size_t i = 0; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
@@ -710,15 +704,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         auto * mem = pool.alloc(sizeof(decltype(key_holder)));
         memcpy(mem, &key_holder, sizeof(decltype(key_holder)));
 
-        holders[segment_index].emplace_back(static_cast<void *>(mem), stored_block, i);
-    }
-
-    for (size_t i = 0; i < segment_size; ++i)
-    {
-        if (holders[i].empty())
-            continue;
-        segment_key_holders[i].size += holders[i].size();
-        segment_key_holders[i].data.emplace_back(std::move(holders[i]));
+        segment_key_holders[segment_index].data.emplace_back(static_cast<void *>(mem), stored_block, i);
     }
 }
 
@@ -886,7 +872,8 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
         stored_block = &blocks.back();
         original_blocks.push_back(block);
     }
-    insertFromBlockInternal(stored_block, stream_index);
+    blocks_for_build[stream_index].size += stored_block->rows();
+    blocks_for_build[stream_index].blocks.emplace_back(stored_block);
 }
 
 void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
@@ -996,7 +983,7 @@ void NO_INLINE buildHashTableImplType(
     RUNTIME_ASSERT(stream_index < size);
     for (size_t i = 0; i < size; ++i)
     {
-        total_elem_size += segment_key_holders[i][stream_index].size;
+        total_elem_size += segment_key_holders[i][stream_index].data.size();
     }
 
     auto & m = map.getSegmentTable(stream_index);
@@ -1009,12 +996,11 @@ void NO_INLINE buildHashTableImplType(
     for (size_t i = 0; i < size; ++i)
     {
         auto & data = segment_key_holders[i][stream_index].data;
-        for (auto & d1 : data)
-            for (auto & d : d1)
-            {
-                auto * holder = reinterpret_cast<typename KeyGetter::HolderType *>(d.key_holder);
-                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(m, *holder, d.stored_block, d.i, pool);
-            }
+        for (auto & d : data)
+        {
+            auto * holder = reinterpret_cast<typename KeyGetter::HolderType *>(d.key_holder);
+            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(m, *holder, d.stored_block, d.i, pool);
+        }
     }
 }
 
@@ -1053,9 +1039,27 @@ void buildHashTableImpl(
 
 void Join::buildHashTable(size_t stream_index)
 {
+    Stopwatch watch;
+
+    size_t rows_per_seg = 1.2 * blocks_for_build[stream_index].size / build_concurrency;
+    for (size_t i = 0; i < build_concurrency; ++i)
+    {
+        segment_key_holders[stream_index][i].data.reserve(rows_per_seg);
+    }
+    LOG_INFO(log, "join {} reserve size {} use {}", stream_index, rows_per_seg, watch.elapsed());
+
+    watch.restart();
+
+    for (size_t i = 0; i < blocks_for_build[stream_index].blocks.size(); ++i)
+        insertFromBlockInternal(blocks_for_build[stream_index].blocks[i], stream_index);
+
+    LOG_INFO(log, "join {} build key holders use {}", stream_index, watch.elapsed());
+
     if (build_concurrency == 1 || enable_fine_grained_shuffle || isCrossJoin(kind))
         return;
-    Stopwatch watch;
+
+    watch.restart();
+
     {
         std::unique_lock lock(build_probe_mutex);
         --active_build_key_holders_concurrency;
@@ -1070,7 +1074,8 @@ void Join::buildHashTable(size_t stream_index)
         if (meet_error)
             throw Exception(error_message);
     }
-    LOG_INFO(log, "join {} build key holders wait {}", stream_index, watch.elapsed());
+
+    LOG_INFO(log, "join {} insert block wait {}", stream_index, watch.elapsed());
 
     watch.restart();
 

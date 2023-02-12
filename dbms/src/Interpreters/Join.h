@@ -291,9 +291,8 @@ public:
     // only use for left semi joins.
     const String match_helper_name;
 
-    struct SegmentKeyHolder
+    struct alignas(128) SegmentKeyHolder
     {
-        char padding_1[128];
         struct Data
         {
             Data(void * key_holder, Block * stored_block, size_t i)
@@ -303,9 +302,13 @@ public:
             Block * stored_block;
             size_t i;
         };
+        std::vector<Data> data;
+    };
+
+    struct alignas(128) BlocksForbuild
+    {
+        std::vector<Block *> blocks;
         size_t size = 0;
-        std::vector<std::vector<Data>> data;
-        char padding_2[128];
     };
 
 private:
@@ -350,6 +353,8 @@ private:
     std::mutex blocks_lock;
     /// keep original block for concurrent build
     Blocks original_blocks;
+
+    std::vector<BlocksForbuild> blocks_for_build;
 
     MapsAny maps_any; /// For ANY LEFT|INNER JOIN
     MapsAll maps_all; /// For ALL LEFT|INNER JOIN
