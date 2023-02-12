@@ -302,7 +302,7 @@ public:
             Block * stored_block;
             size_t i;
         };
-        std::vector<Data> data;
+        PaddedPODArray<Data> data;
     };
 
     struct alignas(128) BlocksForbuild
