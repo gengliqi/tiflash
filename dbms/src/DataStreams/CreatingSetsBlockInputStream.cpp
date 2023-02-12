@@ -137,7 +137,8 @@ void CreatingSetsBlockInputStream::createAll()
                             thread_manager->wait();
                             return;
                         }
-                        thread_manager->schedule(true, "CreatingSets", [this, &item = elem.second] { createOne(item); });
+                        createOne(elem.second);
+                        //thread_manager->schedule(true, "CreatingSets", [this, &item = elem.second] {  });
                         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_in_creating_set_input_stream);
                     }
                 }
