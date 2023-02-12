@@ -717,6 +717,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     {
         if (holders[i].empty())
             continue;
+        segment_key_holders[i].size += holders[i].size();
         segment_key_holders[i].data.emplace_back(std::move(holders[i]));
     }
 }
@@ -995,11 +996,13 @@ void NO_INLINE buildHashTableImplType(
     RUNTIME_ASSERT(stream_index < size);
     for (size_t i = 0; i < size; ++i)
     {
-        total_elem_size += segment_key_holders[i][stream_index].data.size();
+        total_elem_size += segment_key_holders[i][stream_index].size;
     }
 
     auto & m = map.getSegmentTable(stream_index);
+    Stopwatch watch;
     m.reserve(total_elem_size);
+    LOG_INFO(log, "join {} reserve hash table use {}", stream_index, watch.elapsed());
 
     LOG_INFO(log, "join {} element size {}", stream_index, total_elem_size);
 
@@ -1050,7 +1053,7 @@ void buildHashTableImpl(
 
 void Join::buildHashTable(size_t stream_index)
 {
-    if (build_concurrency == 1 || enable_fine_grained_shuffle)
+    if (build_concurrency == 1 || enable_fine_grained_shuffle || isCrossJoin(kind))
         return;
     Stopwatch watch;
     {
@@ -1069,13 +1072,14 @@ void Join::buildHashTable(size_t stream_index)
     }
     LOG_INFO(log, "join {} build key holders wait {}", stream_index, watch.elapsed());
 
-    if (!isCrossJoin(kind))
-    {
-        if (strictness == ASTTableJoin::Strictness::Any)
-            buildHashTableImpl<ASTTableJoin::Strictness::Any>(log, type, maps_any, stream_index, *pools[stream_index], segment_key_holders);
-        else
-            buildHashTableImpl<ASTTableJoin::Strictness::All>(log, type, maps_all, stream_index, *pools[stream_index], segment_key_holders);
-    }
+    watch.restart();
+
+    if (strictness == ASTTableJoin::Strictness::Any)
+        buildHashTableImpl<ASTTableJoin::Strictness::Any>(log, type, maps_any, stream_index, *pools[stream_index], segment_key_holders);
+    else
+        buildHashTableImpl<ASTTableJoin::Strictness::All>(log, type, maps_all, stream_index, *pools[stream_index], segment_key_holders);
+
+    LOG_INFO(log, "join {} build use {}", stream_index, watch.elapsed());
 }
 
 namespace
