@@ -293,7 +293,6 @@ public:
 
     struct SegmentKeyHolder
     {
-        char padding_1[128];
         struct Data
         {
             Data(void * key_holder, Block * stored_block, size_t i)
@@ -303,8 +302,7 @@ public:
             Block * stored_block;
             size_t i;
         };
-        std::vector<Data> data;
-        char padding_2[128];
+        alignas(128) std::vector<std::vector<Data>> data;
     };
 
 private:

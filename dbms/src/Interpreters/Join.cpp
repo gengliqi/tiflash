@@ -671,13 +671,20 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     Block * stored_block,
     ConstNullMapPtr null_map,
     Join::RowRefList * rows_not_inserted_to_map,
-    size_t stream_index [[maybe_unused]],
+    size_t /* stream_index */,
     Arena & pool,
     std::vector<Join::SegmentKeyHolder> & segment_key_holders)
 {
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers(key_columns.size());
     size_t segment_size = map.getSegmentSize();
+    std::vector<std::vector<Join::SegmentKeyHolder::Data>> holders;
+    holders.resize(segment_size);
+    size_t rows_per_seg = rows / segment_size;
+    for (size_t i = 0; i < segment_size; ++i)
+    {
+        holders[i].reserve(rows_per_seg);
+    }
     for (size_t i = 0; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
@@ -703,8 +710,14 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         auto * mem = pool.alloc(sizeof(decltype(key_holder)));
         memcpy(mem, &key_holder, sizeof(decltype(key_holder)));
 
-        auto d = Join::SegmentKeyHolder::Data(static_cast<void *>(mem), stored_block, i);
-        segment_key_holders[segment_index].data.push_back(d);
+        holders[segment_index].emplace_back(static_cast<void *>(mem), stored_block, i);
+    }
+
+    for (size_t i = 0; i < segment_size; ++i)
+    {
+        if (holders[i].empty())
+            continue;
+        segment_key_holders[i].data.emplace_back(std::move(holders[i]));
     }
 }
 
@@ -971,6 +984,7 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
 
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
 void NO_INLINE buildHashTableImplType(
+    const LoggerPtr & log,
     Map & map,
     size_t stream_index,
     Arena & pool,
@@ -987,19 +1001,23 @@ void NO_INLINE buildHashTableImplType(
     auto & m = map.getSegmentTable(stream_index);
     m.reserve(total_elem_size);
 
+    LOG_INFO(log, "join {} element size {}", stream_index, total_elem_size);
+
     for (size_t i = 0; i < size; ++i)
     {
         auto & data = segment_key_holders[i][stream_index].data;
-        for (auto & d : data)
-        {
-            auto * holder = reinterpret_cast<typename KeyGetter::HolderType *>(d.key_holder);
-            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(m, *holder, d.stored_block, d.i, pool);
-        }
+        for (auto & d1 : data)
+            for (auto & d : d1)
+            {
+                auto * holder = reinterpret_cast<typename KeyGetter::HolderType *>(d.key_holder);
+                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(m, *holder, d.stored_block, d.i, pool);
+            }
     }
 }
 
 template <ASTTableJoin::Strictness STRICTNESS, typename Maps>
 void buildHashTableImpl(
+    const LoggerPtr & log,
     Join::Type type,
     Maps & maps,
     size_t stream_index,
@@ -1016,6 +1034,7 @@ void buildHashTableImpl(
 #define M(TYPE)                                                                                                                                \
     case Join::Type::TYPE:                                                                                                                     \
         buildHashTableImplType<STRICTNESS, typename KeyGetterForType<Join::Type::TYPE, std::remove_reference_t<decltype(*maps.TYPE)>>::Type>( \
+            log,                                                                                                                               \
             *maps.TYPE,                                                                                                                        \
             stream_index,                                                                                                                      \
             pool,                                                                                                                              \
@@ -1053,9 +1072,9 @@ void Join::buildHashTable(size_t stream_index)
     if (!isCrossJoin(kind))
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            buildHashTableImpl<ASTTableJoin::Strictness::Any>(type, maps_any, stream_index, *pools[stream_index], segment_key_holders);
+            buildHashTableImpl<ASTTableJoin::Strictness::Any>(log, type, maps_any, stream_index, *pools[stream_index], segment_key_holders);
         else
-            buildHashTableImpl<ASTTableJoin::Strictness::All>(type, maps_all, stream_index, *pools[stream_index], segment_key_holders);
+            buildHashTableImpl<ASTTableJoin::Strictness::All>(log, type, maps_all, stream_index, *pools[stream_index], segment_key_holders);
     }
 }
 
