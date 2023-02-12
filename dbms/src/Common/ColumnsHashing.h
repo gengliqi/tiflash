@@ -71,6 +71,7 @@ struct HashMethodOneNumber
     /// Get hash value of row.
     using Base::getHash; /// (const Data & data, size_t row, Arena & pool) -> size_t
 
+    using HolderType = FieldType;
     /// Is used for default implementation in HashMethodBase.
     ALWAYS_INLINE inline FieldType getKeyHolder(size_t row, Arena *, std::vector<String> &) const
     {
@@ -110,6 +111,7 @@ struct HashMethodString
         }
     }
 
+    using HolderType = std::conditional_t<place_string_to_arena, ArenaKeyHolder, StringRef>;
     ALWAYS_INLINE inline auto getKeyHolder(ssize_t row, [[maybe_unused]] Arena * pool, std::vector<String> & sort_key_containers) const
     {
         auto last_offset = row == 0 ? 0 : offsets[row - 1];
@@ -150,6 +152,7 @@ struct HashMethodStringBin
         chars = column_string.getChars().data();
     }
 
+    using HolderType = ArenaKeyHolder;
     ALWAYS_INLINE inline auto getKeyHolder(ssize_t row, Arena * pool, std::vector<String> &) const
     {
         auto last_offset = row == 0 ? 0 : offsets[row - 1];
@@ -393,6 +396,7 @@ struct HashMethodFixedString
             collator = collators[0];
     }
 
+    using HolderType = std::conditional_t<place_string_to_arena, ArenaKeyHolder, StringRef>;
     ALWAYS_INLINE inline auto getKeyHolder(size_t row, [[maybe_unused]] Arena * pool, std::vector<String> & sort_key_containers) const
     {
         StringRef key(&(*chars)[row * n], n);
@@ -519,6 +523,7 @@ struct HashMethodKeysFixed
 #endif
     }
 
+    using HolderType = Key;
     ALWAYS_INLINE inline Key getKeyHolder(size_t row, Arena *, std::vector<String> &) const
     {
         if constexpr (has_nullable_keys)
@@ -596,6 +601,7 @@ struct HashMethodSerialized
         , collators(collators_)
     {}
 
+    using HolderType = SerializedKeyHolder;
     ALWAYS_INLINE inline SerializedKeyHolder getKeyHolder(size_t row, Arena * pool, std::vector<String> & sort_key_containers) const
     {
         return SerializedKeyHolder{

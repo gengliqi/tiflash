@@ -134,6 +134,31 @@ public:
         return emplaceImpl(key_holder, data);
     }
 
+    template <typename Data, typename KeyHolder>
+    static ALWAYS_INLINE inline EmplaceResult emplaceKey(KeyHolder key_holder, Data & data)
+    {
+        typename Data::LookupResult it;
+        bool inserted = false;
+        data.emplace(key_holder, it, inserted);
+
+        [[maybe_unused]] Mapped * cached = nullptr;
+        if constexpr (has_mapped)
+            cached = &it->getMapped();
+
+        if (inserted)
+        {
+            if constexpr (has_mapped)
+            {
+                new (&it->getMapped()) Mapped();
+            }
+        }
+
+        if constexpr (has_mapped)
+            return EmplaceResult(it->getMapped(), *cached, inserted);
+        else
+            return EmplaceResult(inserted);
+    }
+
     template <typename Data>
     ALWAYS_INLINE inline FindResult findKey(Data & data, size_t row, Arena & pool, std::vector<String> & sort_key_containers)
     {

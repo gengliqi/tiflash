@@ -24,6 +24,7 @@ Block HashJoinBuildBlockInputStream::readImpl()
         Block block = children.back()->read();
         if (!block)
         {
+            join->buildHashTable(concurrency_build_index);
             join->finishOneBuild();
             return block;
         }

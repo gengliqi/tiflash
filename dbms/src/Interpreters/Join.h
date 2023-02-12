@@ -113,6 +113,8 @@ public:
 
     void insertFromBlock(const Block & block, size_t stream_index);
 
+    void buildHashTable(size_t stream_index);
+
     /** Join data from the map (that was previously built by calls to insertFromBlock) to the block with data from "left" table.
       * Could be called from different threads in parallel.
       */
@@ -289,6 +291,21 @@ public:
     // only use for left semi joins.
     const String match_helper_name;
 
+    struct SegmentKeyHolder
+    {
+        char padding_1[128];
+        struct Data
+        {
+            Data(void * key_holder, Block * stored_block, size_t i)
+                :key_holder(key_holder), stored_block(stored_block), i(i) {}
+
+            void * key_holder;
+            Block * stored_block;
+            size_t i;
+        };
+        std::vector<Data> data;
+        char padding_2[128];
+    };
 
 private:
     friend class NonJoinedBlockInputStream;
@@ -346,6 +363,10 @@ private:
     /// Additional data - strings for string keys and continuation elements of single-linked lists of references to rows.
     Arenas pools;
 
+    std::vector<std::vector<SegmentKeyHolder>> segment_key_holders;
+
+    mutable std::condition_variable build_key_holders_cv;
+    size_t active_build_key_holders_concurrency;
 
 private:
     Type type = Type::EMPTY;

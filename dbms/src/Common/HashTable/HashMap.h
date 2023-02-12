@@ -86,18 +86,18 @@ struct HashMapCell
     /// Get the key (internally).
     static const Key & getKey(const value_type & value) { return value.first; }
 
-    bool keyEquals(const Key & key_) const { return bitEquals(value.first, key_); }
-    bool keyEquals(const Key & key_, size_t /*hash_*/) const { return bitEquals(value.first, key_); }
-    bool keyEquals(const Key & key_, size_t /*hash_*/, const State & /*state*/) const { return bitEquals(value.first, key_); }
+    ALWAYS_INLINE inline bool keyEquals(const Key & key_) const { return bitEquals(value.first, key_); }
+    ALWAYS_INLINE inline bool keyEquals(const Key & key_, size_t /*hash_*/) const { return bitEquals(value.first, key_); }
+    ALWAYS_INLINE inline bool keyEquals(const Key & key_, size_t /*hash_*/, const State & /*state*/) const { return bitEquals(value.first, key_); }
 
     void setHash(size_t /*hash_value*/) {}
     size_t getHash(const Hash & hash) const { return hash(value.first); }
 
-    bool isZero(const State & state) const { return isZero(value.first, state); }
-    static bool isZero(const Key & key, const State & /*state*/) { return ZeroTraits::check(key); }
+    ALWAYS_INLINE inline bool isZero(const State & /*state*/) const { return ZeroTraits::check(value.first); }
+    ALWAYS_INLINE inline static bool isZero(const Key & key, const State & /*state*/) { return ZeroTraits::check(key); }
 
     /// Set the key value to zero.
-    void setZero() { ZeroTraits::set(value.first); }
+    ALWAYS_INLINE inline void setZero() { ZeroTraits::set(value.first); }
 
     /// Do I need to store the zero key separately (that is, can a zero key be inserted into the hash table).
     static constexpr bool need_zero_value_storage = true;
