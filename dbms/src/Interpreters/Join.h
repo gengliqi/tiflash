@@ -289,6 +289,13 @@ public:
     // only use for left semi joins.
     const String match_helper_name;
 
+    struct alignas(64) InsertDataQueue
+    {
+        std::vector<void *> queue;
+        bool is_running = false;
+    };
+
+    std::vector<InsertDataQueue> insert_queues;
 
 private:
     friend class NonJoinedBlockInputStream;

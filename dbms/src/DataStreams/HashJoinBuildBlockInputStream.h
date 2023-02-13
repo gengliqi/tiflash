@@ -46,6 +46,8 @@ private:
     JoinPtr join;
     size_t concurrency_build_index;
     const LoggerPtr log;
+    UInt64 read_time;
+    UInt64 insert_time;
 };
 
 } // namespace DB

@@ -475,6 +475,8 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
     /// is set here, `joinBlock` will hang when used to get header
     build_concurrency = std::max(1, build_concurrency_);
 
+    insert_queues.resize(build_concurrency);
+
     for (size_t i = 0; i < getBuildConcurrencyInternal(); ++i)
         pools.emplace_back(std::make_shared<Arena>());
     // init for non-joined-streams.
@@ -548,6 +550,9 @@ template <ASTTableJoin::Strictness STRICTNESS, typename Map, typename KeyGetter>
 struct Inserter
 {
     static void insert(Map & map, const typename Map::key_type & key, Block * stored_block, size_t i, Arena & pool, std::vector<String> & sort_key_containers);
+
+    template<typename KeyHolder>
+    static void insert(Map & map, KeyHolder & key_holder, Block * stored_block, size_t i, Arena & pool);
 };
 
 template <typename Map, typename KeyGetter>
@@ -556,6 +561,15 @@ struct Inserter<ASTTableJoin::Strictness::Any, Map, KeyGetter>
     static void insert(Map & map, KeyGetter & key_getter, Block * stored_block, size_t i, Arena & pool, std::vector<String> & sort_key_container)
     {
         auto emplace_result = key_getter.emplaceKey(map, i, pool, sort_key_container);
+
+        if (emplace_result.isInserted())
+            new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
+    }
+
+    template <typename KeyHolder>
+    static void insert(Map & map, KeyHolder & key_holder, Block * stored_block, size_t i, Arena & pool [[maybe_unused]])
+    {
+        auto emplace_result = KeyGetter::emplaceKey(key_holder, map);
 
         if (emplace_result.isInserted())
             new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
@@ -569,6 +583,24 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
     static void insert(Map & map, KeyGetter & key_getter, Block * stored_block, size_t i, Arena & pool, std::vector<String> & sort_key_container)
     {
         auto emplace_result = key_getter.emplaceKey(map, i, pool, sort_key_container);
+
+        if (emplace_result.isInserted())
+            new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
+        else
+        {
+            /** The first element of the list is stored in the value of the hash table, the rest in the pool.
+                 * We will insert each time the element into the second place.
+                 * That is, the former second element, if it was, will be the third, and so on.
+                 */
+            auto elem = reinterpret_cast<MappedType *>(pool.alloc(sizeof(MappedType)));
+            insertRowToList(&emplace_result.getMapped(), elem, stored_block, i);
+        }
+    }
+
+    template <typename KeyHolder>
+    static void insert(Map & map, KeyHolder & key_holder, Block * stored_block, size_t i, Arena & pool)
+    {
+        auto emplace_result = KeyGetter::emplaceKey(key_holder, map);
 
         if (emplace_result.isInserted())
             new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
@@ -626,6 +658,14 @@ void NO_INLINE insertFromBlockImplTypeCase(
     }
 }
 
+template<typename KeyHolder>
+struct InsertData
+{
+    InsertData(Block * b) : stored_block(b) {}
+    Block * stored_block;
+    std::vector<std::pair<KeyHolder, size_t>> key_holder_i;
+};
+
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map, bool has_null_map>
 void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     Map & map,
@@ -637,41 +677,39 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     ConstNullMapPtr null_map,
     Join::RowRefList * rows_not_inserted_to_map,
     size_t stream_index,
-    Arena & pool)
+    Arena & pool,
+    std::vector<Join::InsertDataQueue> & insert_queues)
 {
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers(key_columns.size());
     size_t segment_size = map.getSegmentSize();
-    /// when inserting with lock, first calculate and save the segment index for each row, then
-    /// insert the rows segment by segment to avoid too much conflict. This will introduce some overheads:
-    /// 1. key_getter.getKey will be called twice, here we do not cache key because it can not be cached
-    /// with relatively low cost(if key is stringRef, just cache a stringRef is meaningless, we need to cache the whole `sort_key_containers`)
-    /// 2. hash value is calculated twice, maybe we can refine the code to cache the hash value
-    /// 3. extra memory to store the segment index info
-    std::vector<std::vector<size_t>> segment_index_info;
-    if (has_null_map && rows_not_inserted_to_map)
+
+    using KeyHolderType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, size_t, Arena *, std::vector<String> &>;
+
+    std::vector<InsertData<KeyHolderType> *> insert_data;
+    insert_data.resize(segment_size);
+    size_t rows_per_seg = rows / segment_size;
+    for (size_t i = 0; i < segment_size; ++i)
     {
-        segment_index_info.resize(segment_size + 1);
+        insert_data[i] = new InsertData<KeyHolderType>(stored_block);
+        insert_data[i]->key_holder_i.reserve(rows_per_seg * 1.2);
     }
-    else
-    {
-        segment_index_info.resize(segment_size);
-    }
-    size_t rows_per_seg = rows / segment_index_info.size();
-    for (auto & segment_index : segment_index_info)
-    {
-        segment_index.reserve(rows_per_seg);
-    }
+
     for (size_t i = 0; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
         {
             if (rows_not_inserted_to_map)
-                segment_index_info[segment_index_info.size() - 1].push_back(i);
+            {
+                /// for right/full out join, need to record the rows not inserted to map
+                auto * elem = reinterpret_cast<Join::RowRefList *>(pool.alloc(sizeof(Join::RowRefList)));
+                insertRowToList(rows_not_inserted_to_map, elem, stored_block, i);
+            }
             continue;
         }
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
         auto key = keyHolderGetKey(key_holder);
+
         size_t segment_index = 0;
         size_t hash_value = 0;
         if (!ZeroTraits::check(key))
@@ -679,30 +717,61 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             hash_value = map.hash(key);
             segment_index = hash_value % segment_size;
         }
-        segment_index_info[segment_index].push_back(i);
-        keyHolderDiscardKey(key_holder);
+
+        insert_data[segment_index]->key_holder_i.emplace_back(std::make_pair(key_holder, i));
     }
-    for (size_t insert_index = 0; insert_index < segment_index_info.size(); insert_index++)
+    for (size_t i = 0; i < segment_size; i++)
     {
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_build_failpoint);
-        size_t segment_index = (insert_index + stream_index) % segment_index_info.size();
-        if (segment_index == segment_size)
-        {
-            /// null value
-            /// here ignore mutex because rows_not_inserted_to_map is privately owned by each stream thread
-            for (auto index : segment_index_info[segment_index])
-            {
-                /// for right/full out join, need to record the rows not inserted to map
-                auto * elem = reinterpret_cast<Join::RowRefList *>(pool.alloc(sizeof(Join::RowRefList)));
-                insertRowToList(rows_not_inserted_to_map, elem, stored_block, index);
-            }
-        }
-        else
+        size_t segment_index = (i + stream_index) % segment_size;
+
+        if (insert_data[segment_index]->key_holder_i.empty())
+            continue;
+
+        auto * insert = insert_data[segment_index];
+        insert_data[segment_index] = nullptr;
+
         {
             std::lock_guard lk(map.getSegmentMutex(segment_index));
-            for (size_t i = 0; i < segment_index_info[segment_index].size(); ++i)
+            if (insert_queues[segment_index].is_running)
             {
-                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(map.getSegmentTable(segment_index), key_getter, stored_block, segment_index_info[segment_index][i], pool, sort_key_containers);
+                insert_queues[segment_index].queue.emplace_back(static_cast<void *>(insert));
+                continue;
+            }
+            insert_queues[segment_index].is_running = true;
+        }
+
+        // First, insert myself data.
+        for (auto & d : insert->key_holder_i)
+            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(map.getSegmentTable(segment_index), d.first, stored_block, d.second, pool);
+
+        delete insert;
+
+        while (true)
+        {
+            std::vector<void *> q;
+            {
+                std::lock_guard lk(map.getSegmentMutex(segment_index));
+                RUNTIME_ASSERT(insert_queues[segment_index].is_running, "is_running must be true");
+
+                if (insert_queues[segment_index].queue.empty())
+                {
+                    insert_queues[segment_index].is_running = false;
+                    break;
+                }
+
+                q.swap(insert_queues[segment_index].queue);
+            }
+
+            for (auto & j : q)
+            {
+                insert = static_cast<InsertData<KeyHolderType> *>(j);
+                j = nullptr;
+
+                for (auto & d : insert->key_holder_i)
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(map.getSegmentTable(segment_index), d.first, insert->stored_block, d.second, pool);
+
+                delete insert;
             }
         }
     }
@@ -721,13 +790,14 @@ void insertFromBlockImplType(
     size_t stream_index,
     size_t insert_concurrency,
     Arena & pool,
-    bool enable_fine_grained_shuffle)
+    bool enable_fine_grained_shuffle,
+    std::vector<Join::InsertDataQueue> & insert_queues)
 {
     if (null_map)
     {
         if (insert_concurrency > 1 && !enable_fine_grained_shuffle)
         {
-            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool);
+            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, insert_queues);
         }
         else
         {
@@ -740,7 +810,7 @@ void insertFromBlockImplType(
     {
         if (insert_concurrency > 1 && !enable_fine_grained_shuffle)
         {
-            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool);
+            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, insert_queues);
         }
         else
         {
@@ -765,7 +835,8 @@ void insertFromBlockImpl(
     size_t stream_index,
     size_t insert_concurrency,
     Arena & pool,
-    bool enable_fine_grained_shuffle)
+    bool enable_fine_grained_shuffle,
+    std::vector<Join::InsertDataQueue> & insert_queues)
 {
     switch (type)
     {
@@ -788,7 +859,8 @@ void insertFromBlockImpl(
             stream_index,                                                                                                                      \
             insert_concurrency,                                                                                                                \
             pool,                                                                                                                              \
-            enable_fine_grained_shuffle);                                                                                                      \
+            enable_fine_grained_shuffle,                                                                                                          \
+            insert_queues);                                                                                                                    \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
@@ -952,16 +1024,16 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
         if (!getFullness(kind))
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle);
+                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues);
             else
-                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle);
+                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues);
         }
         else
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle);
+                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues);
             else
-                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle);
+                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues);
         }
     }
 }
