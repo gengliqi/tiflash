@@ -242,11 +242,11 @@ struct hash<StringRef> : public StringRefHash
 
 namespace ZeroTraits
 {
-inline bool check(const StringRef & x)
+ALWAYS_INLINE inline bool check(const StringRef & x)
 {
     return 0 == x.size;
 }
-inline void set(StringRef & x)
+ALWAYS_INLINE inline void set(StringRef & x)
 {
     x.size = 0;
 }

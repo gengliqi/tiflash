@@ -81,7 +81,7 @@ struct HashTableNoState
 namespace ZeroTraits
 {
 template <typename T>
-inline bool check(const T & x)
+ALWAYS_INLINE inline bool check(const T & x)
 {
     if constexpr (is_boost_number_v<T>)
     {
@@ -91,7 +91,7 @@ inline bool check(const T & x)
 }
 
 template <typename T>
-inline void set(T & x)
+ALWAYS_INLINE inline void set(T & x)
 {
     x = {};
 }
