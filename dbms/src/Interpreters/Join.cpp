@@ -739,7 +739,6 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 continue;
             }
         }
-
     }
     for (size_t i = 0; i < segment_size; i++)
     {
@@ -756,9 +755,12 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             insert_queues[segment_index].is_running = true;
         }
 
+        absl::InlinedVector<void *, 20> q;
+
         while (true)
         {
-            std::vector<void *> q;
+            q.clear();
+
             {
                 std::lock_guard lk(map.getSegmentMutex(segment_index));
                 RUNTIME_ASSERT(insert_queues[segment_index].is_running, "is_running must be true");

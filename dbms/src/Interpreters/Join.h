@@ -26,6 +26,7 @@
 #include <Interpreters/SettingsCommon.h>
 #include <Parsers/ASTTablesInSelectQuery.h>
 #include <common/ThreadPool.h>
+#include <absl/container/inlined_vector.h>
 
 #include <shared_mutex>
 
@@ -291,7 +292,7 @@ public:
 
     struct alignas(64) InsertDataQueue
     {
-        std::vector<void *> queue;
+        absl::InlinedVector<void *, 20> queue;
         bool is_running = false;
     };
 
