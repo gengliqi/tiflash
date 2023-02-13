@@ -689,11 +689,6 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     std::vector<InsertData<KeyHolderType> *> insert_data;
     insert_data.resize(segment_size);
     size_t rows_per_seg = rows / segment_size;
-    for (size_t i = 0; i < segment_size; ++i)
-    {
-        insert_data[i] = new InsertData<KeyHolderType>(stored_block);
-        insert_data[i]->key_holder_i.reserve(rows_per_seg * 1.2);
-    }
 
     for (size_t i = 0; i < rows; ++i)
     {
@@ -718,34 +713,48 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             segment_index = hash_value % segment_size;
         }
 
+        if (insert_data[segment_index] == nullptr)
+        {
+            insert_data[segment_index] = new InsertData<KeyHolderType>(stored_block);
+            insert_data[segment_index]->key_holder_i.reserve(rows_per_seg * 1.2);
+        }
+
         insert_data[segment_index]->key_holder_i.emplace_back(std::make_pair(key_holder, i));
+    }
+
+    for (size_t i = 0; i < segment_size; i++)
+    {
+        size_t segment_index = (i + stream_index) % segment_size;
+
+        if (insert_data[segment_index] == nullptr)
+            continue;
+
+        {
+            std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+            insert_queues[segment_index].queue.emplace_back(static_cast<void *>(insert_data[segment_index]));
+            if (insert_queues[segment_index].is_running)
+            {
+                insert_data[segment_index] = nullptr;
+                continue;
+            }
+        }
+
     }
     for (size_t i = 0; i < segment_size; i++)
     {
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_build_failpoint);
         size_t segment_index = (i + stream_index) % segment_size;
 
-        if (insert_data[segment_index]->key_holder_i.empty())
+        if (insert_data[segment_index] == nullptr)
             continue;
-
-        auto * insert = insert_data[segment_index];
-        insert_data[segment_index] = nullptr;
 
         {
             std::lock_guard lk(map.getSegmentMutex(segment_index));
             if (insert_queues[segment_index].is_running)
-            {
-                insert_queues[segment_index].queue.emplace_back(static_cast<void *>(insert));
                 continue;
-            }
             insert_queues[segment_index].is_running = true;
         }
-
-        // First, insert myself data.
-        for (auto & d : insert->key_holder_i)
-            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(map.getSegmentTable(segment_index), d.first, stored_block, d.second, pool);
-
-        delete insert;
 
         while (true)
         {
@@ -765,7 +774,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             for (auto & j : q)
             {
-                insert = static_cast<InsertData<KeyHolderType> *>(j);
+                auto insert = static_cast<InsertData<KeyHolderType> *>(j);
                 j = nullptr;
 
                 for (auto & d : insert->key_holder_i)
