@@ -19,16 +19,23 @@ namespace DB
 {
 Block HashJoinBuildBlockInputStream::readImpl()
 {
+    Stopwatch read;
+    Stopwatch insert;
     try
     {
+        read.start();
         Block block = children.back()->read();
+        read_time += read.elapsed();
         if (!block)
         {
+            LOG_INFO(log, "join {} read time {} insert time {}", concurrency_build_index, read_time, insert_time);
             join->buildHashTable(concurrency_build_index);
             join->finishOneBuild();
             return block;
         }
+        insert.start();
         join->insertFromBlock(block, concurrency_build_index);
+        insert_time += insert.elapsed();
         return block;
     }
     catch (...)
