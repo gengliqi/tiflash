@@ -19,6 +19,7 @@ namespace DB
 {
 Block HashJoinBuildBlockInputStream::readImpl()
 {
+    bool after_first_read = false;
     Stopwatch read;
     Stopwatch insert;
     try
@@ -26,9 +27,18 @@ Block HashJoinBuildBlockInputStream::readImpl()
         read.start();
         Block block = children.back()->read();
         read_time += read.elapsed();
+        if (!after_first_read)
+        {
+            after_first_read = true;
+        }
+        else
+        {
+            after_first_read_time += read.elapsed();
+        }
         if (!block)
         {
             LOG_INFO(log, "join {} read time {} insert time {}", concurrency_build_index, read_time, insert_time);
+            join->logBuildTime(concurrency_build_index);
             join->finishOneBuild();
             return block;
         }

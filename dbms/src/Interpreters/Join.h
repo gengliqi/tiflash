@@ -298,6 +298,21 @@ public:
 
     std::vector<InsertDataQueue> insert_queues;
 
+    struct alignas(64) BuildTime
+    {
+        UInt64 t1 = 0;
+        UInt64 t2 = 0;
+        UInt64 t3 = 0;
+    };
+
+    std::vector<BuildTime> build_times;
+
+    void logBuildTime(size_t stream_index)
+    {
+        auto & time = build_times[stream_index];
+        LOG_INFO(log, "join {} build time {}, {}, {}, sum {}", stream_index, time.t1, time.t2, time.t3, time.t1 + time.t2 + time.t3);
+    }
+
 private:
     friend class NonJoinedBlockInputStream;
 
