@@ -292,7 +292,7 @@ public:
 
     struct alignas(64) InsertDataQueue
     {
-        absl::InlinedVector<void *, 20> queue;
+        absl::InlinedVector<void *, 10> queue;
         bool is_running = false;
     };
 

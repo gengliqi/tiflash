@@ -755,7 +755,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             insert_queues[segment_index].is_running = true;
         }
 
-        absl::InlinedVector<void *, 20> q;
+        absl::InlinedVector<void *, 10> q;
 
         while (true)
         {
