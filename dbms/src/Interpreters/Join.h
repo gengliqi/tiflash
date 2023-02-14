@@ -303,11 +303,11 @@ public:
         UInt64 t1 = 0;
         UInt64 t2 = 0;
         UInt64 t3 = 0;
-        //UInt64 a = 0;
-        //UInt64 b = 0;
-        //UInt64 c = 0;
-        //UInt64 d = 0;
-        //UInt64 e = 0;
+        UInt64 a = 0;
+        UInt64 b = 0;
+        UInt64 c = 0;
+        UInt64 d = 0;
+        UInt64 e = 0;
     };
 
     std::vector<BuildTime> build_times;
@@ -316,8 +316,8 @@ public:
     {
         auto & time = build_times[stream_index];
         LOG_INFO(log, "join {} build time {}, {}, {}, sum {}", stream_index, time.t1, time.t2, time.t3, time.t1 + time.t2 + time.t3);
-        //LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, {}, sum {}", stream_index, time.a, time.b, time.c, time.d, time.e,
-        //         time.a + time.b + time.c + time.d + time.e);
+        LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, {}, sum {}", stream_index, time.a, time.b, time.c, time.d, time.e,
+                 time.a + time.b + time.c + time.d + time.e);
     }
 
 private:

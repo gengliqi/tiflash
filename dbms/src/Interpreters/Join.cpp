@@ -629,8 +629,11 @@ void NO_INLINE insertFromBlockImplTypeCase(
     ConstNullMapPtr null_map,
     Join::RowRefList * rows_not_inserted_to_map,
     size_t stream_index,
-    Arena & pool)
+    Arena & pool,
+    Join::BuildTime & time)
 {
+    Stopwatch watch;
+
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers;
     sort_key_containers.resize(key_columns.size());
@@ -657,12 +660,14 @@ void NO_INLINE insertFromBlockImplTypeCase(
             pool,
             sort_key_containers);
     }
+
+    time.t1 += watch.elapsedFromLastTime();
 }
 
 template<typename KeyHolder>
 struct InsertData
 {
-    InsertData(Block * b) : stored_block(b) {}
+    explicit InsertData(Block * b) : stored_block(b) {}
     Block * stored_block;
     std::vector<std::pair<KeyHolder, size_t>> key_holder_i;
 };
@@ -683,7 +688,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     Join::BuildTime & time)
 {
     Stopwatch watch;
-    //Stopwatch watch2;
+    Stopwatch watch2;
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers(key_columns.size());
     size_t segment_size = map.getSegmentSize();
@@ -737,7 +742,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     time.t1 += watch.elapsedFromLastTime();
 
-    for (size_t i = 0; i < segment_size; i++)
+    for (size_t i = 0; i < segment_size; ++i)
     {
         size_t segment_index = (i + stream_index) % segment_size;
 
@@ -760,9 +765,9 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     absl::InlinedVector<void *, 10> q;
 
-    for (size_t i = 0; i < segment_size; i++)
+    for (size_t i = 0; i < segment_size; ++i)
     {
-        FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_build_failpoint);
+        //FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_build_failpoint);
         size_t segment_index = (i + stream_index) % segment_size;
 
         if (insert_data[segment_index] == nullptr)
@@ -772,7 +777,10 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
         while (true)
         {
+            watch2.restart();
+
             q.clear();
+            time.d += watch2.elapsedFromLastTime();
 
             {
                 std::lock_guard lk(map.getSegmentMutex(segment_index));
@@ -794,17 +802,26 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
                 q.swap(insert_queues[segment_index].queue);
             }
+            time.a += watch2.elapsedFromLastTime();
 
             for (auto & j : q)
             {
                 auto insert = static_cast<InsertData<KeyHolderType> *>(j);
-                j = nullptr;
 
                 for (auto & d : insert->key_holder_i)
                     Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(map.getSegmentTable(segment_index), d.first, insert->stored_block, d.second, pool);
-
-                delete insert;
             }
+
+            time.b += watch2.elapsedFromLastTime();
+
+            for (auto &j : q)
+            {
+                auto insert = static_cast<InsertData<KeyHolderType> *>(j);
+                delete insert;
+                j = nullptr;
+            }
+
+            time.c += watch2.elapsedFromLastTime();
         }
     }
 
@@ -838,7 +855,7 @@ void insertFromBlockImplType(
         {
             if (!enable_fine_grained_shuffle)
                 RUNTIME_CHECK(stream_index == 0);
-            insertFromBlockImplTypeCase<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool);
+            insertFromBlockImplTypeCase<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, time);
         }
     }
     else
@@ -851,7 +868,7 @@ void insertFromBlockImplType(
         {
             if (!enable_fine_grained_shuffle)
                 RUNTIME_CHECK(stream_index == 0);
-            insertFromBlockImplTypeCase<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool);
+            insertFromBlockImplTypeCase<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, time);
         }
     }
 }
