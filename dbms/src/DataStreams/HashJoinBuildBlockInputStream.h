@@ -46,6 +46,7 @@ private:
     JoinPtr join;
     size_t concurrency_build_index;
     const LoggerPtr log;
+    bool after_first_read = false;
     UInt64 after_first_read_time = 0;
     UInt64 read_time = 0;
     UInt64 insert_time = 0;

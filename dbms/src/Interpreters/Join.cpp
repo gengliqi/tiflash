@@ -538,7 +538,7 @@ void Join::init(const Block & sample_block, size_t build_concurrency_)
 
 namespace
 {
-void insertRowToList(Join::RowRefList * list, Join::RowRefList * elem, Block * stored_block, size_t index)
+inline void insertRowToList(Join::RowRefList * list, Join::RowRefList * elem, Block * stored_block, size_t index)
 {
     elem->next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
     list->next = elem;
@@ -683,6 +683,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     Join::BuildTime & time)
 {
     Stopwatch watch;
+    //Stopwatch watch2;
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers(key_columns.size());
     size_t segment_size = map.getSegmentSize();
@@ -692,19 +693,23 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     std::vector<InsertData<KeyHolderType> *> insert_data;
     insert_data.resize(segment_size);
     size_t rows_per_seg = rows / segment_size;
+    //time.a += watch2.elapsed();
 
     for (size_t i = 0; i < rows; ++i)
     {
+        //watch2.restart();
         if (has_null_map && (*null_map)[i])
         {
             if (rows_not_inserted_to_map)
             {
-                /// for right/full out join, need to record the rows not inserted to map
                 auto * elem = reinterpret_cast<Join::RowRefList *>(pool.alloc(sizeof(Join::RowRefList)));
                 insertRowToList(rows_not_inserted_to_map, elem, stored_block, i);
             }
             continue;
         }
+        //time.b += watch2.elapsed();
+
+        //watch2.restart();
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
         auto key = keyHolderGetKey(key_holder);
 
@@ -715,18 +720,22 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             hash_value = map.hash(key);
             segment_index = hash_value % segment_size;
         }
+        //time.c += watch2.elapsed();
 
         if (insert_data[segment_index] == nullptr)
         {
+            //watch2.restart();
             insert_data[segment_index] = new InsertData<KeyHolderType>(stored_block);
             insert_data[segment_index]->key_holder_i.reserve(rows_per_seg * 1.2);
+            //time.d += watch2.elapsed();
         }
 
-        insert_data[segment_index]->key_holder_i.emplace_back(std::make_pair(key_holder, i));
+        //watch2.restart();
+        insert_data[segment_index]->key_holder_i.emplace_back(key_holder, i);
+        //time.e += watch2.elapsed();
     }
 
-    time.t1 += watch.elapsed();
-    watch.restart();
+    time.t1 += watch.elapsedFromLastTime();
 
     for (size_t i = 0; i < segment_size; i++)
     {
@@ -747,8 +756,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         }
     }
 
-    time.t2 += watch.elapsed();
-    watch.restart();
+    time.t2 += watch.elapsedFromLastTime();
 
     absl::InlinedVector<void *, 10> q;
 
@@ -800,7 +808,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         }
     }
 
-    time.t3 += watch.elapsed();
+    time.t3 += watch.elapsedFromLastTime();
 }
 
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
