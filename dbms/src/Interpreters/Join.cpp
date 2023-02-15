@@ -917,7 +917,6 @@ void insertRemainingImplType(
 
     using DataType = InsertDataType<KeyGetter>;
 
-    BoolVec need_run(segment_size, false);
     for (size_t i = 0; i < segment_size; ++i)
     {
         size_t segment_index = (i + stream_index) % segment_size;
@@ -929,20 +928,12 @@ void insertRemainingImplType(
             std::lock_guard lk(map.getSegmentMutex(segment_index));
 
             insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
-            if (!insert_queues[segment_index].is_running)
-            {
-                /// If it's not running, need run later.
-                need_run[segment_index] = true;
-            }
         }
     }
 
     for (size_t i = 0; i < segment_size; ++i)
     {
         size_t segment_index = (i + stream_index) % segment_size;
-
-        if (!need_run[segment_index])
-            continue;
 
         bool run_by_myself = false;
 
