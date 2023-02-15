@@ -752,6 +752,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         {
             std::lock_guard lk(map.getSegmentMutex(segment_index));
 
+            insert_queues[segment_index].size += insert_data[segment_index]->key_holder_i.size();
             insert_queues[segment_index].queue.emplace_back(static_cast<void *>(insert_data[segment_index]));
             if (insert_queues[segment_index].is_running)
             {
@@ -775,32 +776,37 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
         bool run_by_myself = false;
 
+        auto & hashtable = map.getSegmentTable(segment_index);
+
         while (true)
         {
             watch2.restart();
 
             q.clear();
-            time.d += watch2.elapsedFromLastTime();
 
             {
                 std::lock_guard lk(map.getSegmentMutex(segment_index));
 
+                auto & insert_queue = insert_queues[segment_index];
+
                 if (!run_by_myself)
                 {
-                    if (insert_queues[segment_index].is_running)
+                    if (insert_queue.is_running || insert_queue.size < 65536)
                         break;
-                    insert_queues[segment_index].is_running = true;
+
+                    insert_queue.is_running = true;
 
                     run_by_myself = true;
                 }
 
-                if (insert_queues[segment_index].queue.empty())
+                if (insert_queue.queue.empty())
                 {
-                    insert_queues[segment_index].is_running = false;
+                    insert_queue.is_running = false;
                     break;
                 }
 
-                q.swap(insert_queues[segment_index].queue);
+                q.swap(insert_queue.queue);
+                insert_queue.size = 0;
             }
             time.a += watch2.elapsedFromLastTime();
 
@@ -809,7 +815,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 auto insert = static_cast<InsertData<KeyHolderType> *>(j);
 
                 for (auto & d : insert->key_holder_i)
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(map.getSegmentTable(segment_index), d.first, insert->stored_block, d.second, pool);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashtable, d.first, insert->stored_block, d.second, pool);
             }
 
             time.b += watch2.elapsedFromLastTime();
@@ -826,6 +832,121 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     }
 
     time.t3 += watch.elapsedFromLastTime();
+}
+
+template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
+void insertRemainingImplType(
+    Map & map,
+    size_t stream_index,
+    Arena & pool,
+    std::vector<Join::InsertDataQueue> & insert_queues,
+    Join::BuildTime & time)
+{
+    Stopwatch watch;
+    Stopwatch watch2;
+
+    size_t segment_size = map.getSegmentSize();
+
+    using KeyHolderType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, size_t, Arena *, std::vector<String> &>;
+
+    absl::InlinedVector<void *, 10> q;
+
+    for (size_t i = 0; i < segment_size; ++i)
+    {
+        size_t segment_index = (i + stream_index) % segment_size;
+
+        bool run_by_myself = false;
+
+        auto & hashtable = map.getSegmentTable(segment_index);
+
+        while (true)
+        {
+            watch2.restart();
+
+            q.clear();
+
+            {
+                std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                auto & insert_queue = insert_queues[segment_index];
+
+                if (!run_by_myself)
+                {
+                    if (insert_queue.is_running)
+                        break;
+
+                    insert_queue.is_running = true;
+
+                    run_by_myself = true;
+                }
+
+                if (insert_queue.queue.empty())
+                {
+                    insert_queue.is_running = false;
+                    break;
+                }
+
+                q.swap(insert_queue.queue);
+                insert_queue.size = 0;
+            }
+            time.a_2 += watch2.elapsedFromLastTime();
+
+            for (auto & j : q)
+            {
+                auto insert = static_cast<InsertData<KeyHolderType> *>(j);
+
+                for (auto & d : insert->key_holder_i)
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashtable, d.first, insert->stored_block, d.second, pool);
+            }
+
+            time.b_2 += watch2.elapsedFromLastTime();
+
+            for (auto &j : q)
+            {
+                auto insert = static_cast<InsertData<KeyHolderType> *>(j);
+                delete insert;
+                j = nullptr;
+            }
+
+            time.c_2 += watch2.elapsedFromLastTime();
+        }
+    }
+
+    time.t3_2 += watch.elapsedFromLastTime();
+}
+
+template <ASTTableJoin::Strictness STRICTNESS, typename Maps>
+void insertRemainingImpl(
+    Join::Type type,
+    Maps & maps,
+    size_t stream_index,
+    Arena & pool,
+    std::vector<Join::InsertDataQueue> & insert_queues,
+    Join::BuildTime & time)
+{
+    switch (type)
+    {
+    case Join::Type::EMPTY:
+        break;
+    case Join::Type::CROSS:
+        break; /// Do nothing. We have already saved block, and it is enough.
+
+#define M(TYPE)                                                                                                                                \
+    case Join::Type::TYPE:                                                                                                                     \
+        insertRemainingImplType<STRICTNESS, typename KeyGetterForType<Join::Type::TYPE, std::remove_reference_t<decltype(*maps.TYPE)>>::Type>( \
+            *maps.TYPE,                                                                                                                        \
+            stream_index,                                                                                                                      \
+            pool,                                                                                                                              \
+            insert_queues,                                                                                                                     \
+            time);                                                                                                                             \
+        break;
+        APPLY_FOR_JOIN_VARIANTS(M)
+#undef M
+
+    default:
+        throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
+    }
+
 }
 
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
@@ -1090,6 +1211,17 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
                 insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, build_times[stream_index]);
         }
     }
+}
+
+void Join::insertRemaining(size_t stream_index)
+{
+    if (isCrossJoin(kind))
+        return;
+
+    if (strictness == ASTTableJoin::Strictness::Any)
+        insertRemainingImpl<ASTTableJoin::Strictness::Any>(type, maps_any, stream_index, *pools[stream_index], insert_queues, build_times[stream_index]);
+    else
+        insertRemainingImpl<ASTTableJoin::Strictness::Any>(type, maps_all, stream_index, *pools[stream_index], insert_queues, build_times[stream_index]);
 }
 
 

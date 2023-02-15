@@ -293,6 +293,7 @@ public:
     struct alignas(64) InsertDataQueue
     {
         absl::InlinedVector<void *, 10> queue;
+        size_t size;
         bool is_running = false;
     };
 
@@ -308,6 +309,10 @@ public:
         UInt64 c = 0;
         UInt64 d = 0;
         UInt64 e = 0;
+        UInt64 t3_2 = 0;
+        UInt64 a_2 = 0;
+        UInt64 b_2 = 0;
+        UInt64 c_2 = 0;
     };
 
     std::vector<BuildTime> build_times;
@@ -318,7 +323,12 @@ public:
         LOG_INFO(log, "join {} build time {}, {}, {}, sum {}", stream_index, time.t1, time.t2, time.t3, time.t1 + time.t2 + time.t3);
         LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, {}, sum {}", stream_index, time.a, time.b, time.c, time.d, time.e,
                  time.a + time.b + time.c + time.d + time.e);
+        LOG_INFO(log, "join {} build time more and more, {}, {}, {}, {}, sum {}", stream_index, time.t3_2, time.a_2, time.b_2, time.c_2,
+                 time.a_2 + time.b_2 + time.c_2);
+
     }
+
+    void insertRemaining(size_t stream_index);
 
 private:
     friend class NonJoinedBlockInputStream;
