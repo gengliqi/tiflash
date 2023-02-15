@@ -802,7 +802,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                     run_by_myself = true;
                 }
 
-                if (insert_queue.queue.empty())
+                if (insert_queue.size < min_insert_hash_table_size)
                 {
                     insert_queue.is_running = false;
                     break;
