@@ -166,7 +166,7 @@ Join::Join(
         throw Exception("Not supported: non left join with left conditions");
     if (unlikely(!right_filter_column.empty() && !isRightJoin(kind)))
         throw Exception("Not supported: non right join with right conditions");
-    LOG_INFO(log, "FineGrainedShuffle flag {}, stream count {}", enable_fine_grained_shuffle, fine_grained_shuffle_count);
+    LOG_INFO(log, "FineGrainedShuffle flag {}, stream count {}, min_batch_insert_ht_size {}", enable_fine_grained_shuffle, fine_grained_shuffle_count, min_batch_insert_ht_size);
 }
 
 void Join::meetError(const String & error_message_)
@@ -478,7 +478,7 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
     build_concurrency = std::max(1, build_concurrency_);
 
     insert_batches.resize(build_concurrency);
-    max_cache_size_for_insert_ht = 0.5 * build_concurrency * build_concurrency;
+    max_cache_size_for_insert_ht = build_concurrency * build_concurrency;
     insert_caches.reserve(max_cache_size_for_insert_ht);
 
     insert_queues.resize(build_concurrency);

@@ -297,7 +297,7 @@ void DAGQueryBlockInterpreter::handleJoin(const tipb::Join & join, DAGPipeline &
             extra_info = fmt::format("{} {}", extra_info, String(enableFineGrainedShuffleExtraInfo));
         for (auto & stream : streams)
         {
-            stream = std::make_shared<HashJoinBuildBlockInputStream>(stream, join_ptr, build_index++, log->identifier());
+            stream = std::make_shared<HashJoinBuildBlockInputStream>(stream, join_ptr, build_index++, log->identifier(), dagContext().getJoinExecuteInfoMap()[query_block.source_name].build_side_root_executor_id);
             stream->setExtraInfo(extra_info);
             join_execute_info.join_build_streams.push_back(stream);
         }
