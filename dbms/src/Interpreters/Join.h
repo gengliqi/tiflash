@@ -25,8 +25,8 @@
 #include <Interpreters/ExpressionActions.h>
 #include <Interpreters/SettingsCommon.h>
 #include <Parsers/ASTTablesInSelectQuery.h>
-#include <common/ThreadPool.h>
 #include <absl/container/inlined_vector.h>
+#include <common/ThreadPool.h>
 
 #include <shared_mutex>
 
@@ -103,7 +103,7 @@ public:
          const String & other_eq_filter_from_in_column = "",
          ExpressionActionsPtr other_condition_ptr = nullptr,
          size_t max_block_size = 0,
-         size_t min_insert_hash_table_size = 0,
+         size_t min_batch_insert_ht_size = 0,
          const String & match_helper_name = "");
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
@@ -291,10 +291,21 @@ public:
     // only use for left semi joins.
     const String match_helper_name;
 
+    using InsertDataVoidType = std::unique_ptr<void, std::function<void(void *)>>;
+
+    struct alignas(64) InsertDataBatch
+    {
+        std::vector<InsertDataVoidType> batch_per_map;
+    };
+
+    std::vector<InsertDataBatch> insert_batches;
+
+    std::mutex insert_cache_mutex;
+    std::vector<InsertDataVoidType> insert_caches;
+
     struct alignas(64) InsertDataQueue
     {
-        absl::InlinedVector<void *, 10> queue;
-        size_t size;
+        absl::InlinedVector<InsertDataVoidType, 10> queue;
         bool is_running = false;
     };
 
@@ -305,28 +316,30 @@ public:
         UInt64 t1 = 0;
         UInt64 t2 = 0;
         UInt64 t3 = 0;
+        UInt64 t4 = 0;
         UInt64 a = 0;
         UInt64 b = 0;
         UInt64 c = 0;
         UInt64 d = 0;
-        UInt64 e = 0;
         UInt64 t3_2 = 0;
         UInt64 a_2 = 0;
         UInt64 b_2 = 0;
-        UInt64 c_2 = 0;
+        UInt64 original_count = 0;
+        UInt64 new_count = 0;
+        UInt64 delete_count = 0;
+        UInt64 local_hit = 0;
+        UInt64 global_hit = 0;
     };
 
     std::vector<BuildTime> build_times;
 
     void logBuildTime(size_t stream_index)
     {
-        auto & time = build_times[stream_index];
-        LOG_INFO(log, "join {} build time {}, {}, {}, sum {}", stream_index, time.t1, time.t2, time.t3, time.t1 + time.t2 + time.t3);
-        LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, {}, sum {}", stream_index, time.a, time.b, time.c, time.d, time.e,
-                 time.a + time.b + time.c + time.d + time.e);
-        LOG_INFO(log, "join {} build time more and more, {}, {}, {}, {}, sum {}", stream_index, time.t3_2, time.a_2, time.b_2, time.c_2,
-                 time.a_2 + time.b_2 + time.c_2);
-
+        auto & t = build_times[stream_index];
+        LOG_INFO(log, "join {} build time {}, {}, {}, {}, sum {}", stream_index, t.t1, t.t2, t.t3, t.t4, t.t1 + t.t2 + t.t3 + t.t4);
+        LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, sum {}", stream_index, t.a, t.b, t.c, t.d, t.a + t.b + t.c + t.d);
+        LOG_INFO(log, "join {} build time more and more, {}, {}, {}, sum {}", stream_index, t.t3_2, t.a_2, t.b_2, t.a_2 + t.b_2);
+        LOG_INFO(log, "join {} original {} new {} delete {} local hit {} global hit {}", stream_index, t.original_count, t.new_count, t.delete_count, t.local_hit, t.global_hit);
     }
 
     void insertRemaining(size_t stream_index);
@@ -366,7 +379,8 @@ private:
     ExpressionActionsPtr other_condition_ptr;
     ASTTableJoin::Strictness original_strictness;
     size_t max_block_size_for_cross_join;
-    size_t min_insert_hash_table_size;
+    size_t min_batch_insert_ht_size;
+    size_t max_cache_size_for_insert_ht;
     /** Blocks of "right" table.
       */
     BlocksList blocks;

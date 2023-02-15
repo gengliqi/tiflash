@@ -278,7 +278,7 @@ void DAGQueryBlockInterpreter::handleJoin(const tipb::Join & join, DAGPipeline &
         other_eq_filter_from_in_column_name,
         other_condition_expr,
         max_block_size_for_cross_join,
-        settings.min_insert_hash_table_size,
+        settings.min_batch_insert_ht_size,
         match_helper_name);
 
     recordJoinExecuteInfo(tiflash_join.build_side_index, join_ptr);

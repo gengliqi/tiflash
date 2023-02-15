@@ -134,7 +134,7 @@ PhysicalPlanNodePtr PhysicalJoin::build(
         other_eq_filter_from_in_column_name,
         other_condition_expr,
         max_block_size_for_cross_join,
-        settings.min_insert_hash_table_size,
+        settings.min_batch_insert_ht_size,
         match_helper_name);
 
     recordJoinExecuteInfo(dag_context, executor_id, build_plan->execId(), join_ptr);
