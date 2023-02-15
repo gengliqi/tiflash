@@ -103,6 +103,7 @@ public:
          const String & other_eq_filter_from_in_column = "",
          ExpressionActionsPtr other_condition_ptr = nullptr,
          size_t max_block_size = 0,
+         size_t min_insert_hash_table_size = 0,
          const String & match_helper_name = "");
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
@@ -365,6 +366,7 @@ private:
     ExpressionActionsPtr other_condition_ptr;
     ASTTableJoin::Strictness original_strictness;
     size_t max_block_size_for_cross_join;
+    size_t min_insert_hash_table_size;
     /** Blocks of "right" table.
       */
     BlocksList blocks;

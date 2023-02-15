@@ -130,6 +130,7 @@ Join::Join(
     const String & other_eq_filter_from_in_column_,
     ExpressionActionsPtr other_condition_ptr_,
     size_t max_block_size_,
+    size_t min_insert_hash_table_size,
     const String & match_helper_name)
     : match_helper_name(match_helper_name)
     , kind(kind_)
@@ -148,6 +149,7 @@ Join::Join(
     , other_condition_ptr(other_condition_ptr_)
     , original_strictness(strictness)
     , max_block_size_for_cross_join(max_block_size_)
+    , min_insert_hash_table_size(min_insert_hash_table_size)
     , log(Logger::get(req_id))
     , enable_fine_grained_shuffle(enable_fine_grained_shuffle_)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
@@ -685,6 +687,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     size_t stream_index,
     Arena & pool,
     std::vector<Join::InsertDataQueue> & insert_queues,
+    size_t min_insert_hash_table_size,
     Join::BuildTime & time)
 {
     Stopwatch watch;
@@ -791,7 +794,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
                 if (!run_by_myself)
                 {
-                    if (insert_queue.is_running || insert_queue.size < 65536)
+                    if (insert_queue.is_running || insert_queue.size < min_insert_hash_table_size)
                         break;
 
                     insert_queue.is_running = true;
@@ -964,13 +967,14 @@ void insertFromBlockImplType(
     Arena & pool,
     bool enable_fine_grained_shuffle,
     std::vector<Join::InsertDataQueue> & insert_queues,
+    size_t min_insert_hash_table_size,
     Join::BuildTime & time)
 {
     if (null_map)
     {
         if (insert_concurrency > 1 && !enable_fine_grained_shuffle)
         {
-            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, insert_queues, time);
+            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, insert_queues, min_insert_hash_table_size, time);
         }
         else
         {
@@ -983,7 +987,7 @@ void insertFromBlockImplType(
     {
         if (insert_concurrency > 1 && !enable_fine_grained_shuffle)
         {
-            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, insert_queues, time);
+            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, insert_queues, min_insert_hash_table_size, time);
         }
         else
         {
@@ -1010,6 +1014,7 @@ void insertFromBlockImpl(
     Arena & pool,
     bool enable_fine_grained_shuffle,
     std::vector<Join::InsertDataQueue> & insert_queues,
+    size_t min_insert_hash_table_size,
     Join::BuildTime & time)
 {
     switch (type)
@@ -1035,6 +1040,7 @@ void insertFromBlockImpl(
             pool,                                                                                                                              \
             enable_fine_grained_shuffle,                                                                                                         \
             insert_queues,                                                                                                                     \
+            min_insert_hash_table_size,                                                                                                        \
             time);                                                                                                                             \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -1199,16 +1205,16 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
         if (!getFullness(kind))
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, min_insert_hash_table_size, build_times[stream_index]);
             else
-                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, min_insert_hash_table_size, build_times[stream_index]);
         }
         else
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, min_insert_hash_table_size, build_times[stream_index]);
             else
-                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_queues, min_insert_hash_table_size, build_times[stream_index]);
         }
     }
 }
