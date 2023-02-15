@@ -135,11 +135,11 @@ public:
     }
 
     template <typename Data, typename KeyHolder>
-    static ALWAYS_INLINE inline EmplaceResult emplaceKey(KeyHolder key_holder, Data & data)
+    static ALWAYS_INLINE inline EmplaceResult emplaceKey(KeyHolder & key_holder, size_t hash_value, Data & data)
     {
         typename Data::LookupResult it;
         bool inserted = false;
-        data.emplace(key_holder, it, inserted);
+        data.emplace(key_holder, it, inserted, hash_value);
 
         [[maybe_unused]] Mapped * cached = nullptr;
         if constexpr (has_mapped)

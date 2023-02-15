@@ -479,6 +479,7 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
 
     insert_batches.resize(build_concurrency);
     max_cache_size_for_insert_ht = 0.5 * build_concurrency * build_concurrency;
+    insert_caches.reserve(max_cache_size_for_insert_ht);
 
     insert_queues.resize(build_concurrency);
     build_times.resize(build_concurrency);
@@ -558,7 +559,7 @@ struct Inserter
     static void insert(Map & map, const typename Map::key_type & key, Block * stored_block, size_t i, Arena & pool, std::vector<String> & sort_key_containers);
 
     template <typename KeyHolder>
-    static void insert(Map & map, KeyHolder & key_holder, Block * stored_block, size_t i, Arena & pool);
+    static void insert(Map & map, KeyHolder & key_holder, size_t hash_value, Block * stored_block, size_t i, Arena & pool);
 };
 
 template <typename Map, typename KeyGetter>
@@ -573,9 +574,9 @@ struct Inserter<ASTTableJoin::Strictness::Any, Map, KeyGetter>
     }
 
     template <typename KeyHolder>
-    static void insert(Map & map, KeyHolder & key_holder, Block * stored_block, size_t i, Arena & pool [[maybe_unused]])
+    static void insert(Map & map, KeyHolder & key_holder, size_t hash_value, Block * stored_block, size_t i, Arena & pool [[maybe_unused]])
     {
-        auto emplace_result = KeyGetter::emplaceKey(key_holder, map);
+        auto emplace_result = KeyGetter::emplaceKey(key_holder, hash_value, map);
 
         if (emplace_result.isInserted())
             new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
@@ -604,9 +605,9 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
     }
 
     template <typename KeyHolder>
-    static void insert(Map & map, KeyHolder & key_holder, Block * stored_block, size_t i, Arena & pool)
+    static void insert(Map & map, KeyHolder & key_holder, size_t hash_value, Block * stored_block, size_t i, Arena & pool)
     {
-        auto emplace_result = KeyGetter::emplaceKey(key_holder, map);
+        auto emplace_result = KeyGetter::emplaceKey(key_holder, hash_value, map);
 
         if (emplace_result.isInserted())
             new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
@@ -675,19 +676,27 @@ using KeyHolderType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), K
 template <typename KeyGetter>
 struct InsertData
 {
-    InsertData(KeyHolderType<KeyGetter> && holder, Block * block, size_t index)
+    InsertData(KeyHolderType<KeyGetter> && holder, size_t hash_value, Block * block, size_t index)
         : holder(std::move(holder))
+        , hash_value(hash_value)
         , block(block)
         , index(index)
     {}
 
     KeyHolderType<KeyGetter> holder;
+    size_t hash_value;
     Block * block;
     size_t index;
 };
 
 template <typename KeyGetter>
 using InsertDataType = PaddedPODArray<InsertData<KeyGetter>>;
+
+template <typename DataType>
+void deleteInsertData(void * ptr)
+{
+    delete static_cast<DataType *>(ptr);
+}
 
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map, bool has_null_map>
 void NO_INLINE insertFromBlockImplTypeCaseWithLock(
@@ -726,8 +735,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         {
             auto * insert = new DataType();
             insert->reserve(min_batch_insert_ht_size * 1.2);
-            batch.batch_per_map.emplace_back(static_cast<void *>(insert),
-                                             [](void * ptr) { delete static_cast<DataType *>(ptr); });
+            batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataType>);
         }
     }
 
@@ -746,15 +754,10 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
         auto key = keyHolderGetKey(key_holder);
 
-        size_t segment_index = 0;
-        size_t hash_value = 0;
-        if (!ZeroTraits::check(key))
-        {
-            hash_value = map.hash(key);
-            segment_index = hash_value % segment_size;
-        }
+        size_t hash_value = map.hash(key);
+        size_t segment_index = hash_value % segment_size;
 
-        static_cast<DataType *>(batch.batch_per_map[segment_index].get())->emplace_back(std::move(key_holder), stored_block, i);
+        static_cast<DataType *>(batch.batch_per_map[segment_index].get())->emplace_back(std::move(key_holder), hash_value, stored_block, i);
     }
 
     time.t1 += watch.elapsedFromLastTime();
@@ -774,7 +777,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             if (!insert_queues[segment_index].is_running)
             {
                 /// If it's not running, need run later.
-                need_run[i] = true;
+                need_run[segment_index] = true;
             }
         }
     }
@@ -792,7 +795,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
         bool run_by_myself = false;
 
-        auto & hashtable = map.getSegmentTable(segment_index);
+        auto & hash_table = map.getSegmentTable(segment_index);
 
         while (true)
         {
@@ -827,16 +830,17 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             for (auto & j : q)
             {
-                auto insert = static_cast<DataType *>(j.get());
+                auto * insert = static_cast<DataType *>(j.get());
 
                 for (size_t k = 0, size = insert->size(); k < size; ++k)
                 {
                     auto & data = (*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashtable, data.holder, data.block, data.index, pool);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data.holder, data.hash_value, data.block, data.index, pool);
                 }
 
                 insert->clear();
                 empty_batches.emplace_back(std::move(j));
+                RUNTIME_ASSERT(j == nullptr);
             }
 
             time.b += watch2.elapsedFromLastTime();
@@ -852,8 +856,9 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             if (!empty_batches.empty())
             {
                 ++time.local_hit;
-                batch.batch_per_map[i] = std::move(*empty_batches.end());
+                batch.batch_per_map[i] = std::move(empty_batches.back());
                 empty_batches.pop_back();
+                RUNTIME_ASSERT(static_cast<DataType *>(batch.batch_per_map[i].get())->empty());
                 continue;
             }
             {
@@ -861,16 +866,16 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 if (!insert_caches.empty())
                 {
                     ++time.global_hit;
-                    batch.batch_per_map[i] = std::move(*insert_caches.end());
+                    batch.batch_per_map[i] = std::move(insert_caches.back());
                     insert_caches.pop_back();
+                    RUNTIME_ASSERT(static_cast<DataType *>(batch.batch_per_map[i].get())->empty());
                     continue;
                 }
             }
             ++time.new_count;
             auto * insert = new DataType();
             insert->reserve(min_batch_insert_ht_size * 1.2);
-            batch.batch_per_map[i] = Join::InsertDataVoidType(static_cast<void *>(insert),
-                                                              [](void * ptr) { delete static_cast<DataType *>(ptr); });
+            batch.batch_per_map[i] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataType>);
         }
     }
 
@@ -927,7 +932,7 @@ void insertRemainingImplType(
             if (!insert_queues[segment_index].is_running)
             {
                 /// If it's not running, need run later.
-                need_run[i] = true;
+                need_run[segment_index] = true;
             }
         }
     }
@@ -977,12 +982,12 @@ void insertRemainingImplType(
 
             for (auto & j : q)
             {
-                auto insert = static_cast<DataType *>(j.get());
+                auto * insert = static_cast<DataType *>(j.get());
 
                 for (size_t k = 0, size = insert->size(); k < size; ++k)
                 {
                     auto & data = (*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashtable, data.holder, data.block, data.index, pool);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashtable, data.holder, data.hash_value, data.block, data.index, pool);
                 }
             }
 
@@ -1312,10 +1317,20 @@ void Join::insertRemaining(size_t stream_index)
     if (isCrossJoin(kind))
         return;
 
-    if (strictness == ASTTableJoin::Strictness::Any)
-        insertRemainingImpl<ASTTableJoin::Strictness::Any>(type, maps_any, stream_index, *pools[stream_index], insert_queues, insert_batches[stream_index], build_times[stream_index]);
+    if (!getFullness(kind))
+    {
+        if (strictness == ASTTableJoin::Strictness::Any)
+            insertRemainingImpl<ASTTableJoin::Strictness::Any>(type, maps_any, stream_index, *pools[stream_index], insert_queues, insert_batches[stream_index], build_times[stream_index]);
+        else
+            insertRemainingImpl<ASTTableJoin::Strictness::All>(type, maps_all, stream_index, *pools[stream_index], insert_queues, insert_batches[stream_index], build_times[stream_index]);
+    }
     else
-        insertRemainingImpl<ASTTableJoin::Strictness::Any>(type, maps_all, stream_index, *pools[stream_index], insert_queues, insert_batches[stream_index], build_times[stream_index]);
+    {
+        if (strictness == ASTTableJoin::Strictness::Any)
+            insertRemainingImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, stream_index, *pools[stream_index], insert_queues, insert_batches[stream_index], build_times[stream_index]);
+        else
+            insertRemainingImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, stream_index, *pools[stream_index], insert_queues, insert_batches[stream_index], build_times[stream_index]);
+    }
 }
 
 
