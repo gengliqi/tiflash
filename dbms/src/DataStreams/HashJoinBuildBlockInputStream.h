@@ -52,7 +52,7 @@ private:
     UInt64 after_first_read_time = 0;
     UInt64 read_time = 0;
     UInt64 insert_time = 0;
-    String exec_id;s
+    String exec_id;
 };
 
 } // namespace DB
