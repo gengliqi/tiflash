@@ -131,6 +131,7 @@ Join::Join(
     ExpressionActionsPtr other_condition_ptr_,
     size_t max_block_size_,
     size_t min_batch_insert_ht_size,
+    size_t hash_map_count,
     const String & match_helper_name)
     : match_helper_name(match_helper_name)
     , kind(kind_)
@@ -150,6 +151,7 @@ Join::Join(
     , original_strictness(strictness)
     , max_block_size_for_cross_join(max_block_size_)
     , min_batch_insert_ht_size(min_batch_insert_ht_size)
+    , hash_map_count(hash_map_count)
     , log(Logger::get(req_id))
     , enable_fine_grained_shuffle(enable_fine_grained_shuffle_)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
@@ -166,7 +168,7 @@ Join::Join(
         throw Exception("Not supported: non left join with left conditions");
     if (unlikely(!right_filter_column.empty() && !isRightJoin(kind)))
         throw Exception("Not supported: non right join with right conditions");
-    LOG_INFO(log, "FineGrainedShuffle flag {}, stream count {}, min_batch_insert_ht_size {}", enable_fine_grained_shuffle, fine_grained_shuffle_count, min_batch_insert_ht_size);
+    LOG_INFO(log, "FineGrainedShuffle flag {}, stream count {}, min_batch_insert_ht_size {} hash_map_count {}", enable_fine_grained_shuffle, fine_grained_shuffle_count, min_batch_insert_ht_size, hash_map_count);
 }
 
 void Join::meetError(const String & error_message_)
@@ -411,16 +413,16 @@ void Join::initMapImpl(Type type_)
     if (!getFullness(kind))
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            initImpl(maps_any, type, getBuildConcurrencyInternal());
+            initImpl(maps_any, type, hash_map_count);
         else
-            initImpl(maps_all, type, getBuildConcurrencyInternal());
+            initImpl(maps_all, type, hash_map_count);
     }
     else
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            initImpl(maps_any_full, type, getBuildConcurrencyInternal());
+            initImpl(maps_any_full, type, hash_map_count);
         else
-            initImpl(maps_all_full, type, getBuildConcurrencyInternal());
+            initImpl(maps_all_full, type, hash_map_count);
     }
 }
 
@@ -476,13 +478,16 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
     /// do not set active_build_concurrency because in compile stage, `joinBlock` will be called to get generate header, if active_build_concurrency
     /// is set here, `joinBlock` will hang when used to get header
     build_concurrency = std::max(1, build_concurrency_);
+    if (hash_map_count == 0)
+        hash_map_count = build_concurrency;
+
+    insert_queues.resize(hash_map_count);
 
     insert_batches.resize(build_concurrency);
-    max_cache_size_for_insert_ht = build_concurrency * build_concurrency;
-    insert_caches.reserve(max_cache_size_for_insert_ht);
-
-    insert_queues.resize(build_concurrency);
     build_times.resize(build_concurrency);
+
+    max_cache_size_for_insert_ht = build_concurrency * hash_map_count;
+    insert_caches.reserve(max_cache_size_for_insert_ht);
 
     for (size_t i = 0; i < getBuildConcurrencyInternal(); ++i)
         pools.emplace_back(std::make_shared<Arena>());

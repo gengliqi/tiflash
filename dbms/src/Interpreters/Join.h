@@ -104,6 +104,7 @@ public:
          ExpressionActionsPtr other_condition_ptr = nullptr,
          size_t max_block_size = 0,
          size_t min_batch_insert_ht_size = 0,
+         size_t hash_map_count = 0,
          const String & match_helper_name = "");
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
@@ -381,6 +382,8 @@ private:
     size_t max_block_size_for_cross_join;
     size_t min_batch_insert_ht_size;
     size_t max_cache_size_for_insert_ht;
+    size_t hash_map_count;
+
     /** Blocks of "right" table.
       */
     BlocksList blocks;

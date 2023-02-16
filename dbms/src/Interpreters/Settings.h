@@ -303,7 +303,8 @@ struct Settings
     M(SettingBool, enable_pipeline, false, "Enable pipeline model")                                                                                                                                                                     \
     M(SettingUInt64, pipeline_task_thread_pool_size, 0, "The size of task thread pool. 0 means using number_of_logical_cpu_cores.") \
     M(SettingUInt64, local_tunnel_version, 1, "1: not refined, 2: refined")\
-    M(SettingUInt64, min_batch_insert_ht_size, 10000, "")
+    M(SettingUInt64, min_batch_insert_ht_size, 1024, "")\
+    M(SettingUInt64, hash_map_count, 0, "")
 
 // clang-format on
 #define DECLARE(TYPE, NAME, DEFAULT, DESCRIPTION) TYPE NAME{DEFAULT};
