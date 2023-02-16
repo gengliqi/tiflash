@@ -184,7 +184,7 @@ void PhysicalJoin::buildSideTransform(DAGPipeline & build_pipeline, Context & co
         size_t build_index = 0;
         for (auto & stream : streams)
         {
-            stream = std::make_shared<HashJoinBuildBlockInputStream>(stream, join_ptr, build_index++, log->identifier());
+            stream = std::make_shared<HashJoinBuildBlockInputStream>(stream, join_ptr, build_index++, log->identifier(), build()->execId());
             stream->setExtraInfo(join_build_extra_info);
             join_execute_info.join_build_streams.push_back(stream);
         }

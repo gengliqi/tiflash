@@ -21,13 +21,26 @@ Block HashJoinBuildBlockInputStream::readImpl()
 {
     try
     {
+        Stopwatch read;
         Block block = children.back()->read();
+        auto time = read.elapsed();
+        read_time += time;
+        if (!after_first_read)
+        {
+            after_first_read = true;
+        }
+        else
+        {
+            after_first_read_time += time;
+        }
         if (!block)
         {
-            join->finishOneBuild();
+            LOG_INFO(log, "{} join {} read time {} after first read time {} insert time {}", exec_id, concurrency_build_index, read_time, after_first_read_time, insert_time);            join->finishOneBuild();
             return block;
         }
+        Stopwatch insert;
         join->insertFromBlock(block, concurrency_build_index);
+        insert_time += insert.elapsed();
         return block;
     }
     catch (...)
