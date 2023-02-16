@@ -410,19 +410,20 @@ void Join::initMapImpl(Type type_)
     if (isCrossJoin(kind))
         return;
 
+    size_t count = enable_fine_grained_shuffle ? build_concurrency : hash_map_count;
     if (!getFullness(kind))
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            initImpl(maps_any, type, hash_map_count);
+            initImpl(maps_any, type, count);
         else
-            initImpl(maps_all, type, hash_map_count);
+            initImpl(maps_all, type, count);
     }
     else
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            initImpl(maps_any_full, type, hash_map_count);
+            initImpl(maps_any_full, type, count);
         else
-            initImpl(maps_all_full, type, hash_map_count);
+            initImpl(maps_all_full, type, count);
     }
 }
 
@@ -1310,7 +1311,7 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
 
 void Join::insertRemaining(size_t stream_index)
 {
-    if (isCrossJoin(kind))
+    if (isCrossJoin(kind) || enable_fine_grained_shuffle)
         return;
 
     if (!getFullness(kind))
