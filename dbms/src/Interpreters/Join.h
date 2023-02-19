@@ -298,7 +298,6 @@ public:
     struct alignas(64) InsertDataBatch
     {
         std::vector<InsertDataVoidType> batch_per_map;
-        std::vector<Block *> blocks;
     };
 
     std::vector<InsertDataBatch> insert_batches;
@@ -386,6 +385,7 @@ private:
     size_t max_cache_size_for_insert_ht;
     size_t hash_map_count;
     bool build_hash_table_at_end;
+    BlocksList::iterator blocks_iter;
 
     /** Blocks of "right" table.
       */

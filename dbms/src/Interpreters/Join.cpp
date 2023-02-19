@@ -158,6 +158,7 @@ Join::Join(
     , enable_fine_grained_shuffle(enable_fine_grained_shuffle_)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
 {
+    blocks_iter = blocks.end();
     if (other_condition_ptr != nullptr)
     {
         /// if there is other_condition, then should keep all the valid rows during probe stage
@@ -1213,10 +1214,10 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
         blocks.push_back(block);
         stored_block = &blocks.back();
         original_blocks.push_back(block);
+        if (blocks.size() == 1)
+            blocks_iter = blocks.begin();
     }
-    if (build_hash_table_at_end)
-        insert_batches[stream_index].blocks.push_back(stored_block);
-    else
+    if (!build_hash_table_at_end)
         insertFromBlockInternal(stored_block, stream_index);
 }
 
@@ -1318,8 +1319,16 @@ void Join::insertRemaining(size_t stream_index)
 {
     if (build_hash_table_at_end)
     {
-        for (auto & b : insert_batches[stream_index].blocks)
+        while (true)
         {
+            Block * b = nullptr;
+            {
+                std::lock_guard lk(blocks_lock);
+                if (blocks_iter == blocks.end())
+                    break;
+                b = &*blocks_iter;
+                ++blocks_iter;
+            }
             insertFromBlockInternal(b, stream_index);
         }
     }
