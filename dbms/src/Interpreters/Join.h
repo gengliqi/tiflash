@@ -105,6 +105,7 @@ public:
          size_t max_block_size = 0,
          size_t min_batch_insert_ht_size = 0,
          size_t hash_map_count = 0,
+         bool build_hash_table_at_end = false,
          const String & match_helper_name = "");
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
@@ -383,6 +384,7 @@ private:
     size_t min_batch_insert_ht_size;
     size_t max_cache_size_for_insert_ht;
     size_t hash_map_count;
+    bool build_hash_table_at_end;
 
     /** Blocks of "right" table.
       */

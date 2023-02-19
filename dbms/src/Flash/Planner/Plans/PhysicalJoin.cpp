@@ -136,6 +136,7 @@ PhysicalPlanNodePtr PhysicalJoin::build(
         max_block_size_for_cross_join,
         settings.min_batch_insert_ht_size,
         settings.hash_map_count,
+        settings.build_hash_table_at_end,
         match_helper_name);
 
     recordJoinExecuteInfo(dag_context, executor_id, build_plan->execId(), join_ptr);

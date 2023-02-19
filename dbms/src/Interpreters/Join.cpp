@@ -132,6 +132,7 @@ Join::Join(
     size_t max_block_size_,
     size_t min_batch_insert_ht_size,
     size_t hash_map_count,
+    bool build_hash_table_at_end,
     const String & match_helper_name)
     : match_helper_name(match_helper_name)
     , kind(kind_)
@@ -152,6 +153,7 @@ Join::Join(
     , max_block_size_for_cross_join(max_block_size_)
     , min_batch_insert_ht_size(min_batch_insert_ht_size)
     , hash_map_count(hash_map_count)
+    , build_hash_table_at_end(build_hash_table_at_end)
     , log(Logger::get(req_id))
     , enable_fine_grained_shuffle(enable_fine_grained_shuffle_)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
@@ -1212,7 +1214,8 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
         stored_block = &blocks.back();
         original_blocks.push_back(block);
     }
-    insertFromBlockInternal(stored_block, stream_index);
+    if (!build_hash_table_at_end)
+        insertFromBlockInternal(stored_block, stream_index);
 }
 
 void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
@@ -1311,6 +1314,14 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
 
 void Join::insertRemaining(size_t stream_index)
 {
+    if (build_hash_table_at_end)
+    {
+        for (auto & b : blocks)
+        {
+            insertFromBlockInternal(&b, stream_index);
+        }
+    }
+
     if (isCrossJoin(kind) || enable_fine_grained_shuffle)
         return;
 
