@@ -37,8 +37,7 @@ Block HashJoinBuildBlockInputStream::readImpl()
         {
             Stopwatch insert;
             join->insertRemaining(concurrency_build_index);
-            insert_time += insert.elapsed();
-            LOG_INFO(log, "{} join {} read time {} after first read time {} insert time {}", exec_id, concurrency_build_index, read_time, after_first_read_time, insert_time);
+            LOG_INFO(log, "{} join {} read time {} after first read time {} insert time {} remaining {}", exec_id, concurrency_build_index, read_time, after_first_read_time, insert_time, insert.elapsed());
             join->logBuildTime(concurrency_build_index);
             join->finishOneBuild();
             return block;

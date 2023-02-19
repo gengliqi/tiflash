@@ -1214,7 +1214,9 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
         stored_block = &blocks.back();
         original_blocks.push_back(block);
     }
-    if (!build_hash_table_at_end)
+    if (build_hash_table_at_end)
+        insert_batches[stream_index].blocks.push_back(stored_block);
+    else
         insertFromBlockInternal(stored_block, stream_index);
 }
 
@@ -1316,9 +1318,9 @@ void Join::insertRemaining(size_t stream_index)
 {
     if (build_hash_table_at_end)
     {
-        for (auto & b : blocks)
+        for (auto & b : insert_batches[stream_index].blocks)
         {
-            insertFromBlockInternal(&b, stream_index);
+            insertFromBlockInternal(b, stream_index);
         }
     }
 
