@@ -475,7 +475,7 @@ protected:
 
     void alloc(const Grower & new_grower)
     {
-        buf = reinterpret_cast<Cell *>(Allocator::alloc(new_grower.bufSize() * sizeof(Cell)));
+        buf = reinterpret_cast<Cell *>(Allocator::alloc(new_grower.bufSize() * sizeof(Cell), 64));
         grower = new_grower;
     }
 
@@ -532,11 +532,11 @@ protected:
 
         if constexpr (Cell::need_to_notify_cell_during_move)
         {
-            buf = reinterpret_cast<Cell *>(Allocator::alloc(new_grower.bufSize() * sizeof(Cell)));
+            buf = reinterpret_cast<Cell *>(Allocator::alloc(new_grower.bufSize() * sizeof(Cell), 64));
             memcpy(reinterpret_cast<void *>(buf), reinterpret_cast<const void *>(old_buffer.get()), old_buffer_size);
         }
         else
-            buf = reinterpret_cast<Cell *>(Allocator::realloc(buf, old_buffer_size, new_grower.bufSize() * sizeof(Cell)));
+            buf = reinterpret_cast<Cell *>(Allocator::realloc(buf, old_buffer_size, new_grower.bufSize() * sizeof(Cell), 64));
 
         grower = new_grower;
 
@@ -1361,7 +1361,7 @@ public:
 };
 
 template <typename HashTableType>
-class HashTableWithLock
+class alignas(64) HashTableWithLock
 {
 public:
     using HashTable = HashTableType;
