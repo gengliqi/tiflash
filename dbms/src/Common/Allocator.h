@@ -75,7 +75,7 @@ private:
     char stack_memory[N];
 
 public:
-    void * alloc(size_t size)
+    void * alloc(size_t size, size_t alignment = 0)
     {
         if (size <= N)
         {
@@ -84,7 +84,7 @@ public:
             return stack_memory;
         }
 
-        return Base::alloc(size);
+        return Base::alloc(size, alignment);
     }
 
     void free(void * buf, size_t size)
@@ -93,7 +93,7 @@ public:
             Base::free(buf, size);
     }
 
-    void * realloc(void * buf, size_t old_size, size_t new_size)
+    void * realloc(void * buf, size_t old_size, size_t new_size, size_t alignment = 0)
     {
         /// Was in stack_memory, will remain there.
         if (new_size <= N)
@@ -101,10 +101,10 @@ public:
 
         /// Already was big enough to not fit in stack_memory.
         if (old_size > N)
-            return Base::realloc(buf, old_size, new_size);
+            return Base::realloc(buf, old_size, new_size, alignment);
 
         /// Was in stack memory, but now will not fit there.
-        void * new_buf = Base::alloc(new_size);
+        void * new_buf = Base::alloc(new_size, alignment);
         memcpy(new_buf, buf, old_size);
         return new_buf;
     }
