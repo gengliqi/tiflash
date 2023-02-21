@@ -103,9 +103,8 @@ public:
          const String & other_eq_filter_from_in_column = "",
          ExpressionActionsPtr other_condition_ptr = nullptr,
          size_t max_block_size = 0,
-         size_t min_batch_insert_ht_size = 0,
          size_t hash_map_count = 0,
-         bool build_hash_table_at_end = false,
+         size_t write_combine_buffer_size = 0,
          const String & match_helper_name = "");
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
@@ -297,40 +296,30 @@ public:
 
     struct alignas(64) InsertDataBatch
     {
-        std::vector<InsertDataVoidType> batch_per_map;
+        InsertDataVoidType batch;
     };
 
     std::vector<InsertDataBatch> insert_batches;
 
-    std::mutex insert_cache_mutex;
-    std::vector<InsertDataVoidType> insert_caches;
+    size_t write_combine_buffer_size;
 
-    struct alignas(64) InsertDataQueue
-    {
-        absl::InlinedVector<InsertDataVoidType, 10> queue;
-        bool is_running = false;
-    };
-
-    std::vector<InsertDataQueue> insert_queues;
+    std::mutex global_build_mutex;
+    std::condition_variable global_build_cv;
+    InsertDataVoidType global_data;
+    std::vector<size_t> global_histogram;
+    size_t build_phase_1_concurrency;
+    size_t build_phase_2_concurrency;
+    std::vector<std::tuple<size_t, size_t, size_t>> insert_tasks;
 
     struct alignas(64) BuildTime
     {
-        UInt64 t1 = 0;
-        UInt64 t2 = 0;
-        UInt64 t3 = 0;
-        UInt64 t4 = 0;
-        UInt64 a = 0;
-        UInt64 b = 0;
-        UInt64 c = 0;
-        UInt64 d = 0;
-        UInt64 t3_2 = 0;
-        UInt64 a_2 = 0;
-        UInt64 b_2 = 0;
-        UInt64 original_count = 0;
-        UInt64 new_count = 0;
-        UInt64 delete_count = 0;
-        UInt64 local_hit = 0;
-        UInt64 global_hit = 0;
+        UInt64 size = 0;
+        UInt64 handle_block = 0;
+        UInt64 before_phase1 = 0;
+        UInt64 after_phase1 = 0;
+        UInt64 before_phase2 = 0;
+        UInt64 after_phase2 = 0;
+        UInt64 insert_time = 0;
     };
 
     std::vector<BuildTime> build_times;
@@ -338,13 +327,15 @@ public:
     void logBuildTime(size_t stream_index)
     {
         auto & t = build_times[stream_index];
-        LOG_INFO(log, "join {} build time {}, {}, {}, {}, sum {}", stream_index, t.t1, t.t2, t.t3, t.t4, t.t1 + t.t2 + t.t3 + t.t4);
-        LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, sum {}", stream_index, t.a, t.b, t.c, t.d, t.a + t.b + t.c + t.d);
-        LOG_INFO(log, "join {} build time more and more, {}, {}, {}, sum {}", stream_index, t.t3_2, t.a_2, t.b_2, t.a_2 + t.b_2);
-        LOG_INFO(log, "join {} original {} new {} delete {} local hit {} global hit {}", stream_index, t.original_count, t.new_count, t.delete_count, t.local_hit, t.global_hit);
+        LOG_INFO(log, "join {} handle size {}", stream_index, t.size);
+        LOG_INFO(log, "join {} h_block {}, b_phase1 {}, a_phase1 {}, b_phase2 {}, a_phase2 {}", stream_index, t.handle_block, t.before_phase1, t.after_phase1, t.before_phase2, t.after_phase2);
+        LOG_INFO(log, "join {} insert_time {}, sum {}", stream_index, t.insert_time, t.handle_block + t.before_phase1 + t.after_phase1 + t.before_phase2 + t.after_phase2 + t.insert_time);
     }
 
     void insertRemaining(size_t stream_index);
+
+    bool meet_error = false;
+    String error_message;
 
 private:
     friend class NonJoinedBlockInputStream;
@@ -367,9 +358,6 @@ private:
     size_t probe_concurrency;
     size_t active_probe_concurrency;
 
-    bool meet_error = false;
-    String error_message;
-
 private:
     /// collators for the join key
     const TiDB::TiDBCollators collators;
@@ -381,10 +369,7 @@ private:
     ExpressionActionsPtr other_condition_ptr;
     ASTTableJoin::Strictness original_strictness;
     size_t max_block_size_for_cross_join;
-    size_t min_batch_insert_ht_size;
-    size_t max_cache_size_for_insert_ht;
     size_t hash_map_count;
-    bool build_hash_table_at_end;
     BlocksList::iterator blocks_iter;
 
     /** Blocks of "right" table.

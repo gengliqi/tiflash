@@ -265,6 +265,10 @@ struct HashTableGrower
     /// If collision resolution chains are contiguous, we can implement erase operation by moving the elements.
     static constexpr auto performs_linear_probing_with_single_step = true;
 
+    size_t div = 1;
+
+    void setDiv(size_t d) { if (d != 0) div = d; }
+
     /// The size of the hash table in the cells.
     size_t bufSize() const { return 1ULL << size_degree; }
 
@@ -272,7 +276,7 @@ struct HashTableGrower
     size_t mask() const { return bufSize() - 1; }
 
     /// From the hash value, get the cell number in the hash table.
-    size_t place(size_t x) const { return x & mask(); }
+    size_t place(size_t x) const { return (x / div) & mask(); }
 
     /// The next cell in the collision resolution chain.
     size_t next(size_t pos) const
@@ -319,8 +323,12 @@ struct HashTableFixedGrower
 
     static constexpr auto performs_linear_probing_with_single_step = true;
 
+    size_t div = 1;
+
+    void setDiv(size_t d) { if (d != 0) div = d; }
+
     size_t bufSize() const { return 1ULL << key_bits; }
-    size_t place(size_t x) const { return x; }
+    size_t place(size_t x) const { return x / div; }
     /// You could write __builtin_unreachable(), but the compiler does not optimize everything, and it turns out less efficiently.
     size_t next(size_t pos) const { return pos + 1; }
     bool overflow(size_t /*elems*/) const { return false; }
@@ -711,6 +719,10 @@ public:
 
     size_t hash(const Key & x) const { return Hash::operator()(x); }
 
+    void setDiv(size_t d)
+    {
+        grower.setDiv(d);
+    }
 
     HashTable()
     {
