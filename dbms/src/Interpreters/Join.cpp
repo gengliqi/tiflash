@@ -910,7 +910,7 @@ void insertRemainingImplType(
         auto [id, begin, end] = task;
         auto & hashmap = map.getSegmentTable(id);
         hashmap.setDiv(segment_size);
-        //hashmap.reserve(end - begin);
+        hashmap.reserve(end - begin);
         for (size_t i = begin; i < end; ++i)
         {
             auto & data = global[i];
