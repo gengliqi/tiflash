@@ -27,9 +27,9 @@
 
 ALWAYS_INLINE static inline void * inline_memcpy(void * __restrict dst, const void * __restrict src, size_t size)
 {
-#if defined(__AVX2__)
-    return mem_utils::avx2_inline_memcpy(dst, src, size);
-#elif defined(__SSE2__)
+//#if defined(__AVX2__)
+//    return mem_utils::avx2_inline_memcpy(dst, src, size);
+#if defined(__SSE2__)
     return sse2_inline_memcpy(dst, src, size);
 #else
     return std::memcpy(dst, src, size);
