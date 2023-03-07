@@ -45,6 +45,7 @@ extern const Metric PSMVCCNumSnapshots;
 
 namespace DB::PS::V3
 {
+
 class PageDirectorySnapshot : public DB::PageStorageSnapshot
 {
 public:
@@ -123,15 +124,6 @@ struct EntryOrDelete
 
     bool isDelete() const { return is_delete; }
     bool isEntry() const { return !is_delete; }
-
-    String toDebugString() const
-    {
-        return fmt::format(
-            "{{is_delete:{}, entry:{}, being_ref_count:{}}}",
-            is_delete,
-            ::DB::PS::V3::toDebugString(entry),
-            being_ref_count);
-    }
 };
 
 using PageLock = std::lock_guard<std::mutex>;
@@ -163,6 +155,8 @@ public:
         , being_ref_count(1)
     {}
 
+    bool isExternalPage() const { return type == EditRecordType::VAR_EXTERNAL; }
+
     [[nodiscard]] PageLock acquireLock() const
     {
         return std::lock_guard(m);
@@ -182,6 +176,10 @@ public:
 
     void createDelete(const PageVersion & ver);
 
+    // Update the local cache info for remote page,
+    // Must a hold snap to prevent the page being deleted.
+    bool updateLocalCacheForRemotePage(const PageVersion & ver, const PageEntryV3 & entry);
+
     std::shared_ptr<PageId> fromRestored(const typename PageEntriesEdit::EditRecord & rec);
 
     std::tuple<ResolveResult, PageId, PageVersion>
@@ -192,6 +190,8 @@ public:
     std::optional<PageEntryV3> getEntry(UInt64 seq) const;
 
     std::optional<PageEntryV3> getLastEntry(std::optional<UInt64> seq) const;
+
+    void copyCheckpointInfoFromEdit(const typename PageEntriesEdit::EditRecord & edit);
 
     bool isVisible(UInt64 seq) const;
 
@@ -337,13 +337,21 @@ public:
 
     PageId getNormalPageId(const PageId & page_id, const DB::PageStorageSnapshotPtr & snap_, bool throw_on_not_exist) const;
 
-    UInt64 getMaxId() const;
+    UInt64 getMaxIdAfterRestart() const;
 
     PageIdSet getAllPageIds();
 
     PageIdSet getAllPageIdsWithPrefix(const String & prefix, const DB::PageStorageSnapshotPtr & snap_);
 
+    // end is infinite if empty
+    PageIdSet getAllPageIdsInRange(const PageId & start, const PageId & end, const DB::PageStorageSnapshotPtr & snap_);
+
+    std::optional<PageId> getLowerBound(const PageId & start, const DB::PageStorageSnapshotPtr & snap_);
+
     void apply(PageEntriesEdit && edit, const WriteLimiterPtr & write_limiter = nullptr);
+
+    // return ignored entries, and the corresponding space in BlobFile should be reclaimed
+    PageEntries updateLocalCacheForRemotePages(PageEntriesEdit && edit, const DB::PageStorageSnapshotPtr & snap_, const WriteLimiterPtr & write_limiter = nullptr);
 
     std::pair<GcEntriesMap, PageSize>
     getEntriesByBlobIds(const std::vector<BlobFileId> & blob_ids) const;
@@ -354,6 +362,8 @@ public:
     /// Because there may be some upsert entry in later wal files, and we should keep the valid var_entry and the delete entry to delete the later upsert entry.
     /// And we don't restore the entries in blob store, because this PageDirectory is just read only for its entries.
     bool tryDumpSnapshot(const ReadLimiterPtr & read_limiter = nullptr, const WriteLimiterPtr & write_limiter = nullptr, bool force = false);
+
+    void copyCheckpointInfoFromEdit(PageEntriesEdit & edit);
 
     // Perform a GC for in-memory entries and return the removed entries.
     // If `return_removed_entries` is false, then just return an empty set.
@@ -382,6 +392,8 @@ public:
         std::shared_lock read_lock(table_rw_mutex);
         return mvcc_table_directory.size();
     }
+    // Only used in test
+    size_t numPagesWithPrefix(const String & prefix) const;
 
     FileUsageStatistics getFileUsageStatistics() const
     {
@@ -422,6 +434,10 @@ private:
     }
 
 private:
+    // max page id after restart(just used for table storage).
+    // it may be for the whole instance or just for some specific prefix which is depending on the Trait passed.
+    // Keeping it up to date is costly but useless, so it is not updated after restarting. Do NOT rely on it
+    // except for specific situations
     UInt64 max_page_id;
     std::atomic<UInt64> sequence;
 
@@ -469,3 +485,24 @@ using VersionedPageEntries = DB::PS::V3::VersionedPageEntries<PageDirectoryTrait
 using VersionedPageEntriesPtr = std::shared_ptr<VersionedPageEntries>;
 } // namespace universal
 } // namespace DB::PS::V3
+
+
+template <>
+struct fmt::formatter<DB::PS::V3::EntryOrDelete>
+{
+    static constexpr auto parse(format_parse_context & ctx)
+    {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const DB::PS::V3::EntryOrDelete & entry, FormatContext & ctx) const
+    {
+        return format_to(
+            ctx.out(),
+            "{{is_delete:{}, entry:{}, being_ref_count:{}}}",
+            entry.is_delete,
+            entry.entry,
+            entry.being_ref_count);
+    }
+};
