@@ -1042,6 +1042,12 @@ public:
             emplaceNonZero(key_holder, it, inserted, hash_value);
     }
 
+    void ALWAYS_INLINE prefetch_write(size_t hash_value)
+    {
+        size_t place_value = grower.place(hash_value);
+        __builtin_prefetch(buf + place_value, 1, 2);
+    }
+
     /// Copy the cell from another hash table. It is assumed that the cell is not zero, and also that there was no such key in the table yet.
     void ALWAYS_INLINE insertUniqueNonZero(const Cell * cell, size_t hash_value)
     {

@@ -863,10 +863,29 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             {
                 auto * insert = static_cast<DataType *>(j.get());
 
-                for (size_t k = 0, size = insert->size(); k < size; ++k)
+                for (size_t k = 0, size = insert->size(); k < size;)
                 {
-                    auto & data = (*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data.holder, data.hash_value, data.block, data.index, pool);
+                    if (likely(k + 4 < size))
+                    {
+                        hash_table.prefetch_write((*insert)[k].hash_value);
+                        hash_table.prefetch_write((*insert)[k + 1].hash_value);
+                        hash_table.prefetch_write((*insert)[k + 2].hash_value);
+                        hash_table.prefetch_write((*insert)[k + 3].hash_value);
+                        auto * data = &(*insert)[k];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 1];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 2];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 3];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+
+                        k += 4;
+                        continue;
+                    }
+                    auto * data = &(*insert)[k];
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                    ++k;
                 }
 
                 insert->clear();
@@ -968,7 +987,7 @@ void insertRemainingImplType(
 
         bool run_by_myself = false;
 
-        auto & hashtable = map.getSegmentTable(segment_index);
+        auto & hash_table = map.getSegmentTable(segment_index);
 
         while (true)
         {
@@ -1006,10 +1025,29 @@ void insertRemainingImplType(
             {
                 auto * insert = static_cast<DataType *>(j.get());
 
-                for (size_t k = 0, size = insert->size(); k < size; ++k)
+                for (size_t k = 0, size = insert->size(); k < size;)
                 {
-                    auto & data = (*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashtable, data.holder, data.hash_value, data.block, data.index, pool);
+                    if (likely(k + 4 < size))
+                    {
+                        hash_table.prefetch_write((*insert)[k].hash_value);
+                        hash_table.prefetch_write((*insert)[k + 1].hash_value);
+                        hash_table.prefetch_write((*insert)[k + 2].hash_value);
+                        hash_table.prefetch_write((*insert)[k + 3].hash_value);
+                        auto * data = &(*insert)[k];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 1];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 2];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 3];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+
+                        k += 4;
+                        continue;
+                    }
+                    auto * data = &(*insert)[k];
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                    ++k;
                 }
             }
 
