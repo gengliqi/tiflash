@@ -865,16 +865,22 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
                 for (size_t k = 0, size = insert->size(); k < size;)
                 {
-                    if (likely(k + 3 < size))
+                    if (likely(k + 7 < size))
                     {
-                        hash_table.prefetchWrite((*insert)[k + 2].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 3].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 4].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 5].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 6].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 7].hash_value);
                         auto * data = &(*insert)[k];
                         Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
                         data = &(*insert)[k + 1];
                         Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 2];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 3];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
 
-                        k += 2;
+                        k += 4;
                         continue;
                     }
                     auto * data = &(*insert)[k];
@@ -1021,16 +1027,22 @@ void insertRemainingImplType(
 
                 for (size_t k = 0, size = insert->size(); k < size;)
                 {
-                    if (likely(k + 3 < size))
+                    if (likely(k + 7 < size))
                     {
-                        hash_table.prefetchWrite((*insert)[k + 2].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 3].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 4].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 5].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 6].hash_value);
+                        hash_table.prefetchWrite((*insert)[k + 7].hash_value);
                         auto * data = &(*insert)[k];
                         Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
                         data = &(*insert)[k + 1];
                         Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 2];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        data = &(*insert)[k + 3];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
 
-                        k += 2;
+                        k += 4;
                         continue;
                     }
                     auto * data = &(*insert)[k];
