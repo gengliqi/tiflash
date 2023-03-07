@@ -33,6 +33,7 @@
 #include <new>
 #include <utility>
 
+#define DBMS_HASH_MAP_COUNT_COLLISIONS
 
 #ifdef DBMS_HASH_MAP_DEBUG_RESIZES
 #include <Common/Stopwatch.h>
@@ -1616,6 +1617,17 @@ public:
         for (size_t i = 0; i < segments.size(); i++)
             /// note the return value might not be accurate since it does not use lock, but should be enough for current usage
             ret += segments[i]->size();
+        return ret;
+    }
+
+    std::vector<size_t> getCollisionCounts()
+    {
+        std::vector<size_t> ret;
+        ret.reserve(segment_size);
+        for (size_t i = 0; i < segment_size; ++i)
+        {
+            ret.push_back(getSegmentTable(i).getCollisions());
+        }
         return ret;
     }
 

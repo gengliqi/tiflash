@@ -295,6 +295,28 @@ static void initImpl(Maps & maps, Join::Type type, size_t build_concurrency)
 }
 
 template <typename Maps>
+static std::vector<size_t> getTotalCollisionCountImpl(const Maps & maps, Join::Type type)
+{
+    std::vector<size_t> empty;
+    switch (type)
+    {
+    case Join::Type::EMPTY:
+        return empty;
+    case Join::Type::CROSS:
+        return empty;
+
+#define M(NAME)            \
+    case Join::Type::NAME: \
+        return maps.NAME ? maps.NAME->getCollisionCounts() : empty;
+        APPLY_FOR_JOIN_VARIANTS(M)
+#undef M
+
+    default:
+        throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
+    }
+}
+
+template <typename Maps>
 static size_t getTotalRowCountImpl(const Maps & maps, Join::Type type)
 {
     switch (type)
@@ -2403,7 +2425,31 @@ void Join::finishOneBuild()
     }
     --active_build_concurrency;
     if (active_build_concurrency == 0)
+    {
         build_cv.notify_all();
+
+        std::vector<size_t> collision;
+        if (!getFullness(kind))
+        {
+            if (strictness == ASTTableJoin::Strictness::Any)
+                collision = getTotalCollisionCountImpl(maps_any, type);
+            else
+                collision = getTotalCollisionCountImpl(maps_all, type);
+        }
+        else
+        {
+            if (strictness == ASTTableJoin::Strictness::Any)
+                collision = getTotalCollisionCountImpl(maps_any_full, type);
+            else
+                collision = getTotalCollisionCountImpl(maps_all_full, type);
+        }
+        size_t sum = 0;
+        for (auto i : collision)
+            sum += i;
+        std::stringstream result;
+        std::copy(collision.begin(), collision.end(), std::ostream_iterator<size_t>(result, " "));
+        LOG_INFO(log, "join build collision sum {}, {}", sum, result.str());
+    }
 }
 
 void Join::waitUntilAllProbeFinished() const
