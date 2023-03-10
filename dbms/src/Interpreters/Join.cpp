@@ -2096,7 +2096,7 @@ void NO_INLINE joinBlockImplNullAwareInternal(
                 /// Check null rows first to speed up getting the NULL result if possible.
                 /// In the worse case, all rows in the right table will be checked.
                 /// E.g. (1,null) in ((2,1),(2,3),(2,null),(3,null)) => false.
-                res.emplace_back(i, NASemiJoinStep::NULL_KEY_CHECK_NULL_ROWS, nullptr);
+                res.emplace_back(i, NASemiJoinStep::NULL_KEY_CHECK_ALL_BLOCKS, nullptr);
                 res_list.push_back(&res.back());
                 continue;
             }
