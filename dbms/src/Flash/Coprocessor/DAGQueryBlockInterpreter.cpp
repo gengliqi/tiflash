@@ -287,6 +287,9 @@ void DAGQueryBlockInterpreter::handleJoin(const tipb::Join & join, DAGPipeline &
         other_condition_expr,
         max_block_size_for_cross_join,
         settings.hash_map_count,
+        settings.build_reserve,
+        settings.build_task_num,
+        settings.insert_batch_size,
         settings.write_combine_buffer_size,
         match_helper_name);
 

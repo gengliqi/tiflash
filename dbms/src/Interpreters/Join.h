@@ -103,6 +103,9 @@ public:
          ExpressionActionsPtr other_condition_ptr = nullptr,
          size_t max_block_size = 0,
          size_t hash_map_count = 0,
+         bool build_reserve = false,
+         size_t build_task_num = 0,
+         size_t insert_batch_size = 0,
          size_t write_combine_buffer_size = 0,
          const String & match_helper_name = "");
 
@@ -278,31 +281,50 @@ public:
 
     using InsertDataVoidType = std::unique_ptr<void, std::function<void(void *)>>;
 
+    std::mutex insert_list_mutex;
+    std::vector<InsertDataVoidType> insert_list;
+
+    size_t insert_task_count;
+
     struct alignas(64) InsertDataBatch
     {
         InsertDataVoidType batch;
+        std::vector<InsertDataVoidType> all_batch;
     };
 
     std::vector<InsertDataBatch> insert_batches;
 
+    struct alignas(64) InsertMapVec
+    {
+        std::vector<std::tuple<void *, size_t, size_t>> vec;
+        size_t count;
+    };
+
+    std::vector<InsertMapVec> insert_map_vec;
+
+    bool build_reserve;
+    size_t build_task_num;
+    size_t insert_batch_size;
     size_t write_combine_buffer_size;
 
     std::mutex global_build_mutex;
     std::condition_variable global_build_cv;
-    InsertDataVoidType global_data;
-    std::vector<size_t> global_histogram;
     size_t build_phase_1_concurrency;
     size_t build_phase_2_concurrency;
-    std::vector<std::tuple<size_t, size_t, size_t>> insert_tasks;
+    std::vector<size_t> insert_tasks;
 
     struct alignas(64) BuildTime
     {
         UInt64 size = 0;
+        UInt64 size2 = 0;
+        UInt64 task_count = 0;
         UInt64 handle_block = 0;
-        UInt64 before_phase1 = 0;
-        UInt64 after_phase1 = 0;
-        UInt64 before_phase2 = 0;
-        UInt64 after_phase2 = 0;
+        UInt64 phase1 = 0;
+        UInt64 phase2 = 0;
+        UInt64 phase3 = 0;
+        UInt64 phase2_1 = 0;
+        UInt64 phase2_2 = 0;
+        UInt64 phase2_3 = 0;
         UInt64 insert_time = 0;
     };
 
@@ -311,9 +333,10 @@ public:
     void logBuildTime(size_t stream_index)
     {
         auto & t = build_times[stream_index];
-        LOG_INFO(log, "join {} handle size {}", stream_index, t.size);
-        LOG_INFO(log, "join {} h_block {}, b_phase1 {}, a_phase1 {}, b_phase2 {}, a_phase2 {}", stream_index, t.handle_block, t.before_phase1, t.after_phase1, t.before_phase2, t.after_phase2);
-        LOG_INFO(log, "join {} insert_time {}, sum {}", stream_index, t.insert_time, t.handle_block + t.before_phase1 + t.after_phase1 + t.before_phase2 + t.after_phase2 + t.insert_time);
+        LOG_INFO(log, "join {} handle size {}, {}, task_count {}", stream_index, t.size, t.size2, t.task_count);
+        LOG_INFO(log, "join {} h_block {}, phase1 {}, phase2 {}, phase3 {}", stream_index, t.handle_block, t.phase1, t.phase2, t.phase3);
+        LOG_INFO(log, "join {} build phase 2 {}: {}, {}, {}", stream_index, t.phase2, t.phase2_1, t.phase2_2, t.phase2_3);
+        LOG_INFO(log, "join {} insert_time {}, sum {}", stream_index, t.insert_time, t.handle_block + t.phase1 + t.phase2 + t.phase3 + t.insert_time);
     }
 
     void insertRemaining(size_t stream_index);

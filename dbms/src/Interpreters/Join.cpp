@@ -131,9 +131,15 @@ Join::Join(
     ExpressionActionsPtr other_condition_ptr_,
     size_t max_block_size_,
     size_t hash_map_count,
+    bool build_reserve,
+    size_t build_task_num,
+    size_t insert_batch_size,
     size_t write_combine_buffer_size,
     const String & match_helper_name)
     : match_helper_name(match_helper_name)
+    , build_reserve(build_reserve)
+    , build_task_num(build_task_num)
+    , insert_batch_size(insert_batch_size)
     , write_combine_buffer_size(write_combine_buffer_size)
     , kind(kind_)
     , strictness(strictness_)
@@ -484,8 +490,6 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
     if (hash_map_count == 0)
         hash_map_count = build_concurrency;
 
-    global_histogram.resize(hash_map_count);
-
     build_phase_1_concurrency = build_concurrency;
     build_phase_2_concurrency = build_concurrency;
 
@@ -721,6 +725,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     [[maybe_unused]] size_t stream_index,
     Arena & pool,
     Join::InsertDataBatch & void_batch,
+    Join & join,
     Join::BuildTime & time)
 {
     Stopwatch watch;
@@ -731,7 +736,9 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     if (void_batch.batch == nullptr)
     {
-        void_batch.batch = Join::InsertDataVoidType(static_cast<void *>(new DataType()), deleteInsertData<DataType>);
+        auto * data = new DataType();
+        data->reserve(join.insert_batch_size);
+        void_batch.batch = Join::InsertDataVoidType(static_cast<void *>(data), deleteInsertData<DataType>);
     }
     auto * batch = static_cast<DataType *>(void_batch.batch.get());
 
@@ -754,6 +761,16 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         size_t hash_value = map.hash(key);
 
         batch->emplace_back(std::move(key_holder), hash_value, stored_block, i);
+        if (unlikely(batch->size() >= join.insert_batch_size))
+        {
+            {
+                std::unique_lock lock(join.insert_list_mutex);
+                join.insert_list.emplace_back(std::move(void_batch.batch));
+            }
+            batch = new DataType();
+            batch->reserve(join.insert_batch_size);
+            void_batch.batch = Join::InsertDataVoidType(static_cast<void *>(batch), deleteInsertData<DataType>);
+        }
     }
 
     time.size += rows;
@@ -771,43 +788,24 @@ void insertRemainingImplType(
 {
     using DataType = InsertDataType<KeyGetter>;
 
-    if (void_batch.batch == nullptr)
-        void_batch.batch = Join::InsertDataVoidType(static_cast<void *>(new DataType()), deleteInsertData<DataType>);
-
-    auto & batch = *static_cast<DataType *>(void_batch.batch.get());
+    if (void_batch.batch != nullptr)
+    {
+        std::unique_lock lock(join.insert_list_mutex);
+        join.insert_list.emplace_back(std::move(void_batch.batch));
+    }
 
     size_t segment_size = map.getSegmentSize();
 
     Stopwatch watch;
 
-    std::vector<size_t> histogram(segment_size);
-    for (size_t i = 0, size = batch.size(); i < size; ++i)
-    {
-        size_t k = batch[i].hash_value % segment_size;
-        ++histogram[k];
-    }
-
-    std::vector<size_t> write_pos(segment_size);
-
-    time.before_phase1 = watch.elapsedFromLastTime();
-
     {
         std::unique_lock lock(join.global_build_mutex);
         --join.build_phase_1_concurrency;
 
-        for (size_t i = 0; i < segment_size; ++i)
-        {
-            write_pos[i] = join.global_histogram[i];
-            join.global_histogram[i] += histogram[i];
-        }
-
         if (join.build_phase_1_concurrency == 0)
         {
-            for (size_t i = 1; i < segment_size; ++i)
-                join.global_histogram[i] += join.global_histogram[i - 1];
-
-            join.global_data = Join::InsertDataVoidType(static_cast<void *>(new DataType(join.global_histogram[segment_size - 1])), deleteInsertData<DataType>);
-
+            join.insert_map_vec.resize(segment_size);
+            join.insert_task_count = std::max(1, join.insert_list.size() / join.getBuildConcurrency() / std::max(1, join.build_task_num));
             join.global_build_cv.notify_all();
         }
         else
@@ -819,54 +817,131 @@ void insertRemainingImplType(
             if (join.meet_error)
                 throw Exception(join.error_message);
         }
-
-        for (size_t i = 1; i < segment_size; ++i)
-            write_pos[i] += join.global_histogram[i - 1];
     }
 
-    time.after_phase1 = watch.elapsedFromLastTime();
+    time.phase1 = watch.elapsedFromLastTime();
 
-    auto & global = *static_cast<DataType *>(join.global_data.get());
+    std::vector<size_t> local_histogram(segment_size);
+    std::vector<std::pair<size_t, size_t>> write_pos(segment_size);
 
-    std::vector<size_t> pos_count(segment_size);
+    std::vector<Join::InsertDataVoidType> vec;
+    vec.reserve(join.insert_task_count);
+
+    time.task_count = join.insert_task_count;
 
     size_t buffer_size = join.write_combine_buffer_size;
+    std::vector<InsertData<KeyGetter>> buffer;
     if (buffer_size > 0)
     {
-        std::vector<InsertData<KeyGetter>> buffer(segment_size * buffer_size);
-
-        for (size_t i = 0, size = batch.size(); i < size; ++i)
-        {
-            size_t k = batch[i].hash_value % segment_size;
-            buffer[k * buffer_size + pos_count[k] % buffer_size] = batch[i];
-            ++pos_count[k];
-
-            if (pos_count[k] % buffer_size == 0)
-            {
-                memcpy(&global[write_pos[k]], &buffer[k * buffer_size], buffer_size * sizeof(InsertData<KeyGetter>));
-                write_pos[k] += buffer_size;
-            }
-        }
-        for (size_t i = 0; i < segment_size; ++i)
-        {
-            size_t remain_cnt = pos_count[i] % buffer_size;
-            if (remain_cnt > 0)
-            {
-                memcpy(&global[write_pos[i]], &buffer[i * buffer_size], remain_cnt * sizeof(InsertData<KeyGetter>));
-            }
-        }
+        buffer.assign(segment_size * buffer_size, InsertData<KeyGetter>());
     }
-    else
+
+    Stopwatch watch2;
+
+    while (true)
     {
-        for (size_t i = 0, size = batch.size(); i < size; ++i)
+        vec.clear();
+        std::fill(local_histogram.begin(), local_histogram.end(), 0);
+
         {
-            size_t k = batch[i].hash_value % segment_size;
-            global[write_pos[k]] = batch[i];
-            ++write_pos[k];
+            std::unique_lock lock(join.insert_list_mutex);
+            for (size_t i = 0; i < join.insert_task_count && !join.insert_list.empty(); ++i)
+            {
+                vec.emplace_back(std::move(join.insert_list.back()));
+                join.insert_list.pop_back();
+            }
         }
+
+        if (vec.empty())
+            break;
+
+        watch2.start();
+        for (auto & d : vec)
+        {
+            auto * batch = static_cast<DataType *>(d.get());
+            for (size_t i = 0, size = batch->size(); i < size; ++i)
+            {
+                size_t k = (*batch)[i].hash_value % segment_size;
+                ++local_histogram[k];
+            }
+        }
+
+        write_pos[0] = std::make_pair(0, 0);
+        for (size_t i = 1; i < segment_size; ++i)
+        {
+            write_pos[i] = std::make_pair(local_histogram[i - 1], 0);
+            local_histogram[i] += local_histogram[i - 1];
+        }
+
+        time.size2 += local_histogram[segment_size - 1];
+
+        auto * new_data = new DataType();
+        new_data->reserve(local_histogram[segment_size - 1]);
+        void_batch.all_batch.emplace_back(Join::InsertDataVoidType(static_cast<void *>(new_data), deleteInsertData<DataType>));
+
+        time.phase2_1 += watch2.elapsedFromLastTime();
+
+        if (buffer_size > 0)
+        {
+            for (auto & d : vec)
+            {
+                auto * batch = static_cast<DataType *>(d.get());
+                for (size_t i = 0, size = batch->size(); i < size; ++i)
+                {
+                    size_t k = (*batch)[i].hash_value % segment_size;
+                    buffer[k * buffer_size + write_pos[k].second % buffer_size] = (*batch)[i];
+                    ++write_pos[k].second;
+
+                    if (write_pos[k].second % buffer_size == 0)
+                    {
+                        memcpy(&(*new_data)[write_pos[k].first], &buffer[k * buffer_size], buffer_size * sizeof(InsertData<KeyGetter>));
+                        write_pos[k].first += buffer_size;
+                    }
+                }
+            }
+            for (size_t i = 0; i < segment_size; ++i)
+            {
+                size_t remain_cnt = write_pos[i].second % buffer_size;
+                if (remain_cnt > 0)
+                {
+                    memcpy(&(*new_data)[write_pos[i].first], &buffer[i * buffer_size], remain_cnt * sizeof(InsertData<KeyGetter>));
+                }
+            }
+        }
+        else
+        {
+            for (auto & d : vec)
+            {
+                auto * batch = static_cast<DataType *>(d.get());
+                for (size_t i = 0, size = batch->size(); i < size; ++i)
+                {
+                    size_t k = (*batch)[i].hash_value % segment_size;
+                    (*new_data)[write_pos[k].first] = (*batch)[i];
+                    ++write_pos[k].first;
+                }
+            }
+        }
+
+        time.phase2_2 += watch2.elapsedFromLastTime();
+
+        {
+            std::unique_lock lock(join.global_build_mutex);
+            size_t prev_pos = 0;
+            for (size_t i = 0; i < segment_size; ++i)
+            {
+                if (local_histogram[i] > prev_pos)
+                {
+                    join.insert_map_vec[i].vec.emplace_back(static_cast<void *>(new_data), prev_pos, local_histogram[i]);
+                    join.insert_map_vec[i].count += local_histogram[i] - prev_pos;
+                }
+                prev_pos = local_histogram[i];
+            }
+        }
+
+        time.phase2_3 += watch2.elapsedFromLastTime();
     }
 
-    time.before_phase2 = watch.elapsedFromLastTime();
+    time.phase2 = watch.elapsedFromLastTime();
 
     {
         std::unique_lock lock(join.global_build_mutex);
@@ -875,11 +950,9 @@ void insertRemainingImplType(
         if (join.build_phase_2_concurrency == 0)
         {
             join.insert_tasks.reserve(segment_size);
-            size_t pre_pos = 0;
             for (size_t i = 0; i < segment_size; ++i)
             {
-                join.insert_tasks.emplace_back(i, pre_pos, join.global_histogram[i]);
-                pre_pos = join.global_histogram[i];
+                join.insert_tasks.push_back(i);
             }
 
             join.global_build_cv.notify_all();
@@ -895,26 +968,32 @@ void insertRemainingImplType(
         }
     }
 
-    time.after_phase2 = watch.elapsedFromLastTime();
+    time.phase3 = watch.elapsedFromLastTime();
 
     while (true)
     {
-        std::tuple<size_t, size_t, size_t> task;
+        size_t id;
         {
             std::unique_lock lock(join.global_build_mutex);
             if (join.insert_tasks.empty())
                 break;
-            task = join.insert_tasks.back();
+            id = join.insert_tasks.back();
             join.insert_tasks.pop_back();
         }
-        auto [id, begin, end] = task;
         auto & hashmap = map.getSegmentTable(id);
         hashmap.setDiv(segment_size);
-        hashmap.reserve(end - begin);
-        for (size_t i = begin; i < end; ++i)
+        auto & d = join.insert_map_vec[id];
+        if (join.build_reserve)
+            hashmap.reserve(d.count);
+        for (auto & l : d.vec)
         {
-            auto & data = global[i];
-            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashmap, data.holder, data.hash_value, data.block, data.index, pool);
+            auto & [batch, begin, end] = l;
+            auto & b = *static_cast<DataType *>(batch);
+            for (size_t i = begin; i < end; ++i)
+            {
+                auto & data = b[i];
+                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hashmap, data.holder, data.hash_value, data.block, data.index, pool);
+            }
         }
     }
 
@@ -971,13 +1050,14 @@ void insertFromBlockImplType(
     Arena & pool,
     bool enable_fine_grained_shuffle,
     Join::InsertDataBatch & batch,
+    Join & join,
     Join::BuildTime & time)
 {
     if (null_map)
     {
         if (insert_concurrency > 1 && !enable_fine_grained_shuffle)
         {
-            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, batch, time);
+            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, true>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, batch, join, time);
         }
         else
         {
@@ -990,7 +1070,7 @@ void insertFromBlockImplType(
     {
         if (insert_concurrency > 1 && !enable_fine_grained_shuffle)
         {
-            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, batch, time);
+            insertFromBlockImplTypeCaseWithLock<STRICTNESS, KeyGetter, Map, false>(map, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map, stream_index, pool, batch, join, time);
         }
         else
         {
@@ -1017,6 +1097,7 @@ void insertFromBlockImpl(
     Arena & pool,
     bool enable_fine_grained_shuffle,
     Join::InsertDataBatch & batch,
+    Join & join,
     Join::BuildTime & time)
 {
     switch (type)
@@ -1042,6 +1123,7 @@ void insertFromBlockImpl(
             pool,                                                                                                                              \
             enable_fine_grained_shuffle,                                                                                                       \
             batch,                                                                                                                             \
+            join,                                                                                                                              \
             time);                                                                                                                             \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -1208,16 +1290,16 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
         if (!getFullness(kind))
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], *this, build_times[stream_index]);
             else
-                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all, rows, key_columns, key_sizes, collators, stored_block, null_map, nullptr, stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], *this, build_times[stream_index]);
         }
         else
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::Any>(type, maps_any_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], *this, build_times[stream_index]);
             else
-                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], build_times[stream_index]);
+                insertFromBlockImpl<ASTTableJoin::Strictness::All>(type, maps_all_full, rows, key_columns, key_sizes, collators, stored_block, null_map, rows_not_inserted_to_map[stream_index].get(), stream_index, getBuildConcurrencyInternal(), *pools[stream_index], enable_fine_grained_shuffle, insert_batches[stream_index], *this, build_times[stream_index]);
         }
     }
 }
