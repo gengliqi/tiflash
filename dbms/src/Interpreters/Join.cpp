@@ -2036,7 +2036,9 @@ void NO_INLINE joinBlockImplNullAwareInternal(
     const ConstNullMapPtr & all_key_null_map,
     const TiDB::TiDBCollators & collators,
     bool right_has_all_key_null_row,
-    bool right_table_is_empty)
+    bool right_table_is_empty,
+    std::atomic<UInt64> & null_rows_time,
+    std::atomic<UInt64> & all_blocks_time)
 {
     static_assert(KIND == ASTTableJoin::Kind::NullAware_Anti || KIND == ASTTableJoin::Kind::NullAware_LeftAnti
                   || KIND == ASTTableJoin::Kind::NullAware_LeftSemi);
@@ -2053,8 +2055,8 @@ void NO_INLINE joinBlockImplNullAwareInternal(
     PaddedPODArray<NASemiJoinResult<KIND, STRICTNESS>> res;
     res.reserve(rows);
     std::list<NASemiJoinResult<KIND, STRICTNESS> *> res_list;
-    /// We can just consider the result of semi join because `NASemiJoinResult::setResult` will correct
-    /// the result if it's not semi join.
+    /// We can just consider the result of left semi join because `NASemiJoinResult::setResult` will correct
+    /// the result if it's not left semi join.
     for (size_t i = 0; i < rows; ++i)
     {
         if constexpr (has_filter_map)
@@ -2096,7 +2098,7 @@ void NO_INLINE joinBlockImplNullAwareInternal(
                 /// Check null rows first to speed up getting the NULL result if possible.
                 /// In the worse case, all rows in the right table will be checked.
                 /// E.g. (1,null) in ((2,1),(2,3),(2,null),(3,null)) => false.
-                res.emplace_back(i, NASemiJoinStep::NULL_KEY_CHECK_ALL_BLOCKS, nullptr);
+                res.emplace_back(i, NASemiJoinStep::NULL_KEY_CHECK_NULL_ROWS, nullptr);
                 res_list.push_back(&res.back());
                 continue;
             }
@@ -2179,7 +2181,9 @@ void NO_INLINE joinBlockImplNullAwareInternal(
             right_blocks,
             null_rows,
             max_block_size,
-            other_conditions);
+            other_conditions,
+            null_rows_time,
+            all_blocks_time);
 
         helper.joinResult(res_list);
 
@@ -2281,7 +2285,9 @@ void NO_INLINE joinBlockImplNullAwareCast(
     const ConstNullMapPtr & all_key_null_map,
     const TiDB::TiDBCollators & collators,
     bool right_has_all_key_null_row,
-    bool right_table_is_empty)
+    bool right_table_is_empty,
+    std::atomic<UInt64> & null_rows_time,
+    std::atomic<UInt64> & all_blocks_time)
 {
 #define impl(has_null_map, has_filter_map)                                                          \
     joinBlockImplNullAwareInternal<KIND, STRICTNESS, KeyGetter, Map, has_null_map, has_filter_map>( \
@@ -2299,7 +2305,9 @@ void NO_INLINE joinBlockImplNullAwareCast(
         all_key_null_map,                                                                           \
         collators,                                                                                  \
         right_has_all_key_null_row,                                                                 \
-        right_table_is_empty);
+        right_table_is_empty,                                                                       \
+        null_rows_time,\
+        all_blocks_time);
 
     if (null_map)
     {
@@ -2392,7 +2400,9 @@ void Join::joinBlockImplNullAware(Block & block, const Maps & maps) const
             all_key_null_map,                                                                                                                           \
             collators,                                                                                                                                  \
             right_has_all_key_null_row.load(std::memory_order_relaxed),                                                                                 \
-            right_table_is_empty.load(std::memory_order_relaxed));                                                                                      \
+            right_table_is_empty.load(std::memory_order_relaxed),\
+            null_rows_time,                                                                                                                             \
+            all_blocks_time);                                                                                      \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
@@ -2431,7 +2441,10 @@ void Join::finishOneProbe()
     }
     --active_probe_concurrency;
     if (active_probe_concurrency == 0)
+    {
+        LOG_INFO(log, "join finish, null_rows_time {}, all_blocks_time {}", null_rows_time, all_blocks_time);
         probe_cv.notify_all();
+    }
 }
 
 void Join::finishOneBuild()

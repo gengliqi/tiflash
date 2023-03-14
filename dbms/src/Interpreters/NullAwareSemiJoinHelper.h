@@ -54,8 +54,8 @@ class NASemiJoinResult
 public:
     NASemiJoinResult(size_t row_num, NASemiJoinStep step, const void * map_it);
 
-    /// For convenience, callers can only consider the result of semi join.
-    /// This function will correct the result if it's not semi join.
+    /// For convenience, callers can only consider the result of left semi join.
+    /// This function will correct the result if it's not left semi join.
     template <NASemiJoinResultType RES>
     void setResult()
     {
@@ -131,7 +131,9 @@ public:
         const BlocksList & right_blocks,
         const PaddedPODArray<Join::RowRefList *> & null_rows,
         size_t max_block_size,
-        const JoinOtherConditions & other_conditions);
+        const JoinOtherConditions & other_conditions,
+        std::atomic<UInt64> & null_rows_time,
+        std::atomic<UInt64> & all_blocks_time);
 
     void joinResult(std::list<Result *> & res_list);
 
@@ -153,6 +155,9 @@ private:
     size_t max_block_size;
 
     const JoinOtherConditions & other_conditions;
+
+    std::atomic<UInt64> & null_rows_time;
+    std::atomic<UInt64> & all_blocks_time;
 };
 
 } // namespace DB
