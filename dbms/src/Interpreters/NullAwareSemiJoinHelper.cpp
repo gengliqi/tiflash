@@ -227,8 +227,13 @@ void NASemiJoinHelper<KIND, STRICTNESS, Mapped>::joinResult(std::list<NASemiJoin
         return;
 
     std::list<NASemiJoinHelper::Result *> next_step_res_list;
-    Stopwatch watch;
     runStep<NASemiJoinStep::NOT_NULL_KEY_CHECK_NULL_ROWS>(res_list, next_step_res_list);
+    res_list.swap(next_step_res_list);
+    if (res_list.empty())
+        return;
+
+    Stopwatch watch;
+    runStep<NASemiJoinStep::NULL_KEY_CHECK_NULL_ROWS>(res_list, next_step_res_list);
     null_rows_time.fetch_add(watch.elapsed());
 
     res_list.swap(next_step_res_list);
@@ -236,14 +241,8 @@ void NASemiJoinHelper<KIND, STRICTNESS, Mapped>::joinResult(std::list<NASemiJoin
         return;
 
     watch.restart();
-    runStep<NASemiJoinStep::NULL_KEY_CHECK_NULL_ROWS>(res_list, next_step_res_list);
-    all_blocks_time.fetch_add(watch.elapsed());
-
-    res_list.swap(next_step_res_list);
-    if (res_list.empty())
-        return;
-
     runStepAllBlocks(res_list);
+    all_blocks_time.fetch_add(watch.elapsed());
 }
 
 template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename Mapped>
