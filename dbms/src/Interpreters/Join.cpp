@@ -30,6 +30,7 @@
 #include <Interpreters/Join.h>
 #include <Interpreters/NullableUtils.h>
 #include <common/logger_useful.h>
+#include <absl/crc/internal/non_temporal_memcpy.h>
 
 
 namespace DB
@@ -894,7 +895,7 @@ void insertRemainingImplType(
 
                     if (write_pos[k].second % buffer_size == 0)
                     {
-                        memcpy(&(*new_data)[write_pos[k].first], &buffer[k * buffer_size], buffer_size * sizeof(InsertData<KeyGetter>));
+                        absl::crc_internal::non_temporal_store_memcpy_avx(&(*new_data)[write_pos[k].first], &buffer[k * buffer_size], buffer_size * sizeof(InsertData<KeyGetter>));
                         write_pos[k].first += buffer_size;
                     }
                 }
@@ -904,7 +905,7 @@ void insertRemainingImplType(
                 size_t remain_cnt = write_pos[i].second % buffer_size;
                 if (remain_cnt > 0)
                 {
-                    memcpy(&(*new_data)[write_pos[i].first], &buffer[i * buffer_size], remain_cnt * sizeof(InsertData<KeyGetter>));
+                    absl::crc_internal::non_temporal_store_memcpy_avx(&(*new_data)[write_pos[i].first], &buffer[i * buffer_size], remain_cnt * sizeof(InsertData<KeyGetter>));
                 }
             }
         }
