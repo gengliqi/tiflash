@@ -314,7 +314,7 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
     , source_num(source_num_)
     , enable_fine_grained_shuffle_flag(enableFineGrainedShuffle(fine_grained_shuffle_stream_count_))
     , output_stream_count(enable_fine_grained_shuffle_flag ? std::min(max_streams_, fine_grained_shuffle_stream_count_) : max_streams_)
-    , max_buffer_size(std::max<size_t>(batch_packet_count, std::max(source_num, max_streams_) * 2))
+    , max_buffer_size(std::max<size_t>(batch_packet_count, std::max(source_num, max_streams_) * 10000))
     , connection_uncreated_num(source_num)
     , thread_manager(newThreadManager())
     , live_local_connections(0)
