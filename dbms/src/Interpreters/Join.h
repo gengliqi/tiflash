@@ -105,7 +105,8 @@ public:
          size_t min_batch_insert_ht_size = 0,
          size_t hash_map_count = 0,
          bool build_hash_table_at_end = false,
-         const String & match_helper_name = "");
+         const String & match_helper_name = "",
+         size_t write_combine_buffer_size = 0);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
       * You must call this method before subsequent calls to insertFromBlock.
@@ -206,6 +207,7 @@ public:
     template <typename Base>
     struct WithUsedFlag<true, Base> : Base
     {
+        WithUsedFlag(const WithUsedFlag & other):Base(other) {}
         WithUsedFlag& operator=(const WithUsedFlag & other)
         {
             Base::operator=(other);
@@ -287,6 +289,8 @@ public:
     struct alignas(64) InsertDataBatch
     {
         std::vector<InsertDataVoidType> batch_per_map;
+        InsertDataVoidType write_buffer;
+        std::vector<size_t> write_pos;
         std::list<absl::InlinedVector<InsertDataVoidType, 10>> saved;
     };
 
@@ -335,6 +339,8 @@ public:
     }
 
     void insertRemaining(size_t stream_index);
+
+    size_t write_combine_buffer_size;
 
 private:
     friend class NonJoinedBlockInputStream;
@@ -399,7 +405,7 @@ private:
     Arenas pools;
 
 
-private:
+public:
     Type type = Type::EMPTY;
 
     Type chooseMethod(const ColumnRawPtrs & key_columns, Sizes & key_sizes) const;

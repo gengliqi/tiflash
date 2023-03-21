@@ -305,6 +305,7 @@ struct Settings
     M(SettingUInt64, local_tunnel_version, 1, "1: not refined, 2: refined")\
     M(SettingUInt64, min_batch_insert_ht_size, 1024, "")\
     M(SettingUInt64, hash_map_count, 0, "")\
+    M(SettingUInt64, write_combine_buffer_size, 0, "")                                                                                                                                                                                                                                   \
     M(SettingBool, build_hash_table_at_end, false, "")
 
 // clang-format on

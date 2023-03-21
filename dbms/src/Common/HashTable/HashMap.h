@@ -76,8 +76,8 @@ struct HashMapCell
     HashMapCell(const Key & key_, const State &)
         : value(key_, NoInitTag())
     {}
-    HashMapCell(const value_type & value_, const State &)
-        : value(value_)
+    HashMapCell(const Key & key_, const Mapped & map_)
+        : value(key_, map_)
     {}
 
     HashMapCell(const HashMapCell &) = default;
