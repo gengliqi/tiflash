@@ -206,6 +206,11 @@ public:
     template <typename Base>
     struct WithUsedFlag<true, Base> : Base
     {
+        WithUsedFlag& operator=(const WithUsedFlag & other)
+        {
+            Base::operator=(other);
+            return *this;
+        }
         mutable std::atomic<bool> used{};
         using Base::Base;
         using Base_t = Base;

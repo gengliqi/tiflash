@@ -48,6 +48,9 @@ struct PairNoInit
         : first(std::forward<FirstType>(first_))
         , second(std::forward<SecondType>(second_))
     {}
+
+    PairNoInit(const PairNoInit &) = default;
+    PairNoInit& operator=(const PairNoInit &) = default;
 };
 
 template <typename First, typename Second>
@@ -76,6 +79,9 @@ struct HashMapCell
     HashMapCell(const value_type & value_, const State &)
         : value(value_)
     {}
+
+    HashMapCell(const HashMapCell &) = default;
+    HashMapCell& operator=(const HashMapCell &) = default;
 
     /// Get the key (externally).
     const Key & getKey() const { return value.first; }

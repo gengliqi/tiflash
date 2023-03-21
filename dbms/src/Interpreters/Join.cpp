@@ -612,6 +612,13 @@ struct Inserter<ASTTableJoin::Strictness::Any, Map, KeyGetter>
         if (emplace_result.isInserted())
             new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
     }
+
+    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value)
+    {
+        typename Map::LookupResult emplace_result;
+        bool inserted = false;
+        map.emplaceNew(cell, emplace_result, inserted, hash_value);
+    }
 };
 
 template <typename Map, typename KeyGetter>
@@ -650,6 +657,19 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
                  */
             auto elem = reinterpret_cast<MappedType *>(pool.alloc(sizeof(MappedType)));
             insertRowToList(&emplace_result.getMapped(), elem, stored_block, i);
+        }
+    }
+
+    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value)
+    {
+        typename Map::LookupResult emplace_result;
+        bool inserted = false;
+        map.emplaceNew(cell, emplace_result, inserted, hash_value);
+        if (!inserted)
+        {
+            Join::RowRefList * list = &emplace_result->getMapped();
+            cell.value.second.next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
+            list->next = &cell.value.second;
         }
     }
 };
@@ -704,24 +724,23 @@ void NO_INLINE insertFromBlockImplTypeCase(
 template <typename KeyGetter>
 using KeyHolderType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, size_t, Arena *, std::vector<String> &>;
 
-template <typename KeyGetter>
+template <typename Map>
 struct InsertData
 {
-    InsertData(KeyHolderType<KeyGetter> && holder, size_t hash_value, Block * block, size_t index)
-        : holder(std::move(holder))
-        , hash_value(hash_value)
-        , block(block)
-        , index(index)
-    {}
+    InsertData(size_t hash_value, const typename Map::Key & key, Block * block, size_t index)
+        : hash_value(hash_value)
+    {
+        cell.value.first = key;
+        cell.value.second.block = block;
+        cell.value.second.row_num = index;
+    }
 
-    KeyHolderType<KeyGetter> holder;
     size_t hash_value;
-    Block * block;
-    size_t index;
+    typename Map::Cell cell;
 };
 
-template <typename KeyGetter>
-using InsertDataType = PaddedPODArray<InsertData<KeyGetter>>;
+template <typename Map>
+using InsertDataType = PaddedPODArray<InsertData<Map>>;
 
 template <typename DataType>
 void deleteInsertData(void * ptr)
@@ -757,7 +776,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     time.original_count += segment_size;
 
-    using DataType = InsertDataType<KeyGetter>;
+    using DataType = InsertDataType<Map>;
 
     if (batch.batch_per_map.empty())
     {
@@ -783,12 +802,14 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         }
 
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
-        auto key = keyHolderGetKey(key_holder);
+        keyHolderPersistKey(key_holder);
+
+        const auto & key = keyHolderGetKey(key_holder);
 
         size_t hash_value = map.hash(key);
         size_t segment_index = hash_value % segment_size;
 
-        static_cast<DataType *>(batch.batch_per_map[segment_index].get())->emplace_back(std::move(key_holder), hash_value, stored_block, i);
+        static_cast<DataType *>(batch.batch_per_map[segment_index].get())->emplace_back(hash_value, key, stored_block, i);
     }
 
     time.t1 += watch.elapsedFromLastTime();
@@ -872,23 +893,23 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                         hash_table.prefetchWrite((*insert)[k + 6].hash_value);
                         hash_table.prefetchWrite((*insert)[k + 7].hash_value);
                         auto * data = &(*insert)[k];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                         data = &(*insert)[k + 1];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                         data = &(*insert)[k + 2];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                         data = &(*insert)[k + 3];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
 
                         k += 4;
                         continue;
                     }
                     auto * data = &(*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                     ++k;
                 }
 
-                insert->clear();
+                //insert->clear();
                 empty_batches.emplace_back(std::move(j));
                 RUNTIME_ASSERT(j == nullptr);
             }
@@ -903,7 +924,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     {
         if (batch.batch_per_map[i] == nullptr)
         {
-            if (!empty_batches.empty())
+            /*if (!empty_batches.empty())
             {
                 ++time.local_hit;
                 batch.batch_per_map[i] = std::move(empty_batches.back());
@@ -921,7 +942,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                     RUNTIME_ASSERT(static_cast<DataType *>(batch.batch_per_map[i].get())->empty());
                     continue;
                 }
-            }
+            }*/
             ++time.new_count;
             auto * insert = new DataType();
             insert->reserve(min_batch_insert_ht_size * 1.2);
@@ -952,7 +973,7 @@ template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
 void insertRemainingImplType(
     Map & map,
     size_t stream_index,
-    Arena & pool,
+    Arena & pool [[maybe_unused]],
     std::vector<Join::InsertDataQueue> & insert_queues,
     Join::InsertDataBatch & batch,
     Join::BuildTime & time)
@@ -965,7 +986,7 @@ void insertRemainingImplType(
 
     size_t segment_size = map.getSegmentSize();
 
-    using DataType = InsertDataType<KeyGetter>;
+    using DataType = InsertDataType<Map>;
 
     for (size_t i = 0; i < segment_size; ++i)
     {
@@ -1034,19 +1055,19 @@ void insertRemainingImplType(
                         hash_table.prefetchWrite((*insert)[k + 6].hash_value);
                         hash_table.prefetchWrite((*insert)[k + 7].hash_value);
                         auto * data = &(*insert)[k];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                         data = &(*insert)[k + 1];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                         data = &(*insert)[k + 2];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                         data = &(*insert)[k + 3];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
 
                         k += 4;
                         continue;
                     }
                     auto * data = &(*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->holder, data->hash_value, data->block, data->index, pool);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
                     ++k;
                 }
             }

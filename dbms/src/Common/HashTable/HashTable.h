@@ -1042,6 +1042,50 @@ public:
             emplaceNonZero(key_holder, it, inserted, hash_value);
     }
 
+    void ALWAYS_INLINE emplaceNew(const Cell & cell, LookupResult & it, bool & inserted, size_t hash_value)
+    {
+        if (!emplaceIfZero(cell.getKey(), it, inserted, hash_value))
+        {
+            size_t place_value = findCell(cell.getKey(), hash_value, grower.place(hash_value));
+            it = &buf[place_value];
+
+            if (!buf[place_value].isZero(*this))
+            {
+                inserted = false;
+                return;
+            }
+
+            buf[place_value] = cell;
+            buf[place_value].setHash(hash_value);
+            inserted = true;
+            ++m_size;
+
+            if (unlikely(grower.overflow(m_size)))
+            {
+                try
+                {
+                    resize();
+                }
+                catch (...)
+                {
+                    /** If we have not resized successfully, then there will be problems.
+                  * There remains a key, but uninitialized mapped-value,
+                  *  which, perhaps, can not even be called a destructor.
+                  */
+                    --m_size;
+                    buf[place_value].setZero();
+                    inserted = false;
+                    throw;
+                }
+
+                // The hash table was rehashed, so we have to re-find the key.
+                size_t new_place = findCell(cell.getKey(), hash_value, grower.place(hash_value));
+                assert(!buf[new_place].isZero(*this));
+                it = &buf[new_place];
+            }
+        }
+    }
+
     void ALWAYS_INLINE prefetchWrite(size_t hash_value)
     {
         size_t place_value = grower.place(hash_value);
