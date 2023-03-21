@@ -287,6 +287,7 @@ public:
     struct alignas(64) InsertDataBatch
     {
         std::vector<InsertDataVoidType> batch_per_map;
+        std::list<absl::InlinedVector<InsertDataVoidType, 10>> saved;
     };
 
     std::vector<InsertDataBatch> insert_batches;

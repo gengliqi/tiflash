@@ -668,8 +668,8 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
         if (!inserted)
         {
             Join::RowRefList * list = &emplace_result->getMapped();
-            cell.value.second.next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
-            list->next = &cell.value.second;
+            cell.getMapped().next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
+            list->next = &cell.getMapped();
         }
     }
 };
@@ -763,9 +763,9 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
     std::vector<Join::InsertDataQueue> & insert_queues,
     Join::InsertDataBatch & batch,
     size_t min_batch_insert_ht_size,
-    size_t max_cache_size,
-    std::mutex & insert_cache_mutex,
-    std::vector<Join::InsertDataVoidType> & insert_caches,
+    size_t max_cache_size [[maybe_unused]],
+    std::mutex & insert_cache_mutex [[maybe_unused]],
+    std::vector<Join::InsertDataVoidType> & insert_caches [[maybe_unused]],
     Join::BuildTime & time)
 {
     Stopwatch watch;
@@ -836,7 +836,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     time.t2 += watch.elapsedFromLastTime();
 
-    std::vector<Join::InsertDataVoidType> empty_batches;
+    //std::vector<Join::InsertDataVoidType> empty_batches;
     for (size_t i = 0; i < segment_size; ++i)
     {
         //FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_build_failpoint);
@@ -910,9 +910,8 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 }
 
                 //insert->clear();
-                empty_batches.emplace_back(std::move(j));
-                RUNTIME_ASSERT(j == nullptr);
             }
+            batch.saved.emplace_back(std::move(q));
 
             time.b += watch2.elapsedFromLastTime();
         }
@@ -950,7 +949,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         }
     }
 
-    if (!empty_batches.empty())
+    /*if (!empty_batches.empty())
     {
         size_t i = 0, size = empty_batches.size();
         {
@@ -964,7 +963,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             }
         }
         time.delete_count += size - i;
-    }
+    }*/
 
     time.t4 += watch.elapsedFromLastTime();
 }
@@ -1071,6 +1070,7 @@ void insertRemainingImplType(
                     ++k;
                 }
             }
+            batch.saved.emplace_back(std::move(q));
 
             time.b_2 += watch2.elapsedFromLastTime();
         }
