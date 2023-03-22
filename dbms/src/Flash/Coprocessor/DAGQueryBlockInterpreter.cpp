@@ -290,7 +290,8 @@ void DAGQueryBlockInterpreter::handleJoin(const tipb::Join & join, DAGPipeline &
         settings.hash_map_count,
         settings.build_hash_table_at_end,
         match_helper_name,
-        settings.write_combine_buffer_size);
+        settings.write_combine_buffer_size,
+        settings.build_prefetch);
 
     recordJoinExecuteInfo(tiflash_join.build_side_index, join_ptr);
 

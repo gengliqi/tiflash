@@ -135,9 +135,11 @@ Join::Join(
     size_t hash_map_count,
     bool build_hash_table_at_end,
     const String & match_helper_name,
-    size_t write_combine_buffer_size_)
+    size_t write_combine_buffer_size_,
+    bool build_prefetch_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
+    , build_prefetch(build_prefetch_)
     , kind(kind_)
     , strictness(strictness_)
     , key_names_left(key_names_left_)
@@ -922,50 +924,67 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             }
             time.a += watch2.elapsedFromLastTime();
 
-            for (auto & j : q)
+            if (join.build_prefetch)
             {
-                auto * insert = static_cast<DataBatchType *>(j.get());
+                for (auto & j : q)
+                {
+                    auto * insert = static_cast<DataBatchType *>(j.get());
 
-                size_t hash_values[8];
-                size_t size = insert->size();
-                for (size_t k = 0; k < 4 && k < size; ++k)
-                {
-                    hash_values[k] = (*insert)[k].getHash(hash_table);
-                }
-                for (size_t k = 0; k < size;)
-                {
-                    if (likely(k + 7 < size))
+                    size_t hash_values[8];
+                    size_t size = insert->size();
+                    for (size_t k = 0; k < 4 && k < size; ++k)
                     {
-                        hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
-                        hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
-                        hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
-                        hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
-
-                        auto * data = &(*insert)[k];
-                        size_t hash_value = hash_values[k % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-                        data = &(*insert)[k + 1];
-                        hash_value = hash_values[(k + 1) % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-                        data = &(*insert)[k + 2];
-                        hash_value = hash_values[(k + 2) % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-                        data = &(*insert)[k + 3];
-                        hash_value = hash_values[(k + 3) % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-
-                        k += 4;
-                        continue;
+                        hash_values[k] = (*insert)[k].getHash(hash_table);
                     }
-                    auto * data = &(*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
-                    ++k;
+                    for (size_t k = 0; k < size;)
+                    {
+                        if (likely(k + 7 < size))
+                        {
+                            hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
+                            hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
+                            hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
+                            hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
+
+                            auto * data = &(*insert)[k];
+                            size_t hash_value = hash_values[k % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+                            data = &(*insert)[k + 1];
+                            hash_value = hash_values[(k + 1) % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+                            data = &(*insert)[k + 2];
+                            hash_value = hash_values[(k + 2) % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+                            data = &(*insert)[k + 3];
+                            hash_value = hash_values[(k + 3) % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+
+                            k += 4;
+                            continue;
+                        }
+                        auto * data = &(*insert)[k];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
+                        ++k;
+                    }
+                    //insert->clear();
                 }
-                //insert->clear();
+            }
+            else
+            {
+                for (auto & j : q)
+                {
+                    auto * insert = static_cast<DataBatchType *>(j.get());
+
+                    size_t size = insert->size();
+                    for (size_t k = 0; k < size; ++k)
+                    {
+                        auto * data = &(*insert)[k];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
+                    }
+                }
             }
             batch.saved.emplace_back(std::move(q));
 
@@ -1110,48 +1129,66 @@ void insertRemainingImplType(
 
             time.a_2 += watch2.elapsedFromLastTime();
 
-            for (auto & j : q)
+            if (join.build_prefetch)
             {
-                auto * insert = static_cast<DataBatchType *>(j.get());
+                for (auto & j : q)
+                {
+                    auto * insert = static_cast<DataBatchType *>(j.get());
 
-                size_t hash_values[8];
-                size_t size = insert->size();
-                for (size_t k = 0; k < 4 && k < size; ++k)
-                {
-                    hash_values[k] = (*insert)[k].getHash(hash_table);
-                }
-                for (size_t k = 0; k < size;)
-                {
-                    if (likely(k + 7 < size))
+                    size_t hash_values[8];
+                    size_t size = insert->size();
+                    for (size_t k = 0; k < 4 && k < size; ++k)
                     {
-                        hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
-                        hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
-                        hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
-                        hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
-                        hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
-
-                        auto * data = &(*insert)[k];
-                        size_t hash_value = hash_values[k % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-                        data = &(*insert)[k + 1];
-                        hash_value = hash_values[(k + 1) % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-                        data = &(*insert)[k + 2];
-                        hash_value = hash_values[(k + 2) % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-                        data = &(*insert)[k + 3];
-                        hash_value = hash_values[(k + 3) % 8];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
-
-                        k += 4;
-                        continue;
+                        hash_values[k] = (*insert)[k].getHash(hash_table);
                     }
-                    auto * data = &(*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
-                    ++k;
+                    for (size_t k = 0; k < size;)
+                    {
+                        if (likely(k + 7 < size))
+                        {
+                            hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
+                            hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
+                            hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
+                            hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
+                            hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
+
+                            auto * data = &(*insert)[k];
+                            size_t hash_value = hash_values[k % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+                            data = &(*insert)[k + 1];
+                            hash_value = hash_values[(k + 1) % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+                            data = &(*insert)[k + 2];
+                            hash_value = hash_values[(k + 2) % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+                            data = &(*insert)[k + 3];
+                            hash_value = hash_values[(k + 3) % 8];
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
+
+                            k += 4;
+                            continue;
+                        }
+                        auto * data = &(*insert)[k];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
+                        ++k;
+                    }
+                    //insert->clear();
+                }
+            }
+            else
+            {
+                for (auto & j : q)
+                {
+                    auto * insert = static_cast<DataBatchType *>(j.get());
+
+                    size_t size = insert->size();
+                    for (size_t k = 0; k < size; ++k)
+                    {
+                        auto * data = &(*insert)[k];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
+                    }
                 }
             }
             batch.saved.emplace_back(std::move(q));

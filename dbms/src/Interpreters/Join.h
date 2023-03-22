@@ -106,7 +106,8 @@ public:
          size_t hash_map_count = 0,
          bool build_hash_table_at_end = false,
          const String & match_helper_name = "",
-         size_t write_combine_buffer_size = 0);
+         size_t write_combine_buffer_size = 0,
+         bool build_prefetch = true);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
       * You must call this method before subsequent calls to insertFromBlock.
@@ -341,6 +342,7 @@ public:
     void insertRemaining(size_t stream_index);
 
     size_t write_combine_buffer_size;
+    bool build_prefetch;
 
 private:
     friend class NonJoinedBlockInputStream;
