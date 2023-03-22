@@ -414,7 +414,7 @@ template <
     typename GrowerType,
     typename AllocatorType>
 class HashTable : private boost::noncopyable
-    , protected HashType
+    , public HashType
     , protected AllocatorType
     , protected CellType::State
     , protected ZeroValueStorage<CellType::need_zero_value_storage, CellType> /// empty base optimization
@@ -1042,7 +1042,7 @@ public:
             emplaceNonZero(key_holder, it, inserted, hash_value);
     }
 
-    void ALWAYS_INLINE emplaceNew(const Cell & cell, LookupResult & it, bool & inserted, size_t hash_value)
+    void ALWAYS_INLINE emplaceCell(const Cell & cell, LookupResult & it, bool & inserted, size_t hash_value)
     {
         if (!emplaceIfZero(cell.getKey(), it, inserted, hash_value))
         {

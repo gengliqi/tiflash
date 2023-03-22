@@ -620,7 +620,7 @@ struct Inserter<ASTTableJoin::Strictness::Any, Map, KeyGetter>
     {
         typename Map::LookupResult emplace_result;
         bool inserted = false;
-        map.emplaceNew(cell, emplace_result, inserted, hash_value);
+        map.emplaceCell(cell, emplace_result, inserted, hash_value);
     }
 };
 
@@ -667,7 +667,7 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
     {
         typename Map::LookupResult emplace_result;
         bool inserted = false;
-        map.emplaceNew(cell, emplace_result, inserted, hash_value);
+        map.emplaceCell(cell, emplace_result, inserted, hash_value);
         if (!inserted)
         {
             Join::RowRefList * list = &emplace_result->getMapped();
@@ -724,28 +724,10 @@ void NO_INLINE insertFromBlockImplTypeCase(
     time.t1 += watch.elapsedFromLastTime();
 }
 
-template <typename KeyGetter>
-using KeyHolderType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, size_t, Arena *, std::vector<String> &>;
-
-template <typename Map>
-struct InsertData
-{
-    InsertData() = default;
-    InsertData(size_t hash_value, const typename Map::Key & key, Block * block, size_t index)
-        : hash_value(hash_value), cell(key, typename Map::mapped_type(block, index))
-    {}
-
-    size_t hash_value;
-    typename Map::Cell cell;
-};
-
-template <typename Map>
-using InsertDataType = PaddedPODArray<InsertData<Map>>;
-
-template <typename DataType>
+template <typename DataBatchType>
 void deleteInsertData(void * ptr)
 {
-    delete static_cast<DataType *>(ptr);
+    delete static_cast<DataBatchType *>(ptr);
 }
 
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map, bool has_null_map>
@@ -777,33 +759,35 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     time.original_count += segment_size;
 
-    using DataType = InsertDataType<Map>;
+    using DataType = typename Map::Cell;
+    using DataBatchType = PaddedPODArray<DataType>;
 
     if (batch.batch_per_map.empty())
     {
         batch.batch_per_map.reserve(segment_size);
         for (size_t i = 0; i < segment_size; ++i)
         {
-            auto * insert = new DataType();
+            auto * insert = new DataBatchType();
             insert->reserve(min_batch_insert_ht_size * 1.5);
-            batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataType>);
+            batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
 
         if (join.write_combine_buffer_size > 0)
         {
             batch.write_pos.resize(segment_size);
-            auto * buffer = new DataType(segment_size * join.write_combine_buffer_size);
-            batch.write_buffer = Join::InsertDataVoidType(static_cast<void *>(buffer), deleteInsertData<DataType>);
+            auto * buffer = new DataBatchType(segment_size * join.write_combine_buffer_size);
+            batch.write_buffer = Join::InsertDataVoidType(static_cast<void *>(buffer), deleteInsertData<DataBatchType>);
         }
 
-        LOG_INFO(join.log, "insert data size {}", sizeof(struct InsertData<Map>));
+        DataType d;
+        LOG_INFO(join.log, "insert data size {}", sizeof(d));
     }
 
     size_t buffer_size = join.write_combine_buffer_size;
-    std::vector<DataType *> batch_pointers(segment_size);
+    std::vector<DataBatchType *> batch_pointers(segment_size);
     for (size_t i = 0; i < segment_size; ++i)
     {
-        batch_pointers[i] = static_cast<DataType *>(batch.batch_per_map[i].get());
+        batch_pointers[i] = static_cast<DataBatchType *>(batch.batch_per_map[i].get());
     }
     if (buffer_size == 0)
     {
@@ -827,12 +811,13 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             size_t hash_value = map.hash(key);
             size_t segment_index = hash_value % segment_size;
 
-            batch_pointers[segment_index]->emplace_back(hash_value, key, stored_block, i);
+            batch_pointers[segment_index]->emplace_back(key, typename Map::mapped_type(stored_block, i));
+            batch_pointers[segment_index]->back().setHash(hash_value);
         }
     }
     else
     {
-        auto & buffer = *static_cast<DataType *>(batch.write_buffer.get());
+        auto & buffer = *static_cast<DataBatchType *>(batch.write_buffer.get());
         for (size_t i = 0; i < rows; ++i)
         {
             if (has_null_map && (*null_map)[i])
@@ -853,7 +838,10 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             size_t hash_value = map.hash(key);
             size_t segment_index = hash_value % segment_size;
 
-            buffer[segment_index * buffer_size + batch.write_pos[segment_index]] = InsertData<Map>(hash_value, key, stored_block, i);
+            size_t pos = segment_index * buffer_size + batch.write_pos[segment_index];
+            buffer[pos] = typename Map::Cell(key, typename Map::mapped_type(stored_block, i));
+            buffer[pos].setHash(hash_value);
+
             ++batch.write_pos[segment_index];
 
             if (batch.write_pos[segment_index] == buffer_size)
@@ -861,7 +849,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 batch.write_pos[segment_index] = 0;
                 size_t size = batch_pointers[segment_index]->size();
                 batch_pointers[segment_index]->resize(size + buffer_size);
-                absl::crc_internal::non_temporal_store_memcpy_avx(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(InsertData<Map>));
+                absl::crc_internal::non_temporal_store_memcpy(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
             }
         }
     }
@@ -936,33 +924,47 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             for (auto & j : q)
             {
-                auto * insert = static_cast<DataType *>(j.get());
+                auto * insert = static_cast<DataBatchType *>(j.get());
 
-                for (size_t k = 0, size = insert->size(); k < size;)
+                size_t hash_values[8];
+                size_t size = insert->size();
+                for (size_t k = 0; k < 4 && k < size; ++k)
+                {
+                    hash_values[k] = (*insert)[k].getHash(hash_table);
+                }
+                for (size_t k = 0; k < size;)
                 {
                     if (likely(k + 7 < size))
                     {
-                        hash_table.prefetchWrite((*insert)[k + 4].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 5].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 6].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 7].hash_value);
+                        hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
+                        hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
+                        hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
+                        hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
+
                         auto * data = &(*insert)[k];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        size_t hash_value = hash_values[k % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
                         data = &(*insert)[k + 1];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        hash_value = hash_values[(k + 1) % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
                         data = &(*insert)[k + 2];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        hash_value = hash_values[(k + 2) % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
                         data = &(*insert)[k + 3];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        hash_value = hash_values[(k + 3) % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
 
                         k += 4;
                         continue;
                     }
                     auto * data = &(*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
                     ++k;
                 }
-
                 //insert->clear();
             }
             batch.saved.emplace_back(std::move(q));
@@ -982,7 +984,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 ++time.local_hit;
                 batch.batch_per_map[i] = std::move(empty_batches.back());
                 empty_batches.pop_back();
-                RUNTIME_ASSERT(static_cast<DataType *>(batch.batch_per_map[i].get())->empty());
+                RUNTIME_ASSERT(static_cast<DataBatchType *>(batch.batch_per_map[i].get())->empty());
                 continue;
             }
             {
@@ -992,14 +994,14 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                     ++time.global_hit;
                     batch.batch_per_map[i] = std::move(insert_caches.back());
                     insert_caches.pop_back();
-                    RUNTIME_ASSERT(static_cast<DataType *>(batch.batch_per_map[i].get())->empty());
+                    RUNTIME_ASSERT(static_cast<DataBatchType *>(batch.batch_per_map[i].get())->empty());
                     continue;
                 }
             }*/
             ++time.new_count;
-            auto * insert = new DataType();
+            auto * insert = new DataBatchType();
             insert->reserve(min_batch_insert_ht_size * 1.5);
-            batch.batch_per_map[i] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataType>);
+            batch.batch_per_map[i] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
     }
 
@@ -1040,21 +1042,22 @@ void insertRemainingImplType(
 
     size_t segment_size = map.getSegmentSize();
 
-    using DataType = InsertDataType<Map>;
+    using DataType = typename Map::Cell;
+    using DataBatchType = PaddedPODArray<DataType>;
 
-    auto & buffer = *static_cast<DataType *>(batch.write_buffer.get());
+    auto & buffer = *static_cast<DataBatchType *>(batch.write_buffer.get());
     size_t buffer_size = join.write_combine_buffer_size;
     for (size_t i = 0; i < segment_size; ++i)
     {
         size_t segment_index = (i + stream_index) % segment_size;
 
-        auto * b = static_cast<DataType *>(batch.batch_per_map[segment_index].get());
+        auto * b = static_cast<DataBatchType *>(batch.batch_per_map[segment_index].get());
 
         if (buffer_size > 0 && batch.write_pos[segment_index] > 0)
         {
             size_t size = b->size();
             b->resize(size + batch.write_pos[segment_index]);
-            absl::crc_internal::non_temporal_store_memcpy_avx(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(InsertData<Map>));
+            absl::crc_internal::non_temporal_store_memcpy(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
         }
 
         if (b->empty())
@@ -1109,30 +1112,45 @@ void insertRemainingImplType(
 
             for (auto & j : q)
             {
-                auto * insert = static_cast<DataType *>(j.get());
+                auto * insert = static_cast<DataBatchType *>(j.get());
 
-                for (size_t k = 0, size = insert->size(); k < size;)
+                size_t hash_values[8];
+                size_t size = insert->size();
+                for (size_t k = 0; k < 4 && k < size; ++k)
+                {
+                    hash_values[k] = (*insert)[k].getHash(hash_table);
+                }
+                for (size_t k = 0; k < size;)
                 {
                     if (likely(k + 7 < size))
                     {
-                        hash_table.prefetchWrite((*insert)[k + 4].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 5].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 6].hash_value);
-                        hash_table.prefetchWrite((*insert)[k + 7].hash_value);
+                        hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
+                        hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
+                        hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
+                        hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
+                        hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
+
                         auto * data = &(*insert)[k];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        size_t hash_value = hash_values[k % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
                         data = &(*insert)[k + 1];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        hash_value = hash_values[(k + 1) % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
                         data = &(*insert)[k + 2];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        hash_value = hash_values[(k + 2) % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
                         data = &(*insert)[k + 3];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                        hash_value = hash_values[(k + 3) % 8];
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value);
 
                         k += 4;
                         continue;
                     }
                     auto * data = &(*insert)[k];
-                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, data->cell, data->hash_value);
+                    Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table));
                     ++k;
                 }
             }
