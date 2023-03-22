@@ -1681,6 +1681,17 @@ public:
         return ret;
     }
 
+    std::vector<size_t> getBufferSizeCounts()
+    {
+        std::vector<size_t> ret;
+        ret.reserve(segment_size);
+        for (size_t i = 0; i < segment_size; ++i)
+        {
+            ret.push_back(getSegmentTable(i).getBufferSizeInCells());
+        }
+        return ret;
+    }
+
 private:
     std::vector<std::unique_ptr<SegmentType>> segments;
     size_t segment_size;
