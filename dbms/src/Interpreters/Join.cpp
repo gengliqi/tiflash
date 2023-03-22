@@ -512,6 +512,8 @@ void Join::setBuildConcurrencyAndInitPool(size_t build_concurrency_)
     if (hash_map_count == 0)
         hash_map_count = build_concurrency;
 
+    wait_remaining_count = build_concurrency;
+
     insert_queues.resize(hash_map_count);
 
     insert_batches.resize(build_concurrency);
@@ -1424,7 +1426,7 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
         if (blocks.size() == 1)
             blocks_iter = blocks.begin();
     }
-    if (!build_hash_table_at_end)
+    if (enable_fine_grained_shuffle || !build_hash_table_at_end)
         insertFromBlockInternal(stored_block, stream_index);
 }
 
@@ -1524,8 +1526,29 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
 
 void Join::insertRemaining(size_t stream_index)
 {
+    if (enable_fine_grained_shuffle)
+        return;
+
     if (build_hash_table_at_end)
     {
+        {
+            std::unique_lock lock(wait_remaining_mutex);
+            --wait_remaining_count;
+
+            if (wait_remaining_count == 0)
+            {
+                wait_remaining_cv.notify_all();
+            }
+            else
+            {
+                wait_remaining_cv.wait(lock, [&]() {
+                    return meet_error || wait_remaining_count == 0;
+                });
+
+                if (meet_error)
+                    throw Exception(error_message);
+            }
+        }
         while (true)
         {
             Block * b = nullptr;
@@ -1540,7 +1563,7 @@ void Join::insertRemaining(size_t stream_index)
         }
     }
 
-    if (isCrossJoin(kind) || enable_fine_grained_shuffle)
+    if (isCrossJoin(kind))
         return;
 
     if (!getFullness(kind))

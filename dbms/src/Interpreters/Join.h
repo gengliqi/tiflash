@@ -344,6 +344,10 @@ public:
     size_t write_combine_buffer_size;
     bool build_prefetch;
 
+    std::mutex wait_remaining_mutex;
+    std::condition_variable wait_remaining_cv;
+    size_t wait_remaining_count;
+
 private:
     friend class NonJoinedBlockInputStream;
 
