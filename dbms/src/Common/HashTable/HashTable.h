@@ -291,7 +291,8 @@ struct HashTableGrower
     /// Increase the size of the hash table.
     void increaseSize()
     {
-        size_degree += size_degree >= 23 ? 1 : 2;
+        //size_degree += size_degree >= 23 ? 1 : 2;
+        ++size_degree;
     }
 
     /// Set the buffer size by the number of elements in the hash table. Used when deserializing a hash table.
