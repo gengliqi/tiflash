@@ -136,10 +136,12 @@ Join::Join(
     bool build_hash_table_at_end,
     const String & match_helper_name,
     size_t write_combine_buffer_size_,
-    bool build_prefetch_)
+    bool build_prefetch_,
+    bool build_increase_one_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
     , build_prefetch(build_prefetch_)
+    , build_increase_one(build_increase_one_)
     , kind(kind_)
     , strictness(strictness_)
     , key_names_left(key_names_left_)
@@ -278,7 +280,7 @@ Join::Type Join::chooseMethod(const ColumnRawPtrs & key_columns, Sizes & key_siz
 
 
 template <typename Maps>
-static void initImpl(Maps & maps, Join::Type type, size_t build_concurrency)
+static void initImpl(Maps & maps, Join::Type type, size_t build_concurrency, bool increase_one)
 {
     switch (type)
     {
@@ -289,7 +291,7 @@ static void initImpl(Maps & maps, Join::Type type, size_t build_concurrency)
 
 #define M(TYPE)                                                                                      \
     case Join::Type::TYPE:                                                                           \
-        maps.TYPE = std::make_unique<typename decltype(maps.TYPE)::element_type>(build_concurrency); \
+        maps.TYPE = std::make_unique<typename decltype(maps.TYPE)::element_type>(build_concurrency, increase_one); \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
@@ -300,19 +302,21 @@ static void initImpl(Maps & maps, Join::Type type, size_t build_concurrency)
 }
 
 template <typename Maps>
-static std::vector<size_t> getTotalCollisionCountImpl(const Maps & maps, Join::Type type)
+static std::tuple<std::vector<size_t>, std::vector<size_t>, std::vector<UInt64>> getHashMapTotalImpl(const Maps & maps, Join::Type type)
 {
     std::vector<size_t> empty;
     switch (type)
     {
     case Join::Type::EMPTY:
-        return empty;
+        return {};
     case Join::Type::CROSS:
-        return empty;
+        return {};
 
 #define M(NAME)            \
     case Join::Type::NAME: \
-        return maps.NAME ? maps.NAME->getCollisionCounts() : empty;
+        if (maps.NAME)     \
+            return {maps.NAME->getCollisionCounts(), maps.NAME->getBufferSizeCounts(), maps.NAME->getResizeTimes()}; \
+        return {};
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
 
@@ -320,29 +324,6 @@ static std::vector<size_t> getTotalCollisionCountImpl(const Maps & maps, Join::T
         throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
     }
 }
-
-template <typename Maps>
-static std::vector<size_t> getTotalBufferSizeCountImpl(const Maps & maps, Join::Type type)
-{
-    std::vector<size_t> empty;
-    switch (type)
-    {
-    case Join::Type::EMPTY:
-        return empty;
-    case Join::Type::CROSS:
-        return empty;
-
-#define M(NAME)            \
-    case Join::Type::NAME: \
-        return maps.NAME ? maps.NAME->getBufferSizeCounts() : empty;
-        APPLY_FOR_JOIN_VARIANTS(M)
-#undef M
-
-    default:
-        throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
-    }
-}
-
 
 template <typename Maps>
 static size_t getTotalRowCountImpl(const Maps & maps, Join::Type type)
@@ -467,16 +448,16 @@ void Join::initMapImpl(Type type_)
     if (!getFullness(kind))
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            initImpl(maps_any, type, count);
+            initImpl(maps_any, type, count, build_increase_one);
         else
-            initImpl(maps_all, type, count);
+            initImpl(maps_all, type, count, build_increase_one);
     }
     else
     {
         if (strictness == ASTTableJoin::Strictness::Any)
-            initImpl(maps_any_full, type, count);
+            initImpl(maps_any_full, type, count, build_increase_one);
         else
-            initImpl(maps_all_full, type, count);
+            initImpl(maps_all_full, type, count, build_increase_one);
     }
 }
 
@@ -2661,31 +2642,20 @@ void Join::finishOneBuild()
 
         std::vector<size_t> collision;
         std::vector<size_t> buffer_size;
+        std::vector<UInt64> resize_time;
         if (!getFullness(kind))
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-            {
-                collision = getTotalCollisionCountImpl(maps_any, type);
-                buffer_size = getTotalBufferSizeCountImpl(maps_any, type);
-            }
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_any, type);
             else
-            {
-                collision = getTotalCollisionCountImpl(maps_all, type);
-                buffer_size = getTotalBufferSizeCountImpl(maps_all, type);
-            }
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_all, type);
         }
         else
         {
             if (strictness == ASTTableJoin::Strictness::Any)
-            {
-                collision = getTotalCollisionCountImpl(maps_any_full, type);
-                buffer_size = getTotalBufferSizeCountImpl(maps_any_full, type);
-            }
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_any_full, type);
             else
-            {
-                collision = getTotalCollisionCountImpl(maps_all_full, type);
-                buffer_size = getTotalBufferSizeCountImpl(maps_all_full, type);
-            }
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_all_full, type);
         }
         size_t sum = 0;
         for (auto i : collision)
@@ -2700,6 +2670,13 @@ void Join::finishOneBuild()
         std::stringstream result2;
         std::copy(buffer_size.begin(), buffer_size.end(), std::ostream_iterator<size_t>(result2, " "));
         LOG_INFO(log, "join build buffer size sum {}, {}", sum, result2.str());
+
+        UInt64 all_time = 0;
+        for (auto i : resize_time)
+            all_time += i;
+        std::stringstream result3;
+        std::copy(resize_time.begin(), resize_time.end(), std::ostream_iterator<size_t>(result3, " "));
+        LOG_INFO(log, "join build resize time sum {}, avg {}, {}", all_time, all_time / build_concurrency, result3.str());
     }
 }
 

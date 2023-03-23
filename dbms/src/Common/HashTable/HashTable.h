@@ -34,10 +34,9 @@
 #include <utility>
 
 #define DBMS_HASH_MAP_COUNT_COLLISIONS
-
-#ifdef DBMS_HASH_MAP_DEBUG_RESIZES
 #include <Common/Stopwatch.h>
 
+#ifdef DBMS_HASH_MAP_DEBUG_RESIZES
 #include <iomanip>
 #include <iostream>
 #endif
@@ -267,7 +266,9 @@ struct HashTableGrower
     static constexpr auto performs_linear_probing_with_single_step = true;
 
     size_t div = 1;
+    bool increase_one = false;
     void setDiv(size_t d) { if (d > 0) div = d; }
+    void setIncreaseOne(bool i) { increase_one = i; }
 
     /// The size of the hash table in the cells.
     size_t bufSize() const { return 1ULL << size_degree; }
@@ -291,8 +292,10 @@ struct HashTableGrower
     /// Increase the size of the hash table.
     void increaseSize()
     {
-        //size_degree += size_degree >= 23 ? 1 : 2;
-        ++size_degree;
+        if (increase_one)
+            ++size_degree;
+        else
+            size_degree += size_degree >= 23 ? 1 : 2;
     }
 
     /// Set the buffer size by the number of elements in the hash table. Used when deserializing a hash table.
@@ -326,6 +329,7 @@ struct HashTableFixedGrower
 
     size_t div = 1;
     void setDiv(size_t d) { if (d > 0) div = d; }
+    void setIncreaseOne(bool) {}
 
     size_t bufSize() const { return 1ULL << key_bits; }
     size_t place(size_t x) const { return x / div; }
@@ -447,6 +451,7 @@ protected:
     size_t m_size = 0; /// Amount of elements
     Cell * buf; /// A piece of memory for all elements except the element with zero key.
     Grower grower;
+    UInt64 resize_time = 0;
 
 #ifdef DBMS_HASH_MAP_COUNT_COLLISIONS
     mutable size_t collisions = 0;
@@ -502,6 +507,7 @@ protected:
 #ifdef DBMS_HASH_MAP_DEBUG_RESIZES
         Stopwatch watch;
 #endif
+        Stopwatch watch;
 
         size_t old_size = grower.bufSize();
 
@@ -579,6 +585,8 @@ protected:
                 if (&buf[i] != &buf[updated_place_value])
                     Cell::move(&buf[i], &buf[updated_place_value]);
         }
+
+        resize_time += watch.elapsed();
 
 #ifdef DBMS_HASH_MAP_DEBUG_RESIZES
         watch.stop();
@@ -720,6 +728,7 @@ public:
     size_t hash(const Key & x) const { return Hash::operator()(x); }
 
     void setDiv(size_t div) { grower.setDiv(div); }
+    void setIncreaseOne(bool i) { grower.setIncreaseOne(i); }
 
     HashTable()
     {
@@ -1400,6 +1409,11 @@ public:
         return grower.bufSize();
     }
 
+    UInt64 getResizeTime() const
+    {
+        return resize_time;
+    }
+
     /// Return offset for result in internal buffer.
     /// Result can have value up to `getBufferSizeInCells() + 1`
     /// because offset for zero value considered to be 0
@@ -1511,13 +1525,14 @@ public:
     using Cell = typename HashTableType::Cell;
     using Hash = typename HashTableType::Hash;
 
-    explicit ConcurrentHashTable(size_t segment_size_)
+    explicit ConcurrentHashTable(size_t segment_size_, bool increase_one)
         : segment_size(segment_size_)
     {
         for (size_t i = 0; i < segment_size; i++)
         {
             segments.emplace_back(std::move(std::make_unique<HashTableWithLock<HashTableType>>()));
             segments[i]->getHashTable().setDiv(segment_size);
+            segments[i]->getHashTable().setIncreaseOne(increase_one);
         }
     }
     ConcurrentHashTable(size_t segment_size_, size_t reserve_for_num_elements)
@@ -1689,6 +1704,17 @@ public:
         for (size_t i = 0; i < segment_size; ++i)
         {
             ret.push_back(getSegmentTable(i).getBufferSizeInCells());
+        }
+        return ret;
+    }
+
+    std::vector<UInt64> getResizeTimes()
+    {
+        std::vector<UInt64> ret;
+        ret.reserve(segment_size);
+        for (size_t i = 0; i < segment_size; ++i)
+        {
+            ret.push_back(getSegmentTable(i).getResizeTime());
         }
         return ret;
     }

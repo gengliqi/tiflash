@@ -307,6 +307,7 @@ struct Settings
     M(SettingUInt64, hash_map_count, 0, "")\
     M(SettingUInt64, write_combine_buffer_size, 0, "")                                                                                                                                                                                  \
     M(SettingBool, build_prefetch, true, "")                                                                                                                                                                                                                                    \
+    M(SettingBool, build_increase_one, false, "")                                                                                                                                                                                                                                    \
     M(SettingBool, build_hash_table_at_end, false, "")
 
 // clang-format on

@@ -139,7 +139,8 @@ PhysicalPlanNodePtr PhysicalJoin::build(
         settings.build_hash_table_at_end,
         match_helper_name,
         settings.write_combine_buffer_size,
-        settings.build_prefetch);
+        settings.build_prefetch,
+        settings.build_increase_one);
 
     recordJoinExecuteInfo(dag_context, executor_id, build_plan->execId(), join_ptr);
 

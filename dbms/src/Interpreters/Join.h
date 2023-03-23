@@ -107,7 +107,8 @@ public:
          bool build_hash_table_at_end = false,
          const String & match_helper_name = "",
          size_t write_combine_buffer_size = 0,
-         bool build_prefetch = true);
+         bool build_prefetch = true,
+         bool increase_one = false);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
       * You must call this method before subsequent calls to insertFromBlock.
@@ -343,6 +344,7 @@ public:
 
     size_t write_combine_buffer_size;
     bool build_prefetch;
+    bool build_increase_one;
 
     std::mutex wait_remaining_mutex;
     std::condition_variable wait_remaining_cv;
