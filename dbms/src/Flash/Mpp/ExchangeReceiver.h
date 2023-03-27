@@ -111,6 +111,7 @@ public:
         const String & executor_id,
         uint64_t fine_grained_shuffle_stream_count,
         Int32 local_tunnel_version_,
+        UInt64 exchange_receiver_multiple_stream_count,
         const std::vector<StorageDisaggregated::RequestAndRegionIDs> & disaggregated_dispatch_reqs_ = {});
 
     ~ExchangeReceiverBase();

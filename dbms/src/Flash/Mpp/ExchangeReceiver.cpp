@@ -309,12 +309,13 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
     const String & executor_id,
     uint64_t fine_grained_shuffle_stream_count_,
     Int32 local_tunnel_version_,
+    UInt64 exchange_receiver_multiple_stream_count,
     const std::vector<StorageDisaggregated::RequestAndRegionIDs> & disaggregated_dispatch_reqs_)
     : rpc_context(std::move(rpc_context_))
     , source_num(source_num_)
     , enable_fine_grained_shuffle_flag(enableFineGrainedShuffle(fine_grained_shuffle_stream_count_))
     , output_stream_count(enable_fine_grained_shuffle_flag ? std::min(max_streams_, fine_grained_shuffle_stream_count_) : max_streams_)
-    , max_buffer_size(std::max<size_t>(batch_packet_count, std::max(source_num, max_streams_) * 10000))
+    , max_buffer_size(std::max<size_t>(batch_packet_count, std::max(source_num, max_streams_) * exchange_receiver_multiple_stream_count))
     , connection_uncreated_num(source_num)
     , thread_manager(newThreadManager())
     , live_local_connections(0)
