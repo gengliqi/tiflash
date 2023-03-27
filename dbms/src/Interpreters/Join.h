@@ -108,7 +108,8 @@ public:
          const String & match_helper_name = "",
          size_t write_combine_buffer_size = 0,
          bool build_prefetch = true,
-         bool increase_one = false);
+         bool increase_one = false,
+         double build_double_size_rate = 0);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
       * You must call this method before subsequent calls to insertFromBlock.
@@ -293,7 +294,7 @@ public:
         std::vector<InsertDataVoidType> batch_per_map;
         InsertDataVoidType write_buffer;
         std::vector<size_t> write_pos;
-        std::list<absl::InlinedVector<InsertDataVoidType, 10>> saved;
+        std::list<std::vector<InsertDataVoidType>> saved;
     };
 
     std::vector<InsertDataBatch> insert_batches;
@@ -303,7 +304,8 @@ public:
 
     struct alignas(64) InsertDataQueue
     {
-        absl::InlinedVector<InsertDataVoidType, 10> queue;
+        std::vector<InsertDataVoidType> queue;
+        size_t size = 0;
         bool is_running = false;
     };
 
@@ -319,9 +321,11 @@ public:
         UInt64 b = 0;
         UInt64 c = 0;
         UInt64 d = 0;
-        UInt64 t3_2 = 0;
-        UInt64 a_2 = 0;
-        UInt64 b_2 = 0;
+        UInt64 r_t1 = 0;
+        UInt64 r_t2 = 0;
+        UInt64 r_t3 = 0;
+        UInt64 r_t3_a = 0;
+        UInt64 r_t3_b = 0;
         UInt64 original_count = 0;
         UInt64 new_count = 0;
         UInt64 delete_count = 0;
@@ -336,7 +340,8 @@ public:
         auto & t = build_times[stream_index];
         LOG_INFO(log, "join {} build time {}, {}, {}, {}, sum {}", stream_index, t.t1, t.t2, t.t3, t.t4, t.t1 + t.t2 + t.t3 + t.t4);
         LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, sum {}", stream_index, t.a, t.b, t.c, t.d, t.a + t.b + t.c + t.d);
-        LOG_INFO(log, "join {} build time more and more, {}, {}, {}, sum {}", stream_index, t.t3_2, t.a_2, t.b_2, t.a_2 + t.b_2);
+        LOG_INFO(log, "join {} build remaining time, {}, {}, {}, sum {}", stream_index, t.r_t1, t.r_t2, t.r_t3, t.r_t1 + t.r_t2 + t.r_t3);
+        LOG_INFO(log, "join {} build remaining time more, {}, {}, sum {}", stream_index, t.r_t3_a, t.r_t3_b, t.r_t3_a + t.r_t3_b);
         LOG_INFO(log, "join {} original {} new {} delete {} local hit {} global hit {}", stream_index, t.original_count, t.new_count, t.delete_count, t.local_hit, t.global_hit);
     }
 
@@ -345,12 +350,15 @@ public:
     size_t write_combine_buffer_size;
     bool build_prefetch;
     bool build_increase_one;
+    double build_double_size_rate;
 
     std::mutex wait_remaining_mutex;
     std::condition_variable wait_remaining_cv;
     size_t wait_remaining_count;
 
-private:
+    size_t wait_remaining_count_2;
+
+public:
     friend class NonJoinedBlockInputStream;
 
     ASTTableJoin::Kind kind;

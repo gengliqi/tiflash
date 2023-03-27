@@ -356,7 +356,7 @@ struct OneElementResizeGrower
 
     bool overflow(size_t elems) const { return elems >= buf_size; }
 
-    void increaseSize() { ++buf_size; }
+    void increaseSize(bool) { ++buf_size; }
 
     void set(size_t) {}
 

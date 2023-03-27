@@ -167,7 +167,7 @@ template <size_t initial_size_degree = 8>
 struct StringHashTableGrower : public HashTableGrower<initial_size_degree>
 {
     // Smooth growing for string maps
-    void increaseSize() { this->size_degree += 1; }
+    void increaseSize(bool) { this->size_degree += 1; }
 };
 
 template <typename Mapped>
