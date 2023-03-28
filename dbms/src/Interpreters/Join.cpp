@@ -192,6 +192,7 @@ void Join::meetError(const String & error_message_)
     error_message = error_message_.empty() ? "Join meet error" : error_message_;
     build_cv.notify_all();
     probe_cv.notify_all();
+    wait_remaining_cv.notify_all();
 }
 
 bool CanAsColumnString(const IColumn * column)
@@ -1068,13 +1069,29 @@ void insertRemainingImplType(
     Join::BuildTime & time,
     Join & join)
 {
+    using DataType = typename Map::Cell;
+    using DataBatchType = PaddedPODArray<DataType>;
+
+    size_t segment_size = map.getSegmentSize();
+
     if (batch.batch_per_map.empty())
-        return;
+    {
+        batch.batch_per_map.reserve(segment_size);
+        for (size_t i = 0; i < segment_size; ++i)
+        {
+            auto * insert = new DataBatchType();
+            batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+        }
+        if (join.write_combine_buffer_size > 0)
+        {
+            batch.write_pos.resize(segment_size);
+            auto * buffer = new DataBatchType(segment_size * join.write_combine_buffer_size);
+            batch.write_buffer = Join::InsertDataVoidType(static_cast<void *>(buffer), deleteInsertData<DataBatchType>);
+        }
+    }
 
     Stopwatch watch;
     Stopwatch watch2;
-
-    size_t segment_size = map.getSegmentSize();
 
     using DataType = typename Map::Cell;
     using DataBatchType = PaddedPODArray<DataType>;
