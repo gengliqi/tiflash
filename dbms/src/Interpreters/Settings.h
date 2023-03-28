@@ -310,6 +310,7 @@ struct Settings
     M(SettingBool, build_prefetch, true, "")                                                                                                                                                                                                                                    \
     M(SettingBool, build_increase_one, false, "")                                                                                                                                                                                                                                    \
     M(SettingDouble, build_double_size_rate, 0, "")                                                                                                                                                                                                                                    \
+    M(SettingDouble, build_resize, 0, "")                                                                                                                                                                                                                                    \
     M(SettingBool, build_hash_table_at_end, false, "")
 
 // clang-format on

@@ -138,12 +138,14 @@ Join::Join(
     size_t write_combine_buffer_size_,
     bool build_prefetch_,
     bool build_increase_one_,
-    double build_double_size_rate_)
+    double build_double_size_rate_,
+    size_t build_resize_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
     , build_prefetch(build_prefetch_)
     , build_increase_one(build_increase_one_)
     , build_double_size_rate(build_double_size_rate_)
+    , build_resize(build_resize_)
     , kind(kind_)
     , strictness(strictness_)
     , key_names_left(key_names_left_)
@@ -1190,6 +1192,9 @@ void insertRemainingImplType(
             {
                 hash_table.setDoubleSize(true);
                 double_size_threshold = total_size * join.build_double_size_rate;
+
+                if (join.build_resize != 0)
+                    hash_table.reserve(total_size * join.build_resize);
             }
 
             time.r_t3_a += watch2.elapsedFromLastTime();

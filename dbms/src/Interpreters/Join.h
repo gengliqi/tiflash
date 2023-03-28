@@ -109,7 +109,8 @@ public:
          size_t write_combine_buffer_size = 0,
          bool build_prefetch = true,
          bool increase_one = false,
-         double build_double_size_rate = 0);
+         double build_double_size_rate = 0,
+         double build_resize = 0);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
       * You must call this method before subsequent calls to insertFromBlock.
@@ -351,6 +352,7 @@ public:
     bool build_prefetch;
     bool build_increase_one;
     double build_double_size_rate;
+    double build_resize;
 
     std::mutex wait_remaining_mutex;
     std::condition_variable wait_remaining_cv;
