@@ -139,7 +139,7 @@ Join::Join(
     bool build_prefetch_,
     bool build_increase_one_,
     double build_double_size_rate_,
-    size_t build_resize_)
+    double build_resize_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
     , build_prefetch(build_prefetch_)
