@@ -782,7 +782,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         for (size_t i = 0; i < segment_size; ++i)
         {
             auto * insert = new DataBatchType();
-            insert->reserve(min_batch_insert_ht_size * 1.5);
+            insert->reserve(min_batch_insert_ht_size);
             batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
 
@@ -796,6 +796,8 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         DataType d;
         LOG_INFO(join.log, "insert data size {}", sizeof(d));
     }
+
+    BoolVec need_run(segment_size, false);
 
     size_t buffer_size = join.write_combine_buffer_size;
     std::vector<DataBatchType *> batch_pointers(segment_size);
@@ -825,8 +827,27 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             size_t hash_value = map.hash(key);
             size_t segment_index = hash_value % segment_size;
 
-            batch_pointers[segment_index]->emplace_back(key, typename Map::mapped_type(stored_block, i));
-            batch_pointers[segment_index]->back().setHash(hash_value);
+            auto * p = batch_pointers[segment_index];
+            p->emplace_back(key, typename Map::mapped_type(stored_block, i));
+            p->back().setHash(hash_value);
+
+            if (unlikely(p->size() >= min_batch_insert_ht_size))
+            {
+                std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                insert_queues[segment_index].size += p->size();
+                insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
+                if (!insert_queues[segment_index].is_running)
+                {
+                    /// If it's not running, need run later.
+                    need_run[segment_index] = true;
+                }
+
+                auto * insert = new DataBatchType();
+                insert->reserve(min_batch_insert_ht_size);
+                batch_pointers[segment_index] = insert;
+                batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+            }
         }
     }
     else
@@ -861,17 +882,35 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             if (batch.write_pos[segment_index] == buffer_size)
             {
                 batch.write_pos[segment_index] = 0;
-                size_t size = batch_pointers[segment_index]->size();
-                batch_pointers[segment_index]->resize(size + buffer_size);
+                auto * p = batch_pointers[segment_index];
+                size_t size = p->size();
+                p->resize(size + buffer_size);
                 absl::crc_internal::non_temporal_store_memcpy(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
+
+                if (unlikely(p->size() >= min_batch_insert_ht_size))
+                {
+                    std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                    insert_queues[segment_index].size += p->size();
+                    insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
+                    if (!insert_queues[segment_index].is_running)
+                    {
+                        /// If it's not running, need run later.
+                        need_run[segment_index] = true;
+                    }
+
+                    auto * insert = new DataBatchType();
+                    insert->reserve(min_batch_insert_ht_size);
+                    batch_pointers[segment_index] = insert;
+                    batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+                }
             }
         }
     }
 
     time.t1 += watch.elapsedFromLastTime();
 
-    BoolVec need_run(segment_size, false);
-    for (size_t i = 0; i < segment_size; ++i)
+    /*for (size_t i = 0; i < segment_size; ++i)
     {
         size_t segment_index = (i + stream_index) % segment_size;
 
@@ -890,7 +929,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 need_run[segment_index] = true;
             }
         }
-    }
+    }*/
 
     time.t2 += watch.elapsedFromLastTime();
 
@@ -1012,50 +1051,15 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     time.t3 += watch.elapsedFromLastTime();
 
-    for (size_t i = 0; i < segment_size; ++i)
+    /*for (size_t i = 0; i < segment_size; ++i)
     {
         if (batch.batch_per_map[i] == nullptr)
         {
-            /*if (!empty_batches.empty())
-            {
-                ++time.local_hit;
-                batch.batch_per_map[i] = std::move(empty_batches.back());
-                empty_batches.pop_back();
-                RUNTIME_ASSERT(static_cast<DataBatchType *>(batch.batch_per_map[i].get())->empty());
-                continue;
-            }
-            {
-                std::lock_guard lk(insert_cache_mutex);
-                if (!insert_caches.empty())
-                {
-                    ++time.global_hit;
-                    batch.batch_per_map[i] = std::move(insert_caches.back());
-                    insert_caches.pop_back();
-                    RUNTIME_ASSERT(static_cast<DataBatchType *>(batch.batch_per_map[i].get())->empty());
-                    continue;
-                }
-            }*/
             ++time.new_count;
             auto * insert = new DataBatchType();
-            insert->reserve(min_batch_insert_ht_size * 1.5);
+            insert->reserve(min_batch_insert_ht_size);
             batch.batch_per_map[i] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
-    }
-
-    /*if (!empty_batches.empty())
-    {
-        size_t i = 0, size = empty_batches.size();
-        {
-            std::lock_guard lk(insert_cache_mutex);
-            for (; i < size; ++i)
-            {
-                if (insert_caches.size() > max_cache_size)
-                    break;
-
-                insert_caches.emplace_back(std::move(empty_batches[i]));
-            }
-        }
-        time.delete_count += size - i;
     }*/
 
     time.t4 += watch.elapsedFromLastTime();

@@ -37,8 +37,16 @@ Block ExchangeSenderBlockInputStream::readImpl()
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_during_mpp_non_root_task_run);
     }
 
+    if (log->identifier().find("ExchangeSender_81") != std::string::npos)
+    {
+        total_rows += 1;
+    }
     Stopwatch watch;
     Block block = children.back()->read();
+    if (log->identifier().find("ExchangeSender_81") != std::string::npos)
+    {
+        total_rows += 1;
+    }
     time_read += watch.elapsedFromLastTime();
     if (block)
     {
