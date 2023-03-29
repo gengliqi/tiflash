@@ -37,7 +37,9 @@ Block ExchangeSenderBlockInputStream::readImpl()
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_during_mpp_non_root_task_run);
     }
 
+    Stopwatch watch;
     Block block = children.back()->read();
+    time_read += watch.elapsedFromLastTime();
     if (block)
     {
         total_rows += block.rows();
@@ -47,6 +49,7 @@ Block ExchangeSenderBlockInputStream::readImpl()
     {
         writer->flush();
     }
+    time_write += watch.elapsedFromLastTime();
     return block;
 }
 } // namespace DB

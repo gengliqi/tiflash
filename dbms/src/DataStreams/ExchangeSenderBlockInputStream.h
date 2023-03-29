@@ -46,13 +46,15 @@ protected:
     }
     void readSuffixImpl() override
     {
-        LOG_DEBUG(log, "finish write with {} rows", total_rows);
+        LOG_DEBUG(log, "finish write with {} rows, time_read {}, time_write {}", total_rows, time_read, time_write);
     }
 
 private:
     std::unique_ptr<DAGResponseWriter> writer;
     const LoggerPtr log;
     size_t total_rows = 0;
+    UInt64 time_read = 0;
+    UInt64 time_write = 0;
 };
 
 } // namespace DB
