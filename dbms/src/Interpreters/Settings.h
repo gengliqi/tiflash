@@ -303,6 +303,7 @@ struct Settings
     M(SettingBool, enable_pipeline, false, "Enable pipeline model")                                                                                                                                                                     \
     M(SettingUInt64, pipeline_task_thread_pool_size, 0, "The size of task thread pool. 0 means using number_of_logical_cpu_cores.") \
     M(SettingUInt64, local_tunnel_version, 1, "1: not refined, 2: refined")\
+    M(SettingUInt64, grpc_max_concurrent_streams, 0, "")\
     M(SettingUInt64, exchange_receiver_multiple_stream_count, 2, "")\
     M(SettingUInt64, exchange_batch_packet_count, 16, "")\
     M(SettingUInt64, min_batch_insert_ht_size, 1024, "")\
