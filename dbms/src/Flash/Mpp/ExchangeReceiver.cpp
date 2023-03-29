@@ -74,7 +74,8 @@ public:
         const std::shared_ptr<RPCContext> & context,
         const Request & req,
         const String & req_id,
-        std::atomic<Int64> * data_size_in_queue)
+        std::atomic<Int64> * data_size_in_queue,
+        UInt64 exchange_batch_packet_count_)
         : rpc_context(context)
         , cq(&(GRPCCompletionQueuePool::global_instance->pickQueue()))
         , request(&req)
@@ -83,8 +84,9 @@ public:
         , req_info(fmt::format("tunnel{}+{}", req.send_task_id, req.recv_task_id))
         , log(Logger::get(req_id, req_info))
         , channel_writer(msg_channels_, req_info, log, data_size_in_queue, ReceiverMode::Async)
+        , exchange_batch_packet_count(exchange_batch_packet_count_)
     {
-        packets.resize(batch_packet_count);
+        packets.resize(exchange_batch_packet_count);
         for (auto & packet : packets)
             packet = std::make_shared<TrackedMppDataPacket>(MPPDataPacketV0);
 
@@ -122,7 +124,7 @@ public:
             if (ok)
                 ++read_packet_index;
 
-            if (!ok || read_packet_index == batch_packet_count || packets[read_packet_index - 1]->hasError())
+            if (!ok || read_packet_index == exchange_batch_packet_count || packets[read_packet_index - 1]->hasError())
                 notifyReactor();
             else
                 reader->read(packets[read_packet_index], thisAsUnaryCallback());
@@ -151,7 +153,7 @@ public:
                 setDone(fmt::format("Exchange receiver meet error : {}", error_message));
             else if (!sendPackets())
                 setDone("Exchange receiver meet error : push packets fail");
-            else if (read_packet_index < batch_packet_count)
+            else if (read_packet_index < exchange_batch_packet_count)
             {
                 stage = AsyncRequestStage::WAIT_FINISH;
                 reader->finish(finish_status, thisAsUnaryCallback());
@@ -297,6 +299,7 @@ private:
     LoggerPtr log;
     ReceiverChannelWriter channel_writer;
     std::mutex mu;
+    UInt64 exchange_batch_packet_count;
 };
 } // namespace
 
@@ -310,12 +313,13 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
     uint64_t fine_grained_shuffle_stream_count_,
     Int32 local_tunnel_version_,
     UInt64 exchange_receiver_multiple_stream_count,
+    UInt64 exchange_batch_packet_count_,
     const std::vector<StorageDisaggregated::RequestAndRegionIDs> & disaggregated_dispatch_reqs_)
     : rpc_context(std::move(rpc_context_))
     , source_num(source_num_)
     , enable_fine_grained_shuffle_flag(enableFineGrainedShuffle(fine_grained_shuffle_stream_count_))
     , output_stream_count(enable_fine_grained_shuffle_flag ? std::min(max_streams_, fine_grained_shuffle_stream_count_) : max_streams_)
-    , max_buffer_size(std::max<size_t>(batch_packet_count, std::max(source_num, max_streams_) * exchange_receiver_multiple_stream_count))
+    , max_buffer_size(std::max<size_t>(exchange_batch_packet_count_, std::max(source_num, max_streams_) * exchange_receiver_multiple_stream_count))
     , connection_uncreated_num(source_num)
     , thread_manager(newThreadManager())
     , live_local_connections(0)
@@ -325,6 +329,7 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
     , collected(false)
     , local_tunnel_version(local_tunnel_version_)
     , data_size_in_queue(0)
+    , exchange_batch_packet_count(exchange_batch_packet_count_)
     , disaggregated_dispatch_reqs(disaggregated_dispatch_reqs_)
 {
     try
@@ -540,7 +545,7 @@ void ExchangeReceiverBase<RPCContext>::reactor(const std::vector<Request> & asyn
     std::vector<std::unique_ptr<AsyncHandler>> handlers;
     handlers.reserve(alive_async_connections);
     for (const auto & req : async_requests)
-        handlers.emplace_back(std::make_unique<AsyncHandler>(&ready_requests, &msg_channels, rpc_context, req, exc_log->identifier(), &data_size_in_queue));
+        handlers.emplace_back(std::make_unique<AsyncHandler>(&ready_requests, &msg_channels, rpc_context, req, exc_log->identifier(), &data_size_in_queue, exchange_batch_packet_count));
 
     while (alive_async_connections > 0)
     {

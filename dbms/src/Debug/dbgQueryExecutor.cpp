@@ -70,7 +70,8 @@ BlockInputStreamPtr constructExchangeReceiverStream(Context & context, tipb::Exc
             /*executor_id=*/"",
             /*fine_grained_shuffle_stream_count=*/0,
             context.getSettingsRef().local_tunnel_version,
-            context.getSettingsRef().exchange_receiver_multiple_stream_count);
+            context.getSettingsRef().exchange_receiver_multiple_stream_count,
+            context.getSettingsRef().exchange_batch_packet_count);
     BlockInputStreamPtr ret = std::make_shared<ExchangeReceiverInputStream>(exchange_receiver, /*req_id=*/"", /*executor_id=*/"", /*stream_id*/ 0);
     return ret;
 }

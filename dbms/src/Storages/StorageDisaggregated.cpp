@@ -239,6 +239,7 @@ void StorageDisaggregated::buildReceiverStreams(const std::vector<RequestAndRegi
         /*fine_grained_shuffle_stream_count=*/0,
         context.getSettingsRef().local_tunnel_version,
         context.getSettingsRef().exchange_receiver_multiple_stream_count,
+        context.getSettingsRef().exchange_batch_packet_count,
         dispatch_reqs);
 
     // MPPTask::receiver_set will record this ExchangeReceiver, so can cancel it in ReceiverSet::cancel().

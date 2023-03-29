@@ -26,7 +26,7 @@
 
 namespace DB
 {
-constexpr Int32 batch_packet_count = 16;
+//constexpr Int32 batch_packet_count = 16;
 
 struct ExchangeReceiverResult
 {
@@ -112,6 +112,7 @@ public:
         uint64_t fine_grained_shuffle_stream_count,
         Int32 local_tunnel_version_,
         UInt64 exchange_receiver_multiple_stream_count,
+        UInt64 exchange_batch_packet_count,
         const std::vector<StorageDisaggregated::RequestAndRegionIDs> & disaggregated_dispatch_reqs_ = {});
 
     ~ExchangeReceiverBase();
@@ -230,6 +231,8 @@ private:
     Int32 local_tunnel_version;
 
     std::atomic<Int64> data_size_in_queue;
+
+    UInt64 exchange_batch_packet_count;
 
     // For tiflash_compute node, need to send MPPTask to tiflash_storage node.
     std::vector<StorageDisaggregated::RequestAndRegionIDs> disaggregated_dispatch_reqs;

@@ -209,7 +209,8 @@ void MPPTask::initExchangeReceivers()
                 executor_id,
                 executor.fine_grained_shuffle_stream_count(),
                 context->getSettingsRef().local_tunnel_version,
-                context->getSettingsRef().exchange_receiver_multiple_stream_count);
+                context->getSettingsRef().exchange_receiver_multiple_stream_count,
+                context->getSettingsRef().exchange_batch_packet_count);
 
             if (status != RUNNING)
                 throw Exception("exchange receiver map can not be initialized, because the task is not in running state");
