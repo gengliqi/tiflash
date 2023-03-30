@@ -46,7 +46,8 @@ protected:
     }
     void readSuffixImpl() override
     {
-        LOG_DEBUG(log, "finish write with {} rows, time_read {}, time_write {}", total_rows, time_read, time_write);
+        auto t = writer->getMetrics();
+        LOG_DEBUG(log, "finish write with {} rows, time_read {}, time_write {}(partition {}, send {})", total_rows, time_read, time_write, t.first, t.second);
     }
 
 private:

@@ -149,6 +149,8 @@ void FineGrainedShuffleWriter<ExchangeWriterPtr>::batchWriteFineGrainedShuffleIm
         assert(fine_grained_shuffle_stream_count <= 1024);
 
         HashBaseWriterHelper::materializeBlocks(blocks);
+
+        Stopwatch watch;
         for (auto & block : blocks)
         {
             if constexpr (version != MPPDataPacketV0)
@@ -160,6 +162,8 @@ void FineGrainedShuffleWriter<ExchangeWriterPtr>::batchWriteFineGrainedShuffleIm
             block.clear();
         }
         blocks.clear();
+
+        time_partition += watch.elapsedFromLastTime();
 
         // serialize each partitioned block and write it to its destination
         size_t part_id = 0;
@@ -175,6 +179,8 @@ void FineGrainedShuffleWriter<ExchangeWriterPtr>::batchWriteFineGrainedShuffleIm
                 data_codec_version,
                 compression_method);
         }
+        time_send += watch.elapsedFromLastTime();
+
         rows_in_blocks = 0;
     }
 }

@@ -40,6 +40,10 @@ public:
     void write(const Block & block) override;
     bool isReadyForWrite() const override;
     void flush() override;
+    std::pair<UInt64, UInt64> getMetrics() override
+    {
+        return {time_partition, time_send};
+    }
 
 private:
     void writeImpl(const Block & block);
@@ -62,6 +66,8 @@ private:
     DataTypes expected_types;
     MPPDataPacketVersion data_codec_version;
     CompressionMethod compression_method{};
+    UInt64 time_partition = 0;
+    UInt64 time_send = 0;
 };
 
 } // namespace DB

@@ -236,6 +236,9 @@ private:
 
     // For tiflash_compute node, need to send MPPTask to tiflash_storage node.
     std::vector<StorageDisaggregated::RequestAndRegionIDs> disaggregated_dispatch_reqs;
+
+    UInt64 time_pop = 0;
+    UInt64 time_handle = 0;
 };
 
 class ExchangeReceiver : public ExchangeReceiverBase<GRPCReceiverContext>

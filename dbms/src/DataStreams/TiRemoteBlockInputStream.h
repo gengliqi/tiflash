@@ -55,6 +55,7 @@ class TiRemoteBlockInputStream : public IProfilingBlockInputStream
     RemoteExecutionSummary remote_execution_summary;
 
     uint64_t total_rows;
+    UInt64 total_blocks = 0;
 
     // For fine grained shuffle, sender will partition data into muiltiple streams by hashing.
     // ExchangeReceiverBlockInputStream only need to read its own stream, i.e., streams[stream_id].
@@ -96,6 +97,7 @@ class TiRemoteBlockInputStream : public IProfilingBlockInputStream
             connection_profile_info.packets += decode_detail.packets;
             connection_profile_info.bytes += decode_detail.packet_bytes;
 
+            total_blocks += block_queue.size();
             total_rows += decode_detail.rows;
             LOG_TRACE(
                 log,
@@ -151,7 +153,10 @@ public:
         if (block_queue.empty())
         {
             if (!fetchRemoteResult())
+            {
+                LOG_INFO(log, "finish read {} rows {} blocks from remote", total_rows, total_blocks);
                 return {};
+            }
         }
         Block block = block_queue.front();
         block_queue.pop();

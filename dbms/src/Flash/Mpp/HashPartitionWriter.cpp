@@ -160,6 +160,8 @@ void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1()
     std::vector<std::vector<MutableColumns>> dest_columns(partition_num);
     size_t total_rows = 0;
 
+    Stopwatch watch;
+
     for (auto & block : blocks)
     {
         {
@@ -183,10 +185,14 @@ void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1()
     blocks.clear();
     RUNTIME_CHECK(rows_in_blocks, total_rows);
 
+    time_partition += watch.elapsedFromLastTime();
+
     for (size_t part_id = 0; part_id < partition_num; ++part_id)
     {
         writer->partitionWrite(dest_block_header, std::move(dest_columns[part_id]), part_id, data_codec_version, compression_method);
     }
+
+    time_send += watch.elapsedFromLastTime();
 
     assert(blocks.empty());
     rows_in_blocks = 0;

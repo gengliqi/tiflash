@@ -547,14 +547,20 @@ void ExchangeReceiverBase<RPCContext>::reactor(const std::vector<Request> & asyn
     for (const auto & req : async_requests)
         handlers.emplace_back(std::make_unique<AsyncHandler>(&ready_requests, &msg_channels, rpc_context, req, exc_log->identifier(), &data_size_in_queue, exchange_batch_packet_count));
 
+    Stopwatch watch;
     while (alive_async_connections > 0)
     {
+        watch.restart();
         AsyncHandler * handler = nullptr;
         ready_requests.pop(handler);
+
+        time_pop += watch.elapsedFromLastTime();
 
         if (likely(handler != nullptr))
         {
             handler->handle();
+            time_handle += watch.elapsedFromLastTime();
+
             if (handler->finished())
             {
                 --alive_async_connections;
@@ -937,7 +943,7 @@ void ExchangeReceiverBase<RPCContext>::connectionDone(
     assert(copy_live_connections >= 0);
     if (copy_live_connections == 0)
     {
-        LOG_DEBUG(log, "All threads end in ExchangeReceiver");
+        LOG_DEBUG(log, "All threads end in ExchangeReceiver, time: pop {}, handle {}", time_pop, time_handle);
         cv.notify_all();
     }
 
