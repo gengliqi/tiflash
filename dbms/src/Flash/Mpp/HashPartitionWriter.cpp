@@ -22,7 +22,7 @@
 
 namespace DB
 {
-constexpr ssize_t MAX_BATCH_SEND_MIN_LIMIT_MEM_SIZE = 1024 * 1024 * 64; // 64MB: 8192 Rows * 256 Byte/row * 32 partitions
+//constexpr ssize_t MAX_BATCH_SEND_MIN_LIMIT_MEM_SIZE = 1024 * 1024 * 64; // 64MB: 8192 Rows * 256 Byte/row * 32 partitions
 const char * HashPartitionWriterLabels[] = {"HashPartitionWriter", "HashPartitionWriter-V1"};
 
 template <class ExchangeWriterPtr>
@@ -104,11 +104,11 @@ void HashPartitionWriter<ExchangeWriterPtr>::writeImplV1(const Block & block)
     if (rows > 0)
     {
         rows_in_blocks += rows;
-        mem_size_in_blocks += block.bytes();
+        //mem_size_in_blocks += block.bytes();
         blocks.push_back(block);
     }
     if (static_cast<Int64>(rows_in_blocks) >= batch_send_min_limit
-        || mem_size_in_blocks >= MAX_BATCH_SEND_MIN_LIMIT_MEM_SIZE)
+        /*|| mem_size_in_blocks >= MAX_BATCH_SEND_MIN_LIMIT_MEM_SIZE*/)
         partitionAndWriteBlocksV1();
 }
 
@@ -121,7 +121,7 @@ void HashPartitionWriter<ExchangeWriterPtr>::writeImpl(const Block & block)
         rows_in_blocks += rows;
         blocks.push_back(block);
     }
-    if (static_cast<Int64>(rows_in_blocks) > batch_send_min_limit)
+    if (static_cast<Int64>(rows_in_blocks) >= batch_send_min_limit)
         partitionAndWriteBlocks();
 }
 
@@ -150,7 +150,7 @@ template <class ExchangeWriterPtr>
 void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1()
 {
     assert(rows_in_blocks > 0);
-    assert(mem_size_in_blocks > 0);
+    //assert(mem_size_in_blocks > 0);
     assert(!blocks.empty());
 
     HashBaseWriterHelper::materializeBlocks(blocks);
@@ -190,6 +190,7 @@ void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1()
     for (size_t part_id = 0; part_id < partition_num; ++part_id)
     {
         writer->partitionWrite(dest_block_header, std::move(dest_columns[part_id]), part_id, data_codec_version, compression_method);
+        ++send_count;
     }
 
     time_send += watch.elapsedFromLastTime();
@@ -205,6 +206,7 @@ void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocks()
     if unlikely (blocks.empty())
         return;
 
+    Stopwatch watch;
     std::vector<Blocks> partition_blocks;
     partition_blocks.resize(partition_num);
     {
@@ -230,8 +232,11 @@ void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocks()
         assert(blocks.empty());
         rows_in_blocks = 0;
     }
+    time_partition += watch.elapsedFromLastTime();
 
     writePartitionBlocks(partition_blocks);
+
+    time_send += watch.elapsedFromLastTime();
 }
 
 template <class ExchangeWriterPtr>

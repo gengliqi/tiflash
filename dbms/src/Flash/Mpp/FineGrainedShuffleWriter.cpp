@@ -178,6 +178,7 @@ void FineGrainedShuffleWriter<ExchangeWriterPtr>::batchWriteFineGrainedShuffleIm
                 part_id,
                 data_codec_version,
                 compression_method);
+            ++send_count;
         }
         time_send += watch.elapsedFromLastTime();
 

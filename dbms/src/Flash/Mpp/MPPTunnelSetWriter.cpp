@@ -340,13 +340,18 @@ void MPPTunnelSetWriterBase::passThroughWrite(Blocks & blocks, MPPDataPacketVers
 
 void MPPTunnelSetWriterBase::partitionWrite(Blocks & blocks, int16_t partition_id)
 {
+    Stopwatch watch;
     auto && tracked_packet = MPPTunnelSetHelper::ToPacketV0(blocks, result_field_types);
     if (!tracked_packet)
         return;
+    time_to_packet += watch.elapsedFromLastTime();
+
     auto packet_bytes = tracked_packet->getPacket().ByteSizeLong();
     checkPacketSize(packet_bytes);
     writeToTunnel(std::move(tracked_packet), partition_id);
     updatePartitionWriterMetrics(CompressionMethod::NONE, packet_bytes, packet_bytes, mpp_tunnel_set->isLocal(partition_id));
+
+    time_to_write += watch.elapsedFromLastTime();
 }
 
 void MPPTunnelSetWriterBase::partitionWrite(

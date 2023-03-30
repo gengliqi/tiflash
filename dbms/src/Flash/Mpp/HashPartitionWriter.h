@@ -40,9 +40,9 @@ public:
     void write(const Block & block) override;
     bool isReadyForWrite() const override;
     void flush() override;
-    std::tuple<UInt64, UInt64, UInt64, UInt64> getMetrics() override
+    std::tuple<UInt64, UInt64, UInt64, UInt64, UInt64> getMetrics() override
     {
-        return {time_partition, time_send, writer->getTimeToPacket(), writer->getTimeToWrite()};
+        return {time_partition, time_send, writer->getTimeToPacket(), writer->getTimeToWrite(), send_count};
     }
 
 private:
@@ -68,6 +68,7 @@ private:
     CompressionMethod compression_method{};
     UInt64 time_partition = 0;
     UInt64 time_send = 0;
+    UInt64 send_count = 0;
 };
 
 } // namespace DB
