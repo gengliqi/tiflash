@@ -43,7 +43,7 @@ public:
     virtual ~DAGResponseWriter() = default;
     const DAGContext & dagContext() const { return dag_context; }
 
-    virtual std::tuple<UInt64, UInt64, UInt64> getMetrics() { return {0, 0, 0}; }
+    virtual std::tuple<UInt64, UInt64, UInt64, UInt64> getMetrics() { return {0, 0, 0, 0}; }
 
 protected:
     Int64 records_per_chunk;

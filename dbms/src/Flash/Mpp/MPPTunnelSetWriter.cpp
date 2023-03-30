@@ -356,13 +356,13 @@ void MPPTunnelSetWriterBase::partitionWrite(
     MPPDataPacketVersion version,
     CompressionMethod compression_method)
 {
+    Stopwatch watch;
     assert(version > MPPDataPacketV0);
 
     bool is_local = mpp_tunnel_set->isLocal(partition_id);
     compression_method = is_local ? CompressionMethod::NONE : compression_method;
 
     size_t original_size = 0;
-    Stopwatch watch;
     auto tracked_packet = MPPTunnelSetHelper::ToPacket(header, std::move(part_columns), version, compression_method, original_size);
     if (!tracked_packet)
         return;
@@ -372,6 +372,8 @@ void MPPTunnelSetWriterBase::partitionWrite(
     checkPacketSize(packet_bytes);
     writeToTunnel(std::move(tracked_packet), partition_id);
     updatePartitionWriterMetrics(compression_method, original_size, packet_bytes, is_local);
+
+    time_to_write += watch.elapsedFromLastTime();
 }
 
 void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
@@ -384,13 +386,13 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
     MPPDataPacketVersion version,
     CompressionMethod compression_method)
 {
+    Stopwatch watch;
     if (version == MPPDataPacketV0)
         return fineGrainedShuffleWrite(header, scattered, bucket_idx, fine_grained_shuffle_stream_count, num_columns, partition_id);
 
     bool is_local = mpp_tunnel_set->isLocal(partition_id);
     compression_method = is_local ? CompressionMethod::NONE : compression_method;
 
-    Stopwatch watch;
     size_t original_size = 0;
     auto tracked_packet = MPPTunnelSetHelper::ToFineGrainedPacket(
         header,
@@ -410,6 +412,8 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
     checkPacketSize(packet_bytes);
     writeToTunnel(std::move(tracked_packet), partition_id);
     updatePartitionWriterMetrics(compression_method, original_size, packet_bytes, is_local);
+
+    time_to_write += watch.elapsedFromLastTime();
 }
 
 void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
@@ -437,6 +441,8 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
     checkPacketSize(packet_bytes);
     writeToTunnel(std::move(tracked_packet), partition_id);
     updatePartitionWriterMetrics(CompressionMethod::NONE, packet_bytes, packet_bytes, mpp_tunnel_set->isLocal(partition_id));
+
+    time_to_write += watch.elapsedFromLastTime();
 }
 
 void SyncMPPTunnelSetWriter::writeToTunnel(TrackedMppDataPacketPtr && data, size_t index)
