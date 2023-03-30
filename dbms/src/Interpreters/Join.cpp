@@ -783,6 +783,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         {
             auto * insert = new DataBatchType();
             insert->reserve(min_batch_insert_ht_size);
+            memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
             batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
 
@@ -833,20 +834,27 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             if (unlikely(p->size() >= min_batch_insert_ht_size))
             {
-                std::lock_guard lk(map.getSegmentMutex(segment_index));
-
-                insert_queues[segment_index].size += p->size();
-                insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
-                if (!insert_queues[segment_index].is_running)
+                watch2.restart();
                 {
-                    /// If it's not running, need run later.
-                    need_run[segment_index] = true;
+                    std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                    insert_queues[segment_index].size += p->size();
+                    insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
+                    if (!insert_queues[segment_index].is_running)
+                    {
+                        /// If it's not running, need run later.
+                        need_run[segment_index] = true;
+                    }
                 }
+                time.t2 += watch2.elapsedFromLastTime();
 
                 auto * insert = new DataBatchType();
                 insert->reserve(min_batch_insert_ht_size);
+                memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
                 batch_pointers[segment_index] = insert;
                 batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+
+                time.t3 += watch2.elapsedFromLastTime();
             }
         }
     }
@@ -889,20 +897,27 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
                 if (unlikely(p->size() >= min_batch_insert_ht_size))
                 {
-                    std::lock_guard lk(map.getSegmentMutex(segment_index));
-
-                    insert_queues[segment_index].size += p->size();
-                    insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
-                    if (!insert_queues[segment_index].is_running)
+                    watch2.restart();
                     {
-                        /// If it's not running, need run later.
-                        need_run[segment_index] = true;
+                        std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                        insert_queues[segment_index].size += p->size();
+                        insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
+                        if (!insert_queues[segment_index].is_running)
+                        {
+                            /// If it's not running, need run later.
+                            need_run[segment_index] = true;
+                        }
                     }
+                    time.t2 += watch2.elapsedFromLastTime();
 
                     auto * insert = new DataBatchType();
                     insert->reserve(min_batch_insert_ht_size);
+                    memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
                     batch_pointers[segment_index] = insert;
                     batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+
+                    time.t3 += watch2.elapsedFromLastTime();
                 }
             }
         }
@@ -930,8 +945,6 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             }
         }
     }*/
-
-    time.t2 += watch.elapsedFromLastTime();
 
     //std::vector<Join::InsertDataVoidType> empty_batches;
     if (join.build_double_size_rate == 0)
@@ -1049,7 +1062,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         }
     }
 
-    time.t3 += watch.elapsedFromLastTime();
+    time.t4 += watch.elapsedFromLastTime();
 
     /*for (size_t i = 0; i < segment_size; ++i)
     {
@@ -1062,7 +1075,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         }
     }*/
 
-    time.t4 += watch.elapsedFromLastTime();
+    //time.t4 += watch.elapsedFromLastTime();
 }
 
 template <ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>

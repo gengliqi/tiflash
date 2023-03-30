@@ -339,7 +339,7 @@ public:
     void logBuildTime(size_t stream_index)
     {
         auto & t = build_times[stream_index];
-        LOG_INFO(log, "join {} build time {}, {}, {}, {}, sum {}", stream_index, t.t1, t.t2, t.t3, t.t4, t.t1 + t.t2 + t.t3 + t.t4);
+        LOG_INFO(log, "join {} build time {}({}, {}, {}), {}, sum {}", stream_index, t.t1, t.t1 - t.t2 - t.t3, t.t2, t.t3, t.t4, t.t1 + t.t4);
         LOG_INFO(log, "join {} build time more, {}, {}, {}, {}, sum {}", stream_index, t.a, t.b, t.c, t.d, t.a + t.b + t.c + t.d);
         LOG_INFO(log, "join {} build remaining time, {}, {}, {}, sum {}", stream_index, t.r_t1, t.r_t2, t.r_t3, t.r_t1 + t.r_t2 + t.r_t3);
         LOG_INFO(log, "join {} build remaining time more, {}, {}, sum {}", stream_index, t.r_t3_a, t.r_t3_b, t.r_t3_a + t.r_t3_b);
