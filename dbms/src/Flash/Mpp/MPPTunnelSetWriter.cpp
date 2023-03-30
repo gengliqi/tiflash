@@ -362,9 +362,11 @@ void MPPTunnelSetWriterBase::partitionWrite(
     compression_method = is_local ? CompressionMethod::NONE : compression_method;
 
     size_t original_size = 0;
+    Stopwatch watch;
     auto tracked_packet = MPPTunnelSetHelper::ToPacket(header, std::move(part_columns), version, compression_method, original_size);
     if (!tracked_packet)
         return;
+    time_to_packet += watch.elapsedFromLastTime();
 
     auto packet_bytes = tracked_packet->getPacket().ByteSizeLong();
     checkPacketSize(packet_bytes);
@@ -388,6 +390,7 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
     bool is_local = mpp_tunnel_set->isLocal(partition_id);
     compression_method = is_local ? CompressionMethod::NONE : compression_method;
 
+    Stopwatch watch;
     size_t original_size = 0;
     auto tracked_packet = MPPTunnelSetHelper::ToFineGrainedPacket(
         header,
@@ -398,6 +401,7 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
         version,
         compression_method,
         original_size);
+    time_to_packet += watch.elapsedFromLastTime();
 
     if unlikely (tracked_packet->getPacket().chunks_size() <= 0)
         return;
@@ -416,6 +420,7 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
     size_t num_columns,
     int16_t partition_id)
 {
+    Stopwatch watch;
     auto tracked_packet = MPPTunnelSetHelper::ToFineGrainedPacketV0(
         header,
         scattered,
@@ -423,6 +428,7 @@ void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
         fine_grained_shuffle_stream_count,
         num_columns,
         result_field_types);
+    time_to_packet += watch.elapsedFromLastTime();
 
     if unlikely (tracked_packet->getPacket().chunks_size() <= 0)
         return;

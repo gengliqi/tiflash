@@ -47,9 +47,9 @@ public:
     void write(const Block & block) override;
     bool isReadyForWrite() const override;
     void flush() override;
-    std::pair<UInt64, UInt64> getMetrics() override
+    std::tuple<UInt64, UInt64, UInt64> getMetrics() override
     {
-        return {time_partition, time_send};
+        return {time_partition, time_send, writer->getTimeToPacket()};
     }
 
 private:

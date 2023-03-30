@@ -65,6 +65,8 @@ public:
 
     virtual bool isReadyForWrite() const = 0;
 
+    UInt64 getTimeToPacket() { return time_to_packet; }
+
 protected:
     virtual void writeToTunnel(TrackedMppDataPacketPtr && data, size_t index) = 0;
     virtual void writeToTunnel(tipb::SelectResponse & response, size_t index) = 0;
@@ -73,6 +75,7 @@ protected:
     MPPTunnelSetPtr mpp_tunnel_set;
     std::vector<tipb::FieldType> result_field_types;
     const LoggerPtr log;
+    UInt64 time_to_packet = 0;
 };
 
 class SyncMPPTunnelSetWriter : public MPPTunnelSetWriterBase
