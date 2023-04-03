@@ -145,17 +145,15 @@ public:
         {
             remote_reader->open();
         }
-        // note that for ExchangeReceiver, we have sent EstablishMPPConnection requests before we construct the pipeline
+        else
+        {
+            // TODO: consider exception
+            remote_reader->setUpConnection();
+        }
     }
 
     Block readImpl() override
     {
-        if (unlikely(!init_connection))
-        {
-            remote_reader->setUpConnection();
-            init_connection = true;
-        }
-
         if (block_queue.empty())
         {
             if (!fetchRemoteResult())
@@ -197,8 +195,6 @@ protected:
             ", ");
         buffer.append("}");
     }
-
-    bool init_connection = false;
 };
 
 using ExchangeReceiverInputStream = TiRemoteBlockInputStream<ExchangeReceiver>;
