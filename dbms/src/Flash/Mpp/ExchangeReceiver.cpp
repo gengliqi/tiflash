@@ -314,6 +314,7 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
     Int32 local_tunnel_version_,
     UInt64 exchange_receiver_multiple_stream_count,
     UInt64 exchange_batch_packet_count_,
+    bool delay_setup_connection,
     const std::vector<StorageDisaggregated::RequestAndRegionIDs> & disaggregated_dispatch_reqs_)
     : rpc_context(std::move(rpc_context_))
     , source_num(source_num_)
@@ -339,7 +340,8 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
             rpc_context->sendMPPTaskToTiFlashStorageNode(exc_log, disaggregated_dispatch_reqs);
 
         rpc_context->fillSchema(schema);
-        setUpConnection();
+        if (!delay_setup_connection)
+            setUpConnection();
     }
     catch (...)
     {
@@ -450,6 +452,10 @@ void ExchangeReceiverBase<RPCContext>::addLocalConnectionNum()
 template <typename RPCContext>
 void ExchangeReceiverBase<RPCContext>::setUpConnection()
 {
+    bool old_val = false;
+    if (!set_up_connection.compare_exchange_strong(old_val, true, std::memory_order_seq_cst, std::memory_order_relaxed))
+        return;
+
     mem_tracker = current_memory_tracker ? current_memory_tracker->shared_from_this() : nullptr;
     std::vector<Request> async_requests;
 

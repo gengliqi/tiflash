@@ -182,6 +182,8 @@ public:
         }
     }
 
+    void setUpConnection() {}
+
     size_t getSourceNum() const { return 1; }
 
     int getExternalThreadCnt() const { return concurrency_; }

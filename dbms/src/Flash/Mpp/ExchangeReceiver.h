@@ -113,6 +113,7 @@ public:
         Int32 local_tunnel_version_,
         UInt64 exchange_receiver_multiple_stream_count,
         UInt64 exchange_batch_packet_count,
+        bool delay_setup_connection,
         const std::vector<StorageDisaggregated::RequestAndRegionIDs> & disaggregated_dispatch_reqs_ = {});
 
     ~ExchangeReceiverBase();
@@ -135,6 +136,8 @@ public:
         size_t stream_id,
         std::unique_ptr<CHBlockChunkDecodeAndSquash> & decoder_ptr);
 
+    void setUpConnection();
+
     const DAGSchema & getOutputSchema() const { return schema; }
     size_t getSourceNum() const { return source_num; }
     uint64_t getFineGrainedShuffleStreamCount() const { return enable_fine_grained_shuffle_flag ? output_stream_count : 0; }
@@ -152,7 +155,6 @@ private:
     void readLoop(const Request & req);
     template <bool enable_fine_grained_shuffle>
     void reactor(const std::vector<Request> & async_requests);
-    void setUpConnection();
 
     bool setEndState(ExchangeReceiverState new_state);
     String getStatusString();
@@ -236,6 +238,8 @@ private:
 
     // For tiflash_compute node, need to send MPPTask to tiflash_storage node.
     std::vector<StorageDisaggregated::RequestAndRegionIDs> disaggregated_dispatch_reqs;
+
+    std::atomic<bool> set_up_connection{false};
 
     UInt64 time_pop = 0;
     UInt64 time_handle = 0;
