@@ -134,7 +134,9 @@ public:
         std::queue<Block> & block_queue,
         const Block & header,
         size_t stream_id,
-        std::unique_ptr<CHBlockChunkDecodeAndSquash> & decoder_ptr);
+        std::unique_ptr<CHBlockChunkDecodeAndSquash> & decoder_ptr,
+        UInt64 & time_receive,
+        UInt64 & time_decode);
 
     void setUpConnection();
 

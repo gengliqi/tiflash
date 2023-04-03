@@ -804,14 +804,20 @@ ExchangeReceiverResult ExchangeReceiverBase<RPCContext>::nextResult(
     std::queue<Block> & block_queue,
     const Block & header,
     size_t stream_id,
-    std::unique_ptr<CHBlockChunkDecodeAndSquash> & decoder_ptr)
+    std::unique_ptr<CHBlockChunkDecodeAndSquash> & decoder_ptr,
+    UInt64 & time_receive,
+    UInt64 & time_decode)
 {
+    Stopwatch watch;
     auto recv_res = receive(stream_id);
-    return toExchangeReceiveResult(
+    time_receive += watch.elapsedFromLastTime();
+    auto res = toExchangeReceiveResult(
         recv_res,
         block_queue,
         header,
         decoder_ptr);
+    time_decode += watch.elapsedFromLastTime();
+    return std::move(res);
 }
 
 template <typename RPCContext>

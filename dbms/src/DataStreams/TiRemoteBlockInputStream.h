@@ -68,7 +68,7 @@ class TiRemoteBlockInputStream : public IProfilingBlockInputStream
     {
         while (true)
         {
-            auto result = remote_reader->nextResult(block_queue, sample_block, stream_id, decoder_ptr);
+            auto result = remote_reader->nextResult(block_queue, sample_block, stream_id, decoder_ptr, time_receive, time_decode);
             if (result.meet_error)
             {
                 LOG_WARNING(log, "remote reader meets error: {}", result.error_msg);
@@ -162,7 +162,7 @@ public:
         {
             if (!fetchRemoteResult())
             {
-                LOG_INFO(log, "finish read {} rows {} blocks from remote", total_rows, total_blocks);
+                LOG_INFO(log, "tiremote finish read {} rows {} blocks, time_receive {}, time_decode {}", total_rows, total_blocks, time_receive, time_decode);
                 return {};
             }
         }
@@ -182,6 +182,9 @@ public:
     const std::vector<ConnectionProfileInfo> & getConnectionProfileInfos() const { return connection_profile_infos; }
 
     bool setup_connection = false;
+
+    UInt64 time_receive = 0;
+    UInt64 time_decode = 0;
 
 protected:
     void readSuffixImpl() override

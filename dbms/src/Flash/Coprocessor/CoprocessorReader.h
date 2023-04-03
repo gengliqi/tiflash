@@ -147,7 +147,8 @@ public:
     }
 
     // stream_id, decoder_ptr are only meaningful for ExchagneReceiver.
-    CoprocessorReaderResult nextResult(std::queue<Block> & block_queue, const Block & header, size_t /*stream_id*/, std::unique_ptr<CHBlockChunkDecodeAndSquash> & /*decoder_ptr*/)
+    CoprocessorReaderResult nextResult(std::queue<Block> & block_queue, const Block & header, size_t /*stream_id*/, std::unique_ptr<CHBlockChunkDecodeAndSquash> & /*decoder_ptr*/, UInt64 & ,
+                                       UInt64 & )
     {
         RUNTIME_CHECK(opened == true);
 
