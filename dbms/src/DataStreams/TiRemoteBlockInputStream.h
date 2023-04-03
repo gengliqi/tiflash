@@ -145,15 +145,19 @@ public:
         {
             remote_reader->open();
         }
-        else
-        {
-            // TODO: consider exception
-            remote_reader->setUpConnection();
-        }
     }
 
     Block readImpl() override
     {
+        if constexpr (std::is_same_v<RemoteReader, ExchangeReceiver>)
+        {
+            if (unlikely(!setup_connection))
+            {
+                // TODO: consider exception
+                remote_reader->setUpConnection();
+                setup_connection = true;
+            }
+        }
         if (block_queue.empty())
         {
             if (!fetchRemoteResult())
@@ -176,6 +180,8 @@ public:
     size_t getSourceNum() const { return source_num; }
     bool isStreamingCall() const { return is_streaming_reader; }
     const std::vector<ConnectionProfileInfo> & getConnectionProfileInfos() const { return connection_profile_infos; }
+
+    bool setup_connection = false;
 
 protected:
     void readSuffixImpl() override
