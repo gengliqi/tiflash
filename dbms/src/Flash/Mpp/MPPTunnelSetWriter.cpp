@@ -381,6 +381,33 @@ void MPPTunnelSetWriterBase::partitionWrite(
     time_to_write += watch.elapsedFromLastTime();
 }
 
+void MPPTunnelSetWriterBase::partitionWrite(
+    const Block & header,
+    std::vector<IColumn::ScatterColumns> & scattered,
+    int16_t partition_id,
+    MPPDataPacketVersion version,
+    CompressionMethod compression_method)
+{
+    Stopwatch watch;
+    assert(version > MPPDataPacketV0);
+
+    bool is_local = mpp_tunnel_set->isLocal(partition_id);
+    compression_method = is_local ? CompressionMethod::NONE : compression_method;
+
+    size_t original_size = 0;
+    auto tracked_packet = MPPTunnelSetHelper::ToPacket(header, scattered, partition_id, version, compression_method, original_size);
+    if (!tracked_packet)
+        return;
+    time_to_packet += watch.elapsedFromLastTime();
+
+    auto packet_bytes = tracked_packet->getPacket().ByteSizeLong();
+    checkPacketSize(packet_bytes);
+    writeToTunnel(std::move(tracked_packet), partition_id);
+    updatePartitionWriterMetrics(compression_method, original_size, packet_bytes, is_local);
+
+    time_to_write += watch.elapsedFromLastTime();
+}
+
 void MPPTunnelSetWriterBase::fineGrainedShuffleWrite(
     const Block & header,
     std::vector<IColumn::ScatterColumns> & scattered,

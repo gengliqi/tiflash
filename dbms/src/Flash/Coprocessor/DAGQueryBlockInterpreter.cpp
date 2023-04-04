@@ -800,7 +800,8 @@ void DAGQueryBlockInterpreter::handleExchangeSender(DAGPipeline & pipeline)
             batch_size,
             exchange_sender.compression(),
             context.getSettingsRef().batch_send_min_limit_compression,
-            log->identifier());
+            log->identifier(),
+            context.getSettingsRef().hash_partition_new_impl);
         stream = std::make_shared<ExchangeSenderBlockInputStream>(stream, std::move(response_writer), log->identifier());
         stream->setExtraInfo(extra_info);
     });

@@ -32,6 +32,7 @@ std::unique_ptr<DAGResponseWriter> newMPPExchangeWriter(
     tipb::CompressionMode compression_mode,
     Int64 batch_send_min_limit_compression,
     const String & req_id,
+    bool hash_partition_new_impl,
     bool is_async = false);
 
 } // namespace DB

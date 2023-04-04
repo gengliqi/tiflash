@@ -306,6 +306,7 @@ struct Settings
     M(SettingUInt64, grpc_max_concurrent_streams, 0, "")\
     M(SettingUInt64, exchange_receiver_multiple_stream_count, 2, "")\
     M(SettingUInt64, exchange_batch_packet_count, 16, "")\
+    M(SettingBool, hash_partition_new_impl, false, "")\
     M(SettingBool, delay_setup_connection, false, "")\
     M(SettingUInt64, min_batch_insert_ht_size, 1024, "")\
     M(SettingUInt64, hash_map_count, 0, "")\

@@ -144,6 +144,29 @@ void scatterColumns(const Block & input_block,
     }
 }
 
+void scatterColumnsNew(const Block & block,
+                       const std::vector<Int64> & partition_col_ids,
+                       const TiDB::TiDBCollators & collators,
+                       std::vector<String> & partition_key_containers,
+                       uint32_t bucket_num,
+                       WeakHash32 & hash,
+                       IColumn::Selector & selector,
+                       std::vector<IColumn::ScatterColumns> & scattered)
+{
+    if unlikely (block.rows() == 0)
+        return;
+
+    computeHash(block, partition_col_ids, collators, partition_key_containers, hash);
+
+    fillSelector(block.rows(), hash, bucket_num, selector);
+
+    for (size_t i = 0; i < block.columns(); ++i)
+    {
+        const auto & column = block.getByPosition(i).column;
+        column->scatterTo(scattered[i], selector);
+    }
+}
+
 void scatterColumnsForFineGrainedShuffle(const Block & block,
                                          const std::vector<Int64> & partition_col_ids,
                                          const TiDB::TiDBCollators & collators,

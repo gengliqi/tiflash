@@ -45,6 +45,14 @@ TrackedMppDataPacketPtr ToPacket(
     CompressionMethod compression_method,
     size_t & original_size);
 
+TrackedMppDataPacketPtr ToPacket(
+    const Block & header,
+    std::vector<IColumn::ScatterColumns> & scattered,
+    int16_t partition_id,
+    MPPDataPacketVersion version,
+    CompressionMethod compression_method,
+    size_t & original_size);
+
 TrackedMppDataPacketPtr ToFineGrainedPacketV0(
     const Block & header,
     std::vector<IColumn::ScatterColumns> & scattered,

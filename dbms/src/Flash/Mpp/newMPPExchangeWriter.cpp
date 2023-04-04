@@ -37,7 +37,8 @@ std::unique_ptr<DAGResponseWriter> buildMPPExchangeWriter(
     UInt64 fine_grained_shuffle_stream_count,
     UInt64 fine_grained_shuffle_batch_size,
     tipb::CompressionMode compression_mode,
-    Int64 batch_send_min_limit_compression)
+    Int64 batch_send_min_limit_compression,
+    bool hash_partition_new_impl)
 {
     if (dag_context.isRootMPPTask())
     {
@@ -85,7 +86,8 @@ std::unique_ptr<DAGResponseWriter> buildMPPExchangeWriter(
                     chosen_batch_send_min_limit,
                     dag_context,
                     data_codec_version,
-                    compression_mode);
+                    compression_mode,
+                    hash_partition_new_impl);
             }
         }
         else
@@ -116,6 +118,7 @@ std::unique_ptr<DAGResponseWriter> newMPPExchangeWriter(
     tipb::CompressionMode compression_mode,
     Int64 batch_send_min_limit_compression,
     const String & req_id,
+    bool hash_partition_new_impl,
     bool is_async)
 {
     RUNTIME_CHECK_MSG(dag_context.isMPPTask() && dag_context.tunnel_set != nullptr, "exchange writer only run in MPP");
@@ -134,7 +137,8 @@ std::unique_ptr<DAGResponseWriter> newMPPExchangeWriter(
             fine_grained_shuffle_stream_count,
             fine_grained_shuffle_batch_size,
             compression_mode,
-            batch_send_min_limit_compression);
+            batch_send_min_limit_compression,
+            hash_partition_new_impl);
     }
     else
     {
@@ -151,7 +155,8 @@ std::unique_ptr<DAGResponseWriter> newMPPExchangeWriter(
             fine_grained_shuffle_stream_count,
             fine_grained_shuffle_batch_size,
             compression_mode,
-            batch_send_min_limit_compression);
+            batch_send_min_limit_compression,
+            hash_partition_new_impl);
     }
 }
 } // namespace DB

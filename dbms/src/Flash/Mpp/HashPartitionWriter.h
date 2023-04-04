@@ -36,7 +36,9 @@ public:
         Int64 batch_send_min_limit_,
         DAGContext & dag_context_,
         MPPDataPacketVersion data_codec_version_,
-        tipb::CompressionMode compression_mode_);
+        tipb::CompressionMode compression_mode_,
+        bool new_impl);
+    void prepare(const Block & sample_block) override;
     void write(const Block & block) override;
     bool isReadyForWrite() const override;
     void flush() override;
@@ -50,6 +52,7 @@ private:
     void writeImplV1(const Block & block);
     void partitionAndWriteBlocks();
     void partitionAndWriteBlocksV1();
+    void partitionAndWriteBlocksV1NewImpl();
 
     void writePartitionBlocks(std::vector<Blocks> & partition_blocks);
 
@@ -69,6 +72,13 @@ private:
     UInt64 time_partition = 0;
     UInt64 time_send = 0;
     UInt64 send_count = 0;
+
+    bool new_impl;
+    Block header;
+    std::vector<String> partition_key_containers_for_reuse;
+    WeakHash32 hash{0};
+    IColumn::Selector selector;
+    std::vector<IColumn::ScatterColumns> scattered; // size = num_columns
 };
 
 } // namespace DB

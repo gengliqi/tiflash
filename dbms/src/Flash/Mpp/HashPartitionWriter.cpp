@@ -33,7 +33,8 @@ HashPartitionWriter<ExchangeWriterPtr>::HashPartitionWriter(
     Int64 batch_send_min_limit_,
     DAGContext & dag_context_,
     MPPDataPacketVersion data_codec_version_,
-    tipb::CompressionMode compression_mode_)
+    tipb::CompressionMode compression_mode_,
+    bool new_impl_)
     : DAGResponseWriter(/*records_per_chunk=*/-1, dag_context_)
     , batch_send_min_limit(batch_send_min_limit_)
     , writer(writer_)
@@ -41,6 +42,7 @@ HashPartitionWriter<ExchangeWriterPtr>::HashPartitionWriter(
     , collators(std::move(collators_))
     , data_codec_version(data_codec_version_)
     , compression_method(ToInternalCompressionMethod(compression_mode_))
+    , new_impl(new_impl_)
 {
     rows_in_blocks = 0;
     partition_num = writer_->getPartitionNum();
@@ -66,6 +68,30 @@ HashPartitionWriter<ExchangeWriterPtr>::HashPartitionWriter(
         }
         break;
     }
+    }
+}
+
+template <class ExchangeWriterPtr>
+void HashPartitionWriter<ExchangeWriterPtr>::prepare(const Block & sample_block)
+{
+    header = sample_block.cloneEmpty();
+
+    partition_key_containers_for_reuse.resize(collators.size());
+
+    auto num_columns = sample_block.columns();
+
+    scattered.resize(num_columns);
+
+    for (size_t i = 0; i < num_columns; ++i)
+    {
+        const auto & column = sample_block.safeGetByPosition(i).column;
+        scattered[i].reserve(partition_num);
+
+        for (size_t j = 0; j < partition_num; ++j)
+        {
+            scattered[i].emplace_back(column->cloneEmpty());
+            scattered[i][j]->reserve(1024);
+        }
     }
 }
 
@@ -149,6 +175,11 @@ void HashPartitionWriter<ExchangeWriterPtr>::write(const Block & block)
 template <class ExchangeWriterPtr>
 void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1()
 {
+    if (new_impl)
+    {
+        partitionAndWriteBlocksV1NewImpl();
+        return;
+    }
     assert(rows_in_blocks > 0);
     //assert(mem_size_in_blocks > 0);
     assert(!blocks.empty());
@@ -190,6 +221,44 @@ void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1()
     for (size_t part_id = 0; part_id < partition_num; ++part_id)
     {
         writer->partitionWrite(dest_block_header, std::move(dest_columns[part_id]), part_id, data_codec_version, compression_method);
+        ++send_count;
+    }
+
+    time_send += watch.elapsedFromLastTime();
+
+    assert(blocks.empty());
+    rows_in_blocks = 0;
+    mem_size_in_blocks = 0;
+}
+
+template <class ExchangeWriterPtr>
+void HashPartitionWriter<ExchangeWriterPtr>::partitionAndWriteBlocksV1NewImpl()
+{
+    assert(rows_in_blocks > 0);
+    //assert(mem_size_in_blocks > 0);
+    assert(!blocks.empty());
+
+    HashBaseWriterHelper::materializeBlocks(blocks);
+    size_t total_rows = 0;
+
+    Stopwatch watch;
+
+    for (auto & block : blocks)
+    {
+        {
+            // check schema
+            assertBlockSchema(expected_types, block, HashPartitionWriterLabels[MPPDataPacketV1]);
+        }
+        HashBaseWriterHelper::scatterColumnsNew(block, partition_col_ids, collators, partition_key_containers_for_reuse, partition_num, hash, selector, scattered);
+    }
+    blocks.clear();
+    RUNTIME_CHECK(rows_in_blocks, total_rows);
+
+    time_partition += watch.elapsedFromLastTime();
+
+    for (size_t part_id = 0; part_id < partition_num; ++part_id)
+    {
+        writer->partitionWrite(header, scattered, part_id, data_codec_version, compression_method);
         ++send_count;
     }
 

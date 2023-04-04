@@ -43,6 +43,43 @@ TrackedMppDataPacketPtr ToPacket(
 }
 
 TrackedMppDataPacketPtr ToPacket(
+    const Block & header,
+    std::vector<IColumn::ScatterColumns> & scattered,
+    int16_t partition_id,
+    MPPDataPacketVersion version,
+    CompressionMethod method,
+    size_t & original_size)
+{
+    assert(version > MPPDataPacketV0);
+
+    auto && codec = CHBlockChunkCodecV1{
+        header,
+    };
+
+    auto num_columns = scattered.size();
+    MutableColumns columns;
+    columns.reserve(num_columns);
+    for (size_t col_id = 0; col_id < num_columns; ++col_id)
+        columns.emplace_back(std::move(scattered[col_id][partition_id]));
+
+    auto && res = codec.encode(columns, method);
+    if unlikely (res.empty())
+        return nullptr;
+
+    auto tracked_packet = std::make_shared<TrackedMppDataPacket>(version);
+    tracked_packet->addChunk(std::move(res));
+
+    for (size_t col_id = 0; col_id < num_columns; ++col_id)
+    {
+        columns[col_id]->popBack(columns[col_id]->size()); // clear column
+        scattered[col_id][partition_id] = std::move(columns[col_id]);
+    }
+
+    original_size += codec.original_size;
+    return tracked_packet;
+}
+
+TrackedMppDataPacketPtr ToPacket(
     Blocks && blocks,
     MPPDataPacketVersion version,
     CompressionMethod method,

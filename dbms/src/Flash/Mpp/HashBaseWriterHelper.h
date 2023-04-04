@@ -46,6 +46,16 @@ void scatterColumns(const Block & input_block,
                     uint32_t bucket_num,
                     std::vector<std::vector<MutableColumnPtr>> & result_columns);
 
+void scatterColumnsNew(const Block & block,
+                    const std::vector<Int64> & partition_col_ids,
+                    const TiDB::TiDBCollators & collators,
+                    std::vector<String> & partition_key_containers,
+                    uint32_t bucket_num,
+                    WeakHash32 & hash,
+                    IColumn::Selector & selector,
+                    std::vector<IColumn::ScatterColumns> & scattered);
+
+
 void scatterColumnsForFineGrainedShuffle(const Block & block,
                                          const std::vector<Int64> & partition_col_ids,
                                          const TiDB::TiDBCollators & collators,
