@@ -107,7 +107,7 @@ public:
          bool build_hash_table_at_end = false,
          const String & match_helper_name = "",
          size_t write_combine_buffer_size = 0,
-         bool build_prefetch = true,
+         size_t build_prefetch = 0,
          bool increase_one = false,
          double build_double_size_rate = 0,
          double build_resize = 0);
@@ -296,6 +296,7 @@ public:
         InsertDataVoidType write_buffer;
         std::vector<size_t> write_pos;
         std::list<std::vector<InsertDataVoidType>> saved;
+        PaddedPODArray<size_t> hash_values;
     };
 
     std::vector<InsertDataBatch> insert_batches;
@@ -349,7 +350,7 @@ public:
     void insertRemaining(size_t stream_index);
 
     size_t write_combine_buffer_size;
-    bool build_prefetch;
+    size_t build_prefetch;
     bool build_increase_one;
     double build_double_size_rate;
     double build_resize;

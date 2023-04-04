@@ -311,7 +311,7 @@ struct Settings
     M(SettingUInt64, min_batch_insert_ht_size, 1024, "")\
     M(SettingUInt64, hash_map_count, 0, "")\
     M(SettingUInt64, write_combine_buffer_size, 0, "")                                                                                                                                                                                  \
-    M(SettingBool, build_prefetch, true, "")                                                                                                                                                                                                                                    \
+    M(SettingUInt64, build_prefetch, 0, "")                                                                                                                                                                                                                                    \
     M(SettingBool, build_increase_one, false, "")                                                                                                                                                                                                                                    \
     M(SettingDouble, build_double_size_rate, 0, "")                                                                                                                                                                                                                                    \
     M(SettingDouble, build_resize, 0, "")                                                                                                                                                                                                                                    \

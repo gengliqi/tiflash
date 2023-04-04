@@ -1110,7 +1110,7 @@ public:
     void ALWAYS_INLINE prefetchWrite(size_t hash_value)
     {
         size_t place_value = grower.place(hash_value);
-        __builtin_prefetch(buf + place_value, 1, 1);
+        __builtin_prefetch(buf + place_value);
     }
 
     /// Copy the cell from another hash table. It is assumed that the cell is not zero, and also that there was no such key in the table yet.
