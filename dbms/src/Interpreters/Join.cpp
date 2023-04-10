@@ -138,13 +138,17 @@ Join::Join(
     size_t write_combine_buffer_size_,
     size_t build_prefetch_,
     bool build_increase_one_,
-    double build_double_size_rate_,
+    UInt8 build_dynamic_size_,
+    double build_dynamic_size_rate_1_,
+    double build_dynamic_size_rate_2_,
     double build_resize_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
     , build_prefetch(build_prefetch_)
     , build_increase_one(build_increase_one_)
-    , build_double_size_rate(build_double_size_rate_)
+    , build_dynamic_size(build_dynamic_size_)
+    , build_dynamic_size_rate_1(build_dynamic_size_rate_1_)
+    , build_dynamic_size_rate_2(build_dynamic_size_rate_2_)
     , build_resize(build_resize_)
     , kind(kind_)
     , strictness(strictness_)
@@ -630,11 +634,11 @@ struct Inserter<ASTTableJoin::Strictness::Any, Map, KeyGetter>
             new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
     }
 
-    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value, bool use_double_size)
+    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value, UInt8 dynamic_size_hint)
     {
         typename Map::LookupResult emplace_result;
         bool inserted = false;
-        map.emplaceCell(cell, emplace_result, inserted, hash_value, use_double_size);
+        map.emplaceCell(cell, emplace_result, inserted, hash_value, dynamic_size_hint);
     }
 };
 
@@ -677,11 +681,11 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
         }
     }
 
-    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value, bool use_double_size)
+    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value, UInt8 dynamic_size_hint)
     {
         typename Map::LookupResult emplace_result;
         bool inserted = false;
-        map.emplaceCell(cell, emplace_result, inserted, hash_value, use_double_size);
+        map.emplaceCell(cell, emplace_result, inserted, hash_value, dynamic_size_hint);
         if (!inserted)
         {
             Join::RowRefList * list = &emplace_result->getMapped();
@@ -948,7 +952,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     //std::vector<Join::InsertDataVoidType> empty_batches;
 
-    if (join.build_double_size_rate == 0)
+    if (join.build_dynamic_size == 0)
     {
         for (size_t i = 0; i < segment_size; ++i)
         {
@@ -1150,7 +1154,7 @@ void insertRemainingImplType(
     }
 
     time.r_t1 = watch.elapsedFromLastTime();
-    if (join.build_double_size_rate != 0)
+    if (join.build_dynamic_size != 0)
     {
         std::unique_lock lock(join.wait_remaining_mutex);
         --join.wait_remaining_count_2;
@@ -1185,6 +1189,7 @@ void insertRemainingImplType(
 
             std::vector<Join::InsertDataVoidType> q;
             size_t total_size = 0, size_counter = 0;
+            UInt8 dynamic_size_hint;
 
             {
                 std::lock_guard lk(map.getSegmentMutex(segment_index));
@@ -1212,11 +1217,13 @@ void insertRemainingImplType(
                 insert_queue.size = 0;
             }
 
-            size_t double_size_threshold = 0;
-            if (join.build_double_size_rate != 0)
+            size_t dynamic_size_threshold_1 = 0;
+            size_t dynamic_size_threshold_2 = 0;
+            if (join.build_dynamic_size != 0)
             {
-                hash_table.setDoubleSize(true);
-                double_size_threshold = total_size * join.build_double_size_rate;
+                hash_table.setDynamicSize(join.build_dynamic_size);
+                dynamic_size_threshold_1 = total_size * join.build_dynamic_size_rate_1;
+                dynamic_size_threshold_2 = total_size * join.build_dynamic_size_rate_2;
 
                 if (join.build_resize != 0)
                     hash_table.reserve(total_size * join.build_resize);
@@ -1236,7 +1243,15 @@ void insertRemainingImplType(
                         if (pre < size)
                             hash_table.prefetchWrite((*insert)[pre].getHash(hash_table));
 
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], (*insert)[k].getHash(hash_table), false);
+                        ++size_counter;
+                        if (size_counter >= dynamic_size_threshold_2)
+                            dynamic_size_hint = 2;
+                        else if (size_counter >= dynamic_size_threshold_1)
+                            dynamic_size_hint = 1;
+                        else
+                            dynamic_size_hint = 0;
+
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], (*insert)[k].getHash(hash_table), dynamic_size_hint);
                     }
                 }
             }
@@ -1249,8 +1264,16 @@ void insertRemainingImplType(
                     size_t size = insert->size();
                     for (size_t k = 0; k < size; ++k)
                     {
+                        ++size_counter;
+                        if (size_counter >= dynamic_size_threshold_2)
+                            dynamic_size_hint = 2;
+                        else if (size_counter >= dynamic_size_threshold_1)
+                            dynamic_size_hint = 1;
+                        else
+                            dynamic_size_hint = 0;
+
                         auto * data = &(*insert)[k];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), ++size_counter >= double_size_threshold);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), dynamic_size_hint);
                     }
                 }
             }

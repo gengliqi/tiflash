@@ -267,10 +267,10 @@ struct HashTableGrower
 
     size_t div = 1;
     bool increase_one = false;
-    bool double_size = false;
+    UInt8 dynamic_size = 0;
     void setDiv(size_t d) { if (d > 0) div = d; }
     void setIncreaseOne(bool i) { increase_one = i; }
-    void setDoubleSize(bool d) { double_size = d; }
+    void setDynamicSize(UInt8 d) { dynamic_size = d; }
 
     /// The size of the hash table in the cells.
     size_t bufSize() const { return 1ULL << size_degree; }
@@ -292,11 +292,26 @@ struct HashTableGrower
     bool overflow(size_t elems) const { return elems > maxFill(); }
 
     /// Increase the size of the hash table.
-    void increaseSize(bool use_double_size)
+    void increaseSize(UInt8 size_hint)
     {
-        if (double_size && use_double_size)
+        /// 0 -> less than or equal to 12.5%
+        /// 1 -> greater than 12.5% and less than or equal to 50%
+        /// 2 -> greater than 50%
+        if (dynamic_size == 2)
         {
-            ++size_degree;
+            if (size_hint == 0)
+                size_degree += 3;
+            else if (size_hint == 1)
+                size_degree += 2;
+            else
+                size_degree += 1;
+        }
+        else if (dynamic_size == 1)
+        {
+            if (size_hint <= 1)
+                size_degree += 2;
+            else
+                size_degree += 1;
         }
         else if (increase_one)
             ++size_degree;
@@ -336,7 +351,7 @@ struct HashTableFixedGrower
     size_t div = 1;
     void setDiv(size_t d) { if (d > 0) div = d; }
     void setIncreaseOne(bool) {}
-    void setDoubleSize(bool) {}
+    void setDynamicSize(UInt8) {}
 
     size_t bufSize() const { return 1ULL << key_bits; }
     size_t place(size_t x) const { return x / div; }
@@ -344,7 +359,7 @@ struct HashTableFixedGrower
     size_t next(size_t pos) const { return pos + 1; }
     bool overflow(size_t /*elems*/) const { return false; }
 
-    void increaseSize(bool) { __builtin_unreachable(); }
+    void increaseSize(UInt8) { __builtin_unreachable(); }
     void set(size_t /*num_elems*/) {}
     void setBufSize(size_t /*buf_size_*/) {}
 };
@@ -510,7 +525,7 @@ protected:
     }
 
     /// Increase the size of the buffer.
-    void resize(size_t for_num_elems = 0, size_t for_buf_size = 0, bool use_double_size = false)
+    void resize(size_t for_num_elems = 0, size_t for_buf_size = 0, UInt8 dynamic_size_hint = 0)
     {
 #ifdef DBMS_HASH_MAP_DEBUG_RESIZES
         Stopwatch watch;
@@ -539,7 +554,7 @@ protected:
                 return;
         }
         else
-            new_grower.increaseSize(use_double_size);
+            new_grower.increaseSize(dynamic_size_hint);
 
         /// Expand the space.
 
@@ -737,7 +752,7 @@ public:
 
     void setDiv(size_t div) { grower.setDiv(div); }
     void setIncreaseOne(bool i) { grower.setIncreaseOne(i); }
-    void setDoubleSize(bool d) { grower.setDoubleSize(d); }
+    void setDynamicSize(UInt8 d) { grower.setDynamicSize(d); }
 
     HashTable()
     {
@@ -1062,7 +1077,7 @@ public:
             emplaceNonZero(key_holder, it, inserted, hash_value);
     }
 
-    void ALWAYS_INLINE emplaceCell(const Cell & cell, LookupResult & it, bool & inserted, size_t hash_value, bool use_double_size)
+    void ALWAYS_INLINE emplaceCell(const Cell & cell, LookupResult & it, bool & inserted, size_t hash_value, UInt8 dynamic_size_hint)
     {
         ++m_total_size;
         if (!emplaceIfZero(cell.getKey(), it, inserted, hash_value))
@@ -1085,7 +1100,7 @@ public:
             {
                 try
                 {
-                    resize(0, 0, use_double_size);
+                    resize(0, 0, dynamic_size_hint);
                 }
                 catch (...)
                 {

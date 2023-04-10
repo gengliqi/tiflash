@@ -109,7 +109,9 @@ public:
          size_t write_combine_buffer_size = 0,
          size_t build_prefetch = 0,
          bool increase_one = false,
-         double build_double_size_rate = 0,
+         UInt8 build_dynamic_size = 0,
+         double build_dynamic_size_rate_1 = 0,
+         double build_dynamic_size_rate_2 = 0,
          double build_resize = 0);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
@@ -351,7 +353,9 @@ public:
     size_t write_combine_buffer_size;
     size_t build_prefetch;
     bool build_increase_one;
-    double build_double_size_rate;
+    UInt8 build_dynamic_size;
+    double build_dynamic_size_rate_1;
+    double build_dynamic_size_rate_2;
     double build_resize;
 
     std::mutex wait_remaining_mutex;
