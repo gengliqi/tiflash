@@ -296,7 +296,6 @@ public:
         InsertDataVoidType write_buffer;
         std::vector<size_t> write_pos;
         std::list<std::vector<InsertDataVoidType>> saved;
-        PaddedPODArray<size_t> hash_values;
     };
 
     std::vector<InsertDataBatch> insert_batches;

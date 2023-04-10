@@ -1001,16 +1001,12 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                         auto * insert = static_cast<DataBatchType *>(j.get());
                         size_t size = insert->size();
 
-                        batch.hash_values.resize(size);
-                        for (size_t k = 0; k < size; ++k)
-                            batch.hash_values[k] = (*insert)[k].getHash(hash_table);
-
                         for (size_t k = 0, pre = join.build_prefetch; k < size; ++k, ++pre)
                         {
                             if (pre < size)
-                                hash_table.prefetchWrite(batch.hash_values[pre]);
+                                hash_table.prefetchWrite((*insert)[pre].getHash(hash_table));
 
-                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], batch.hash_values[k], false);
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], (*insert)[k].getHash(hash_table), false);
                         }
                         /*
                         for (size_t k = 0; k < 4 && k < size; ++k)
@@ -1235,16 +1231,12 @@ void insertRemainingImplType(
                     auto * insert = static_cast<DataBatchType *>(j.get());
                     size_t size = insert->size();
 
-                    batch.hash_values.resize(size);
-                    for (size_t k = 0; k < size; ++k)
-                        batch.hash_values[k] = (*insert)[k].getHash(hash_table);
-
                     for (size_t k = 0, pre = join.build_prefetch; k < size; ++k, ++pre)
                     {
                         if (pre < size)
-                            hash_table.prefetchWrite(batch.hash_values[pre]);
+                            hash_table.prefetchWrite((*insert)[pre].getHash(hash_table));
 
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], batch.hash_values[k], false);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], (*insert)[k].getHash(hash_table), false);
                     }
                 }
             }
