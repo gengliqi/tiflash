@@ -1475,8 +1475,11 @@ public:
     explicit HashTableWithLock(size_t reserve_for_num_elements)
         : hash_table(reserve_for_num_elements)
     {}
+    HashTableWithLock(HashTableWithLock && other): hash_table(std::move(other.hash_table)) {}
+
     std::mutex & getMutex() { return mutex; }
     HashTableType & getHashTable() { return hash_table; }
+    const HashTableType & getHashTable() const { return hash_table; }
     IteratorWithLock ALWAYS_INLINE find(const typename HashTableType::Key & x)
     {
         auto lock_ptr = std::make_unique<LockGuard>(mutex);
@@ -1556,9 +1559,9 @@ public:
     {
         for (size_t i = 0; i < segment_size; i++)
         {
-            segments.emplace_back(std::move(std::make_unique<HashTableWithLock<HashTableType>>()));
-            segments[i]->getHashTable().setDiv(segment_size);
-            segments[i]->getHashTable().setIncreaseOne(increase_one);
+            segments.emplace_back();
+            segments[i].getHashTable().setDiv(segment_size);
+            segments[i].getHashTable().setIncreaseOne(increase_one);
         }
     }
     ConcurrentHashTable(size_t segment_size_, size_t reserve_for_num_elements)
@@ -1566,24 +1569,24 @@ public:
     {
         for (size_t i = 0; i < segment_size; i++)
         {
-            segments.emplace_back(std::make_unique<HashTableWithLock<HashTableType>>(reserve_for_num_elements));
-            segments[i]->getHashTable().setDiv(segment_size);
+            segments.emplace_back(reserve_for_num_elements);
+            segments[i].getHashTable().setDiv(segment_size);
         }
     }
 
     const typename SegmentType::HashTable & getSegmentTable(size_t segment_index) const
     {
-        return segments[segment_index]->getHashTable();
+        return segments[segment_index].getHashTable();
     }
 
     typename SegmentType::HashTable & getSegmentTable(size_t segment_index)
     {
-        return segments[segment_index]->getHashTable();
+        return segments[segment_index].getHashTable();
     }
 
     std::mutex & getSegmentMutex(size_t segment_index)
     {
-        return segments[segment_index]->getMutex();
+        return segments[segment_index].getMutex();
     }
 
     size_t getSegmentSize() const { return segment_size; }
@@ -1607,7 +1610,7 @@ public:
             segment_index = hash_value % segment_size;
         }
 
-        return segments[segment_index]->find(x, hash_value);
+        return segments[segment_index].find(x, hash_value);
     }
 
     typename SegmentType::ConstIteratorWithLock ALWAYS_INLINE find(const Key & x) const
@@ -1629,7 +1632,7 @@ public:
         if (!isZero(x))
             segment_index = hash_value % segment_size;
 
-        return segments[segment_index]->find(x, hash_value);
+        return segments[segment_index].find(x, hash_value);
     }
 
     typename SegmentType::ConstIteratorWithLock ALWAYS_INLINE find(const Key & x, size_t hash_value) const
@@ -1638,7 +1641,7 @@ public:
         if (!isZero(x))
             segment_index = hash_value % segment_size;
 
-        return segments[segment_index]->find(x, hash_value);
+        return segments[segment_index].find(x, hash_value);
     }
 
     /// Insert a value. In the case of any more complex values, it is better to use the `emplace` function.
@@ -1651,7 +1654,7 @@ public:
             segment_index = hash_value % segment_size;
         }
 
-        return segments[segment_index]->insert(x);
+        return segments[segment_index].insert(x);
     }
 
     void ALWAYS_INLINE emplace(const Key & x, typename SegmentType::IteratorWithLock & it, bool & inserted)
@@ -1662,7 +1665,7 @@ public:
             size_t hash_value = hash(x);
             segment_index = hash_value % segment_size;
         }
-        return segments[segment_index]->emplace(x, it, inserted);
+        return segments[segment_index].emplace(x, it, inserted);
     }
 
     void ALWAYS_INLINE emplace(const Key & x, typename SegmentType::ConstIteratorWithLock & it, bool & inserted, size_t hash_value)
@@ -1670,7 +1673,7 @@ public:
         size_t segment_index = 0;
         if (!isZero(x))
             segment_index = hash_value % segment_size;
-        return segments[segment_index]->emplace(x, it, inserted, hash_value);
+        return segments[segment_index].emplace(x, it, inserted, hash_value);
     }
 
     bool ALWAYS_INLINE has(const Key & x) const
@@ -1682,7 +1685,7 @@ public:
             segment_index = hash_value % segment_size;
         }
 
-        return segments[segment_index]->has(x);
+        return segments[segment_index].has(x);
     }
 
     bool ALWAYS_INLINE has(const Key & x, size_t hash_value) const
@@ -1691,7 +1694,7 @@ public:
         if (isZero(x))
             segment_index = hash_value % segment_index;
 
-        return segments[segment_index]->has(x, hash_value);
+        return segments[segment_index].has(x, hash_value);
     }
 
     size_t getBufferSizeInBytes() const
@@ -1699,7 +1702,7 @@ public:
         size_t ret = 0;
         for (size_t i = 0; i < segments.size(); i++)
             /// note the return value might not be accurate since it does not use lock, but should be enough for current usage
-            ret += segments[i]->getBufferSizeInBytes();
+            ret += segments[i].getBufferSizeInBytes();
         return ret;
     }
 
@@ -1708,7 +1711,7 @@ public:
         size_t ret = 0;
         for (size_t i = 0; i < segments.size(); i++)
             /// note the return value might not be accurate since it does not use lock, but should be enough for current usage
-            ret += segments[i]->size();
+            ret += segments[i].size();
         return ret;
     }
 
@@ -1746,6 +1749,6 @@ public:
     }
 
 private:
-    std::vector<std::unique_ptr<SegmentType>> segments;
+    std::vector<SegmentType> segments;
     size_t segment_size;
 };
