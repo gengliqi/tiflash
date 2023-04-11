@@ -952,6 +952,8 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     //std::vector<Join::InsertDataVoidType> empty_batches;
 
+    batch.precalculate_hash.resize(join.build_prefetch);
+
     if (join.build_dynamic_size == 0)
     {
         for (size_t i = 0; i < segment_size; ++i)
@@ -1005,52 +1007,25 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                         auto * insert = static_cast<DataBatchType *>(j.get());
                         size_t size = insert->size();
 
-                        for (size_t k = 0, pre = join.build_prefetch; k < size; ++k, ++pre)
+                        for (size_t k = 0; k < join.build_prefetch && k < size; ++k)
                         {
-                            if (pre < size)
-                                hash_table.prefetchWrite((*insert)[pre].getHash(hash_table));
+                            batch.precalculate_hash[k] = (*insert)[k].getHash(hash_table);
+                            hash_table.prefetch(batch.precalculate_hash[k]);
+                        }
 
-                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], (*insert)[k].getHash(hash_table), false);
-                        }
-                        /*
-                        for (size_t k = 0; k < 4 && k < size; ++k)
-                        {
-                            hash_values[k] = (*insert)[k].getHash(hash_table);
-                        }
                         for (size_t k = 0; k < size; ++k)
                         {
-                            if (likely(k + 7 < size))
+                            size_t pos = k % join.build_prefetch;
+                            size_t hash = batch.precalculate_hash[pos];
+                            size_t prefetch = k + join.build_prefetch;
+                            if (prefetch < size)
                             {
-                                hash_values[(k + 4) % 8] = (*insert)[k + 4].getHash(hash_table);
-                                hash_table.prefetchWrite(hash_values[(k + 4) % 8]);
-                                hash_values[(k + 5) % 8] = (*insert)[k + 5].getHash(hash_table);
-                                hash_table.prefetchWrite(hash_values[(k + 5) % 8]);
-                                hash_values[(k + 6) % 8] = (*insert)[k + 6].getHash(hash_table);
-                                hash_table.prefetchWrite(hash_values[(k + 6) % 8]);
-                                hash_values[(k + 7) % 8] = (*insert)[k + 7].getHash(hash_table);
-                                hash_table.prefetchWrite(hash_values[(k + 7) % 8]);
-
-                                auto * data = &(*insert)[k];
-                                size_t hash_value = hash_values[k % 8];
-                                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value, false);
-                                data = &(*insert)[k + 1];
-                                hash_value = hash_values[(k + 1) % 8];
-                                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value, false);
-                                data = &(*insert)[k + 2];
-                                hash_value = hash_values[(k + 2) % 8];
-                                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value, false);
-                                data = &(*insert)[k + 3];
-                                hash_value = hash_values[(k + 3) % 8];
-                                Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, hash_value, false);
-
-                                k += 4;
-                                continue;
+                                batch.precalculate_hash[pos] = (*insert)[prefetch].getHash(hash_table);
+                                hash_table.prefetch(batch.precalculate_hash[pos]);
                             }
-                            auto * data = &(*insert)[k];
-                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), false);
-                            ++k;
-                        }*/
-                        //insert->clear();
+
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], hash, 0);
+                        }
                     }
                 }
                 else
@@ -1063,7 +1038,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                         for (size_t k = 0; k < size; ++k)
                         {
                             auto * data = &(*insert)[k];
-                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), false);
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), 0);
                         }
                     }
                 }
@@ -1175,6 +1150,8 @@ void insertRemainingImplType(
     }
     time.r_t2 = watch.elapsedFromLastTime();
 
+    batch.precalculate_hash.resize(join.build_prefetch);
+
     for (size_t i = 0; i < segment_size; ++i)
     {
         size_t segment_index = (i + stream_index) % segment_size;
@@ -1238,10 +1215,22 @@ void insertRemainingImplType(
                     auto * insert = static_cast<DataBatchType *>(j.get());
                     size_t size = insert->size();
 
-                    for (size_t k = 0, pre = join.build_prefetch; k < size; ++k, ++pre)
+                    for (size_t k = 0; k < join.build_prefetch && k < size; ++k)
                     {
-                        if (pre < size)
-                            hash_table.prefetchWrite((*insert)[pre].getHash(hash_table));
+                        batch.precalculate_hash[k] = (*insert)[k].getHash(hash_table);
+                        hash_table.prefetch(batch.precalculate_hash[k]);
+                    }
+
+                    for (size_t k = 0; k < size; ++k)
+                    {
+                        size_t pos = k % join.build_prefetch;
+                        size_t hash = batch.precalculate_hash[pos];
+                        size_t prefetch = k + join.build_prefetch;
+                        if (prefetch < size)
+                        {
+                            batch.precalculate_hash[pos] = (*insert)[prefetch].getHash(hash_table);
+                            hash_table.prefetch(batch.precalculate_hash[pos]);
+                        }
 
                         ++size_counter;
                         if (size_counter >= dynamic_size_threshold_2)
@@ -1251,7 +1240,7 @@ void insertRemainingImplType(
                         else
                             dynamic_size_hint = 0;
 
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], (*insert)[k].getHash(hash_table), dynamic_size_hint);
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, (*insert)[k], hash, dynamic_size_hint);
                     }
                 }
             }

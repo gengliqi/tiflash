@@ -298,6 +298,7 @@ public:
         InsertDataVoidType write_buffer;
         std::vector<size_t> write_pos;
         std::list<std::vector<InsertDataVoidType>> saved;
+        std::vector<size_t> precalculate_hash;
     };
 
     std::vector<InsertDataBatch> insert_batches;
