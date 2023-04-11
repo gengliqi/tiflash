@@ -896,7 +896,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 auto * p = batch_pointers[segment_index];
                 size_t size = p->size();
                 p->resize(size + buffer_size);
-                absl::crc_internal::non_temporal_store_memcpy(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
+                absl::crc_internal::non_temporal_store_memcpy_avx(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
 
                 if (unlikely(p->size() >= min_batch_insert_ht_size))
                 {
@@ -1113,7 +1113,7 @@ void insertRemainingImplType(
         {
             size_t size = b->size();
             b->resize(size + batch.write_pos[segment_index]);
-            absl::crc_internal::non_temporal_store_memcpy(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
+            absl::crc_internal::non_temporal_store_memcpy_avx(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
         }
 
         if (b->empty())
