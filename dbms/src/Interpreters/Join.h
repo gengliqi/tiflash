@@ -119,8 +119,6 @@ public:
       */
     void init(const Block & sample_block, size_t build_concurrency_ = 1);
 
-    void insertFromBlock(const Block & block);
-
     void insertFromBlock(const Block & block, size_t stream_index);
 
     /** Join data from the map (that was previously built by calls to insertFromBlock) to the block with data from "left" table.
@@ -182,12 +180,12 @@ public:
     /// Reference to the row in block.
     struct RowRef
     {
-        const Block * block;
-        size_t row_num;
+        UInt32 block_index;
+        UInt32 row_num;
 
         RowRef() = default;
-        RowRef(const Block * block_, size_t row_num_)
-            : block(block_)
+        RowRef(UInt32 block_index_, UInt32 row_num_)
+            : block_index(block_index_)
             , row_num(row_num_)
         {}
     };
@@ -198,8 +196,8 @@ public:
         RowRefList * next = nullptr;
 
         RowRefList() = default;
-        RowRefList(const Block * block_, size_t row_num_)
-            : RowRef(block_, row_num_)
+        RowRefList(UInt32 block_index_, UInt32 row_num_)
+            : RowRef(block_index_, row_num_)
         {}
     };
 
@@ -404,11 +402,11 @@ private:
     size_t max_cache_size_for_insert_ht;
     size_t hash_map_count;
     bool build_hash_table_at_end;
-    BlocksList::iterator blocks_iter;
+    size_t blocks_iter = 0;
 
     /** Blocks of "right" table.
       */
-    BlocksList blocks;
+    Blocks blocks;
     /// mutex to protect concurrent insert to blocks
     std::mutex blocks_lock;
     /// keep original block for concurrent build
@@ -480,7 +478,7 @@ public:
     /** Add block of data from right hand of JOIN to the map.
       * Returns false, if some limit was exceeded and you should not insert more data.
       */
-    void insertFromBlockInternal(Block * stored_block, size_t stream_index);
+    void insertFromBlockInternal(Block * stored_block, UInt32 block_index, size_t stream_index);
 
     template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename Maps>
     void joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & probe_process_info) const;
