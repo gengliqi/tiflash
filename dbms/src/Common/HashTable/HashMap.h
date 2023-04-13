@@ -29,7 +29,6 @@ struct NoInitTag
 {
 };
 
-#pragma pack(push, 1)
 /// A pair that does not initialize the elements, if not needed.
 template <typename First, typename Second>
 struct PairNoInit
@@ -59,6 +58,7 @@ PairNoInit<std::decay_t<First>, std::decay_t<Second>> makePairNoInit(First && fi
 {
     return PairNoInit<std::decay_t<First>, std::decay_t<Second>>(std::forward<First>(first), std::forward<Second>(second));
 }
+
 
 template <typename Key, typename TMapped, typename Hash, typename TState = HashTableNoState>
 struct HashMapCell
@@ -206,8 +206,6 @@ struct HashMapCellWithSavedHash : public HashMapCell<Key, TMapped, Hash, TState>
     void setHash(size_t hash_value) { saved_hash = hash_value; }
     size_t getHash(const Hash & /*hash_function*/) const { return saved_hash; }
 };
-
-#pragma pack(pop)
 
 
 template <
