@@ -897,7 +897,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 auto * p = batch_pointers[segment_index];
                 size_t size = p->size();
                 p->resize(size + buffer_size, 64);
-                memcpy(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
+                std::memcpy(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
 
                 if (unlikely(p->size() >= min_batch_insert_ht_size))
                 {
@@ -1114,7 +1114,7 @@ void insertRemainingImplType(
         {
             size_t size = b->size();
             b->resize(size + batch.write_pos[segment_index]);
-            memcpy(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
+            std::memcpy(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
         }
 
         if (b->empty())
