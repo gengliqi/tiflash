@@ -22,6 +22,7 @@
 #include <Flash/Mpp/MPPTunnel.h>
 #include <Flash/Mpp/Utils.h>
 #include <Storages/Transaction/TMTContext.h>
+#include <Common/Stopwatch.h>
 
 namespace DB
 {
@@ -64,6 +65,12 @@ void EstablishCallData::proceed(bool ok)
         /// try connect tunnel is ok
         tryConnectTunnel();
         return;
+    }
+
+    if (write_begin != 0)
+    {
+        write_time += clock_gettime_ns() - write_begin;
+        write_begin = 0;
     }
 
     if (unlikely(!ok))
@@ -191,6 +198,8 @@ void EstablishCallData::tryConnectTunnel()
 
 void EstablishCallData::write(const mpp::MPPDataPacket & packet)
 {
+    write_size += packet.ByteSizeLong();
+    write_begin = clock_gettime_ns();
     responder.Write(packet, this);
 }
 
@@ -206,7 +215,9 @@ void EstablishCallData::writeDone(String msg, const grpc::Status & status)
 
     if (async_tunnel_sender)
     {
-        LOG_INFO(async_tunnel_sender->getLogger(), "connection for {} cost {} ms, including {} ms to waiting task.", async_tunnel_sender->getTunnelId(), stopwatch->elapsedMilliseconds(), waiting_task_time_ms);
+        LOG_INFO(async_tunnel_sender->getLogger(), "connection for {} cost {} ms, including {} ms to waiting task, tunnel write size {}, write time {}, {:.3f} MiB/sec",
+                 async_tunnel_sender->getTunnelId(), stopwatch->elapsedMilliseconds(), waiting_task_time_ms,
+                 write_size, write_time, write_time == 0 ? 0 : 1.0 * write_size / 1048576.0 * 1000000000.0 / write_time);
 
         RUNTIME_ASSERT(!async_tunnel_sender->isConsumerFinished(), async_tunnel_sender->getLogger(), "tunnel {} consumer finished in advance", async_tunnel_sender->getTunnelId());
 

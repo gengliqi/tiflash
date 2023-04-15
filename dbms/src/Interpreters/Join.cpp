@@ -785,7 +785,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         for (size_t i = 0; i < segment_size; ++i)
         {
             auto * insert = new DataBatchType();
-            insert->reserve(min_batch_insert_ht_size, 64);
+            insert->reserve(min_batch_insert_ht_size);
             //memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
             batch.batch_per_map.emplace_back(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
@@ -793,8 +793,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         if (join.write_combine_buffer_size > 0)
         {
             batch.write_pos.resize(segment_size);
-            auto * buffer = new DataBatchType;
-            buffer->resize(segment_size * join.write_combine_buffer_size, 64);
+            auto * buffer = new DataBatchType(segment_size * join.write_combine_buffer_size);
             batch.write_buffer = Join::InsertDataVoidType(static_cast<void *>(buffer), deleteInsertData<DataBatchType>);
         }
 
@@ -853,7 +852,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 time.t2 += watch2.elapsedFromLastTime();
 
                 auto * insert = new DataBatchType();
-                insert->reserve(min_batch_insert_ht_size, 64);
+                insert->reserve(min_batch_insert_ht_size);
                 //memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
                 batch_pointers[segment_index] = insert;
                 batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
@@ -896,8 +895,8 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                 batch.write_pos[segment_index] = 0;
                 auto * p = batch_pointers[segment_index];
                 size_t size = p->size();
-                p->resize(size + buffer_size, 64);
-                std::memcpy(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
+                p->resize(size + buffer_size);
+                absl::crc_internal::non_temporal_store_memcpy_avx(&(*batch_pointers[segment_index])[size], &buffer[segment_index * buffer_size], buffer_size * sizeof(DataType));
 
                 if (unlikely(p->size() >= min_batch_insert_ht_size))
                 {
@@ -916,7 +915,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                     time.t2 += watch2.elapsedFromLastTime();
 
                     auto * insert = new DataBatchType();
-                    insert->reserve(min_batch_insert_ht_size, 64);
+                    insert->reserve(min_batch_insert_ht_size);
                     //memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
                     batch_pointers[segment_index] = insert;
                     batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
@@ -1057,7 +1056,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
         {
             ++time.new_count;
             auto * insert = new DataBatchType();
-            insert->reserve(min_batch_insert_ht_size, 64);
+            insert->reserve(min_batch_insert_ht_size);
             batch.batch_per_map[i] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
         }
     }*/
@@ -1114,7 +1113,7 @@ void insertRemainingImplType(
         {
             size_t size = b->size();
             b->resize(size + batch.write_pos[segment_index]);
-            std::memcpy(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
+            absl::crc_internal::non_temporal_store_memcpy_avx(&(*b)[size], &buffer[segment_index * buffer_size], batch.write_pos[segment_index] * sizeof(DataType));
         }
 
         if (b->empty())

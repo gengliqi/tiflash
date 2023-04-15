@@ -134,5 +134,9 @@ private:
     std::shared_ptr<DB::AsyncTunnelSender> async_tunnel_sender;
     std::unique_ptr<Stopwatch> stopwatch;
     double waiting_task_time_ms = 0;
+
+    UInt64 write_time = 0;
+    UInt64 write_size = 0;
+    UInt64 write_begin = 0;
 };
 } // namespace DB
