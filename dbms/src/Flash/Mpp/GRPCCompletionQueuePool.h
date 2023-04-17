@@ -27,7 +27,7 @@ class GRPCCompletionQueuePool
 public:
     static std::unique_ptr<GRPCCompletionQueuePool> global_instance;
 
-    explicit GRPCCompletionQueuePool(size_t count);
+    GRPCCompletionQueuePool(size_t queue_count, size_t poller_per_queue);
     ~GRPCCompletionQueuePool();
 
     ::grpc::CompletionQueue & pickQueue();
@@ -42,7 +42,7 @@ private:
 
     std::atomic<size_t> next = 0;
     std::atomic<bool> is_shutdown{false};
-    std::vector<::grpc::CompletionQueue> queues;
+    std::vector<std::unique_ptr<grpc::CompletionQueue>> queues;
     std::vector<std::thread> workers;
 };
 } // namespace DB

@@ -19,17 +19,21 @@ namespace DB
 {
 std::unique_ptr<GRPCCompletionQueuePool> GRPCCompletionQueuePool::global_instance;
 
-GRPCCompletionQueuePool::GRPCCompletionQueuePool(size_t count)
-    : queues(count)
+GRPCCompletionQueuePool::GRPCCompletionQueuePool(size_t queue_count, size_t poller_per_queue)
+    : queues(queue_count)
 {
-    for (size_t i = 0; i < count; ++i)
-        workers.emplace_back(ThreadFactory::newThread(false, "GRPCComp", &GRPCCompletionQueuePool::thread, this, i));
+    for (size_t i = 0; i < queue_count; ++i)
+    {
+        queues[i] = std::make_unique<grpc::CompletionQueue>();
+        for (size_t j = 0; j < poller_per_queue; ++j)
+            workers.emplace_back(ThreadFactory::newThread(false, "GRPCComp", &GRPCCompletionQueuePool::thread, this, i));
+    }
 }
 
 GRPCCompletionQueuePool::~GRPCCompletionQueuePool()
 {
     for (auto & queue : queues)
-        queue.Shutdown();
+        queue->Shutdown();
 
     for (auto & t : workers)
         t.join();
@@ -37,7 +41,7 @@ GRPCCompletionQueuePool::~GRPCCompletionQueuePool()
 
 ::grpc::CompletionQueue & GRPCCompletionQueuePool::pickQueue()
 {
-    return queues[next.fetch_add(1, std::memory_order_acq_rel) % queues.size()];
+    return *queues[next.fetch_add(1, std::memory_order_acq_rel) % queues.size()];
 }
 
 void GRPCCompletionQueuePool::thread(size_t index)
@@ -50,7 +54,7 @@ void GRPCCompletionQueuePool::thread(size_t index)
         }
     });
 
-    auto & q = queues[index];
+    auto & q = *queues[index];
     while (true)
     {
         void * got_tag = nullptr;

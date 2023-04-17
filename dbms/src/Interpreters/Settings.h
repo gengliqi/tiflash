@@ -287,6 +287,8 @@ struct Settings
     M(SettingBool, enable_local_tunnel, true, "Enable local data transfer between local MPP tasks.")                                                                                                                                    \
     M(SettingBool, enable_async_grpc_client, true, "Enable async grpc in MPP.")                                                                                                                                                         \
     M(SettingUInt64, grpc_completion_queue_pool_size, 0, "The size of gRPC completion queue pool. 0 means using hardware_concurrency.")                                                                                                 \
+    M(SettingUInt64, grpc_completion_queue_size, 0, "")                                                                                                 \
+    M(SettingUInt64, grpc_completion_poller_per_queue, 0, "")                                                                                                 \
     M(SettingBool, enable_async_server, true, "Enable async rpc server.")                                                                                                                                                               \
     M(SettingUInt64, async_pollers_per_cq, 200, "grpc async pollers per cqs")                                                                                                                                                           \
     M(SettingUInt64, async_cqs, 1, "grpc async cqs")                                                                                                                                                                                    \
