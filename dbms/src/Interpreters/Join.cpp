@@ -803,12 +803,12 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
     BoolVec need_run(segment_size, false);
 
-    size_t buffer_size = join.write_combine_buffer_size;
     std::vector<DataBatchType *> batch_pointers(segment_size);
     for (size_t i = 0; i < segment_size; ++i)
     {
         batch_pointers[i] = static_cast<DataBatchType *>(batch.batch_per_map[i].get());
     }
+    size_t buffer_size = join.write_combine_buffer_size;
     if (buffer_size == 0)
     {
         for (size_t i = 0; i < rows; ++i)
@@ -836,6 +836,114 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             p->back().setHash(hash_value);
 
             if (unlikely(p->size() >= min_batch_insert_ht_size))
+            {
+                watch2.restart();
+                {
+                    std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                    insert_queues[segment_index].size += p->size();
+                    insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
+                    if (!insert_queues[segment_index].is_running)
+                    {
+                        /// If it's not running, need run later.
+                        need_run[segment_index] = true;
+                    }
+                }
+                time.t2 += watch2.elapsedFromLastTime();
+
+                auto * insert = new DataBatchType();
+                insert->reserve(min_batch_insert_ht_size);
+                //memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
+                batch_pointers[segment_index] = insert;
+                batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+
+                time.t3 += watch2.elapsedFromLastTime();
+            }
+        }
+    }
+    else if (buffer_size == 1)
+    {
+        for (size_t i = 0; i < rows; ++i)
+        {
+            if (has_null_map && (*null_map)[i])
+            {
+                if (rows_not_inserted_to_map)
+                {
+                    auto * elem = reinterpret_cast<Join::RowRefList *>(pool.alloc(sizeof(Join::RowRefList)));
+                    insertRowToList(rows_not_inserted_to_map, elem, block_index, i);
+                }
+                continue;
+            }
+
+            auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+            keyHolderPersistKey(key_holder);
+
+            const auto & key = keyHolderGetKey(key_holder);
+
+            size_t hash_value = map.hash(key);
+            size_t segment_index = hash_value % segment_size;
+
+            auto * p = batch_pointers[segment_index];
+            p->emplace_back(key, typename Map::mapped_type(block_index, i));
+            p->back().setHash(hash_value);
+            size_t size = p->size();
+            __builtin_prefetch(p->data() + size);
+
+            if (unlikely(size >= min_batch_insert_ht_size))
+            {
+                watch2.restart();
+                {
+                    std::lock_guard lk(map.getSegmentMutex(segment_index));
+
+                    insert_queues[segment_index].size += p->size();
+                    insert_queues[segment_index].queue.emplace_back(std::move(batch.batch_per_map[segment_index]));
+                    if (!insert_queues[segment_index].is_running)
+                    {
+                        /// If it's not running, need run later.
+                        need_run[segment_index] = true;
+                    }
+                }
+                time.t2 += watch2.elapsedFromLastTime();
+
+                auto * insert = new DataBatchType();
+                insert->reserve(min_batch_insert_ht_size);
+                //memset(&(*insert)[0], 0, min_batch_insert_ht_size * sizeof(DataType));
+                batch_pointers[segment_index] = insert;
+                batch.batch_per_map[segment_index] = Join::InsertDataVoidType(static_cast<void *>(insert), deleteInsertData<DataBatchType>);
+
+                time.t3 += watch2.elapsedFromLastTime();
+            }
+        }
+    }
+    else if (buffer_size == 2)
+    {
+        for (size_t i = 0; i < rows; ++i)
+        {
+            if (has_null_map && (*null_map)[i])
+            {
+                if (rows_not_inserted_to_map)
+                {
+                    auto * elem = reinterpret_cast<Join::RowRefList *>(pool.alloc(sizeof(Join::RowRefList)));
+                    insertRowToList(rows_not_inserted_to_map, elem, block_index, i);
+                }
+                continue;
+            }
+
+            auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+            keyHolderPersistKey(key_holder);
+
+            const auto & key = keyHolderGetKey(key_holder);
+
+            size_t hash_value = map.hash(key);
+            size_t segment_index = hash_value % segment_size;
+
+            auto * p = batch_pointers[segment_index];
+            p->emplace_back(key, typename Map::mapped_type(block_index, i));
+            p->back().setHash(hash_value);
+            size_t size = p->size();
+            __builtin_prefetch(p->data() + size, 1, 0);
+
+            if (unlikely(size >= min_batch_insert_ht_size))
             {
                 watch2.restart();
                 {
