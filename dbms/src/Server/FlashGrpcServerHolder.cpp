@@ -197,8 +197,10 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(Context & context, Poco::Util::Laye
                 // EstablishCallData will handle its lifecycle by itself.
                 EstablishCallData::spawn(assert_cast<AsyncFlashService *>(flash_service.get()), cq, notify_cq, is_shutdown);
             }
-            cq_workers.emplace_back(ThreadFactory::newThread(false, "async_poller", [cq, this] { handleRpcs(cq, log); }));
-            notify_cq_workers.emplace_back(ThreadFactory::newThread(false, "async_poller", [notify_cq, this] { handleRpcs(notify_cq, log); }));
+            String name = "async_poller_cq_" + std::to_string(i);
+            cq_workers.emplace_back(ThreadFactory::newThread(false, name, [cq, this] { handleRpcs(cq, log); }));
+            name = "async_poller_notify_cq_" + std::to_string(i);
+            notify_cq_workers.emplace_back(ThreadFactory::newThread(false, name, [notify_cq, this] { handleRpcs(notify_cq, log); }));
         }
     }
 }
