@@ -27,7 +27,7 @@ GRPCCompletionQueuePool::GRPCCompletionQueuePool(size_t queue_count, size_t poll
         queues[i] = std::make_unique<grpc::CompletionQueue>();
         for (size_t j = 0; j < poller_per_queue; ++j)
         {
-            String name = "GRPCComp_" + std::to_string(i) + std::to_string(j);
+            String name = "GRPCComp" + std::to_string(i) + "_" + std::to_string(j);
             workers.emplace_back(ThreadFactory::newThread(false, name, &GRPCCompletionQueuePool::thread, this, i));
         }
     }
