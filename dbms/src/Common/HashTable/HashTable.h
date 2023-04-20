@@ -33,7 +33,7 @@
 #include <new>
 #include <utility>
 
-#define DBMS_HASH_MAP_COUNT_COLLISIONS
+//#define DBMS_HASH_MAP_COUNT_COLLISIONS
 #include <Common/Stopwatch.h>
 
 #ifdef DBMS_HASH_MAP_DEBUG_RESIZES
@@ -477,7 +477,7 @@ protected:
     UInt64 resize_time = 0;
 
 #ifdef DBMS_HASH_MAP_COUNT_COLLISIONS
-    mutable size_t collisions = 0;
+    mutable std::atomic<size_t> collisions = 0;
 #endif
 
     /// Find a cell with the same key or an empty cell, starting from the specified position and further along the collision resolution chain.
@@ -487,7 +487,7 @@ protected:
         {
             place_value = grower.next(place_value);
 #ifdef DBMS_HASH_MAP_COUNT_COLLISIONS
-            ++collisions;
+            collisions.fetch_add(1, std::memory_order_relaxed);
 #endif
         }
 
@@ -502,7 +502,7 @@ protected:
         {
             place_value = grower.next(place_value);
 #ifdef DBMS_HASH_MAP_COUNT_COLLISIONS
-            ++collisions;
+            collisions.fetch_add(1, std::memory_order_relaxed);
 #endif
         }
 
@@ -1718,11 +1718,13 @@ public:
     std::vector<size_t> getCollisionCounts()
     {
         std::vector<size_t> ret;
+#ifdef DBMS_HASH_MAP_COUNT_COLLISIONS
         ret.reserve(segment_size);
         for (size_t i = 0; i < segment_size; ++i)
         {
             ret.push_back(getSegmentTable(i).getCollisions());
         }
+#endif
         return ret;
     }
 

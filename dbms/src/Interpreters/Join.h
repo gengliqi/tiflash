@@ -124,7 +124,7 @@ public:
     /** Join data from the map (that was previously built by calls to insertFromBlock) to the block with data from "left" table.
       * Could be called from different threads in parallel.
       */
-    Block joinBlock(ProbeProcessInfo & probe_process_info) const;
+    Block joinBlock(ProbeProcessInfo & probe_process_info, size_t stream_index) const;
 
     void checkTypes(const Block & block) const;
 
@@ -165,8 +165,9 @@ public:
         std::unique_lock lock(build_probe_mutex);
         probe_concurrency = concurrency;
         active_probe_concurrency = probe_concurrency;
+        probe_metrics.resize(concurrency);
     }
-    void finishOneProbe();
+    void finishOneProbe(size_t stream_index);
     void waitUntilAllProbeFinished() const;
 
     size_t getBuildConcurrency() const
@@ -265,15 +266,15 @@ public:
     {
         std::unique_ptr<ConcurrentHashMap<UInt8, Mapped, TrivialHash, HashTableFixedGrower<8>>> key8;
         std::unique_ptr<ConcurrentHashMap<UInt16, Mapped, TrivialHash, HashTableFixedGrower<16>>> key16;
-        std::unique_ptr<ConcurrentHashMap<UInt32, Mapped, HashCRC32<UInt32>>> key32;
-        std::unique_ptr<ConcurrentHashMap<UInt64, Mapped, HashCRC32<UInt64>>> key64;
-        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped>> key_string;
-        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped>> key_strbinpadding;
-        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped>> key_strbin;
-        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped>> key_fixed_string;
-        std::unique_ptr<ConcurrentHashMap<UInt128, Mapped, HashCRC32<UInt128>>> keys128;
-        std::unique_ptr<ConcurrentHashMap<UInt256, Mapped, HashCRC32<UInt256>>> keys256;
-        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped>> serialized;
+        std::unique_ptr<ConcurrentHashMap<UInt32, Mapped, HashCRC32<UInt32>, HashTableGrower<6>>> key32;
+        std::unique_ptr<ConcurrentHashMap<UInt64, Mapped, HashCRC32<UInt64>, HashTableGrower<6>>> key64;
+        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped, DefaultHash<StringRef>, HashTableGrower<6>>> key_string;
+        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped, DefaultHash<StringRef>, HashTableGrower<6>>> key_strbinpadding;
+        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped, DefaultHash<StringRef>, HashTableGrower<6>>> key_strbin;
+        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped, DefaultHash<StringRef>, HashTableGrower<6>>> key_fixed_string;
+        std::unique_ptr<ConcurrentHashMap<UInt128, Mapped, HashCRC32<UInt128>, HashTableGrower<6>>> keys128;
+        std::unique_ptr<ConcurrentHashMap<UInt256, Mapped, HashCRC32<UInt256>, HashTableGrower<6>>> keys256;
+        std::unique_ptr<ConcurrentHashMapWithSavedHash<StringRef, Mapped, DefaultHash<StringRef>, HashTableGrower<6>>> serialized;
         // TODO: add more cases like Aggregator
     };
 
@@ -362,6 +363,16 @@ public:
     size_t wait_remaining_count;
 
     size_t wait_remaining_count_2;
+
+    struct alignas(64) ProbeMetric
+    {
+        std::vector<const void *> find_buffer;
+        size_t pos = 0;
+        UInt64 probe_hash = 0;
+        UInt64 probe_tuple = 0;
+    };
+
+    mutable std::vector<ProbeMetric> probe_metrics;
 
 public:
     friend class NonJoinedBlockInputStream;
@@ -481,7 +492,7 @@ public:
     void insertFromBlockInternal(Block * stored_block, UInt32 block_index, size_t stream_index);
 
     template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename Maps>
-    void joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & probe_process_info) const;
+    void joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & probe_process_info, size_t stream_index) const;
 
     /** Handle non-equal join conditions
       *

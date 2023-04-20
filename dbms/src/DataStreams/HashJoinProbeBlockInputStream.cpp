@@ -41,14 +41,14 @@ Block HashJoinProbeBlockInputStream::getHeader() const
     assert(res.rows() == 0);
     ProbeProcessInfo header_probe_process_info(0);
     header_probe_process_info.resetBlock(std::move(res));
-    return join->joinBlock(header_probe_process_info);
+    return join->joinBlock(header_probe_process_info, probe_index);
 }
 
 void HashJoinProbeBlockInputStream::finishOneProbe()
 {
     bool expect = false;
     if likely (probe_finished.compare_exchange_strong(expect, true))
-        join->finishOneProbe();
+        join->finishOneProbe(probe_index);
 }
 
 void HashJoinProbeBlockInputStream::cancel(bool kill)
@@ -120,7 +120,7 @@ Block HashJoinProbeBlockInputStream::getOutputBlock()
                     probe_process_info.resetBlock(std::move(block));
                 }
             }
-            auto ret = join->joinBlock(probe_process_info);
+            auto ret = join->joinBlock(probe_process_info, probe_index);
             joined_rows += ret.rows();
             return ret;
         }
