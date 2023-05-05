@@ -265,10 +265,10 @@ struct HashTableGrower
     /// If collision resolution chains are contiguous, we can implement erase operation by moving the elements.
     static constexpr auto performs_linear_probing_with_single_step = true;
 
-    size_t div = 1;
+    size_t right_shift = 0;
     bool increase_one = false;
     UInt8 dynamic_size = 0;
-    void setDiv(size_t d) { if (d > 0) div = d; }
+    void setRightShift(size_t d) { right_shift = d; }
     void setIncreaseOne(bool i) { increase_one = i; }
     void setDynamicSize(UInt8 d) { dynamic_size = d; }
 
@@ -279,7 +279,7 @@ struct HashTableGrower
     size_t mask() const { return bufSize() - 1; }
 
     /// From the hash value, get the cell number in the hash table.
-    size_t place(size_t x) const { return (x / div) & mask(); }
+    size_t place(size_t x) const { return (x >> right_shift) & mask(); }
 
     /// The next cell in the collision resolution chain.
     size_t next(size_t pos) const
@@ -352,13 +352,12 @@ struct HashTableFixedGrower
 
     static constexpr auto performs_linear_probing_with_single_step = true;
 
-    size_t div = 1;
-    void setDiv(size_t d) { if (d > 0) div = d; }
+    void setRightShift(size_t) { }
     void setIncreaseOne(bool) {}
     void setDynamicSize(UInt8) {}
 
     size_t bufSize() const { return 1ULL << key_bits; }
-    size_t place(size_t x) const { return x / div; }
+    size_t place(size_t x) const { return x; }
     /// You could write __builtin_unreachable(), but the compiler does not optimize everything, and it turns out less efficiently.
     size_t next(size_t pos) const { return pos + 1; }
     bool overflow(size_t /*elems*/) const { return false; }
@@ -754,7 +753,7 @@ public:
 
     size_t hash(const Key & x) const { return Hash::operator()(x); }
 
-    void setDiv(size_t div) { grower.setDiv(div); }
+    void setRightShift(size_t d) { grower.setRightShift(d); }
     void setIncreaseOne(bool i) { grower.setIncreaseOne(i); }
     void setDynamicSize(UInt8 d) { grower.setDynamicSize(d); }
 
@@ -1561,20 +1560,26 @@ public:
     explicit ConcurrentHashTable(size_t segment_size_, bool increase_one)
         : segment_size(segment_size_)
     {
+        size_t log2 = std::bit_width(segment_size) - 1;
+        if ((1 << log2) != segment_size)
+            log2 = 0;
         for (size_t i = 0; i < segment_size; i++)
         {
             segments.emplace_back();
-            segments[i].getHashTable().setDiv(segment_size);
+            segments[i].getHashTable().setRightShift(log2);
             segments[i].getHashTable().setIncreaseOne(increase_one);
         }
     }
     ConcurrentHashTable(size_t segment_size_, size_t reserve_for_num_elements)
         : segment_size(segment_size_)
     {
+        size_t log2 = std::bit_width(segment_size) - 1;
+        if ((1 << log2) != segment_size)
+            log2 = 0;
         for (size_t i = 0; i < segment_size; i++)
         {
             segments.emplace_back(reserve_for_num_elements);
-            segments[i].getHashTable().setDiv(segment_size);
+            segments[i].getHashTable().setRightShift(log2);
         }
     }
 

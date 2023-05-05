@@ -829,7 +829,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             const auto & key = keyHolderGetKey(key_holder);
 
             size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value % segment_size;
+            size_t segment_index = hash_value & (segment_size - 1);
 
             auto * p = batch_pointers[segment_index];
             p->emplace_back(key, typename Map::mapped_type(block_index, i));
@@ -881,7 +881,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             const auto & key = keyHolderGetKey(key_holder);
 
             size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value % segment_size;
+            size_t segment_index = hash_value & (segment_size - 1);
 
             auto * p = batch_pointers[segment_index];
             p->emplace_back(key, typename Map::mapped_type(block_index, i));
@@ -935,7 +935,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             const auto & key = keyHolderGetKey(key_holder);
 
             size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value % segment_size;
+            size_t segment_index = hash_value & (segment_size - 1);
 
             auto * p = batch_pointers[segment_index];
             p->emplace_back(key, typename Map::mapped_type(block_index, i));
@@ -990,7 +990,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
             const auto & key = keyHolderGetKey(key_holder);
 
             size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value % segment_size;
+            size_t segment_index = hash_value & (segment_size - 1);
 
             size_t pos = segment_index * buffer_size + batch.write_pos[segment_index];
             buffer[pos] = typename Map::Cell(key, typename Map::mapped_type(block_index, i));
@@ -1122,7 +1122,7 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
                         for (size_t k = 0; k < size; ++k)
                         {
-                            size_t pos = k % join.build_prefetch;
+                            size_t pos = k & (join.build_prefetch - 1);
                             size_t hash = batch.precalculate_hash[pos];
                             size_t prefetch = k + join.build_prefetch;
                             if (prefetch < size)
@@ -1998,7 +1998,7 @@ void NO_INLINE joinBlockImplTypeCase(
                 auto key = keyHolderGetKey(key_holder);
                 size_t hash_value = 0;
                 bool zero_flag = ZeroTraits::check(key);
-                if (segment_size > 0 && !zero_flag)
+                if (!zero_flag)
                 {
                     hash_value = map.hash(key);
                 }
@@ -2006,7 +2006,6 @@ void NO_INLINE joinBlockImplTypeCase(
                 size_t segment_index = 0;
                 if (enable_fine_grained_shuffle)
                 {
-                    RUNTIME_CHECK(segment_size > 0);
                     /// Need to calculate the correct segment_index so that rows with same key will map to the same segment_index both in Build and Prob
                     /// The "reproduce" of segment_index generated in Build phase relies on the facts that:
                     /// Possible pipelines(FineGrainedShuffleWriter => ExchangeReceiver => HashBuild)
@@ -2017,19 +2016,19 @@ void NO_INLINE joinBlockImplTypeCase(
                     if likely (fine_grained_shuffle_count == segment_size)
                         segment_index = packet_stream_id;
                     else
-                        segment_index = packet_stream_id % segment_size;
+                        segment_index = packet_stream_id & (segment_size - 1);
                 }
                 else
                 {
-                    if (segment_size > 0 && !zero_flag)
+                    if (!zero_flag)
                     {
-                        segment_index = hash_value % segment_size;
+                        segment_index = hash_value & (segment_size - 1);
                     }
                 }
 
                 auto & internal_map = map.getSegmentTable(segment_index);
                 /// do not require segment lock because in join, the hash table can not be changed in probe stage.
-                auto it = segment_size > 0 ? internal_map.find(key, hash_value) : internal_map.find(key);
+                auto it = internal_map.find(key, hash_value);
                 if (it != internal_map.end())
                 {
                     it->getMapped().setUsed();
