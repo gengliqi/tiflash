@@ -313,6 +313,10 @@ struct HashTableGrower
             else
                 size_degree += 1;
         }
+        else if (dynamic_size == 3)
+        {
+            ++size_degree;
+        }
         else if (increase_one)
             ++size_degree;
         else
