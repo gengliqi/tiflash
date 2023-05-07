@@ -1560,7 +1560,7 @@ public:
     explicit ConcurrentHashTable(size_t segment_size_, bool increase_one)
         : segment_size(segment_size_)
     {
-        size_t log2 = std::bit_width(segment_size) - 1;
+        size_t log2 = bitScanReverse(segment_size);
         if ((1 << log2) != segment_size)
             log2 = 0;
         for (size_t i = 0; i < segment_size; i++)
@@ -1573,7 +1573,7 @@ public:
     ConcurrentHashTable(size_t segment_size_, size_t reserve_for_num_elements)
         : segment_size(segment_size_)
     {
-        size_t log2 = std::bit_width(segment_size) - 1;
+        size_t log2 = bitScanReverse(segment_size);
         if ((1 << log2) != segment_size)
             log2 = 0;
         for (size_t i = 0; i < segment_size; i++)
