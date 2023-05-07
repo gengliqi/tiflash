@@ -1330,7 +1330,7 @@ void insertRemainingImplType(
 
                     for (size_t k = 0; k < size; ++k)
                     {
-                        size_t pos = k % join.build_prefetch;
+                        size_t pos = k & (join.build_prefetch - 1);
                         size_t hash = batch.precalculate_hash[pos];
                         size_t prefetch = k + join.build_prefetch;
                         if (prefetch < size)
