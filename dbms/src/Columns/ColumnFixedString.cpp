@@ -116,6 +116,11 @@ void ColumnFixedString::insertData(const char * pos, size_t length)
     memcpy(&chars[old_size], pos, length);
 }
 
+void ColumnFixedString::insertGatherFrom(PaddedPODArray<const IColumn*> &, const PaddedPODArray<size_t> &)
+{
+    throw Exception("not implemented");
+}
+
 StringRef ColumnFixedString::serializeValueIntoArena(size_t index, Arena & arena, char const *& begin, const TiDB::TiDBCollatorPtr &, String &) const
 {
     auto * pos = arena.allocContinue(n, begin);

@@ -112,7 +112,8 @@ public:
          UInt8 build_dynamic_size = 0,
          double build_dynamic_size_rate_1 = 0,
          double build_dynamic_size_rate_2 = 0,
-         double build_resize = 0);
+         double build_resize = 0,
+         UInt64 probe_version = 0);
 
     /** Call `setBuildConcurrencyAndInitPool`, `initMapImpl` and `setSampleBlock`.
       * You must call this method before subsequent calls to insertFromBlock.
@@ -357,6 +358,7 @@ public:
     double build_dynamic_size_rate_1;
     double build_dynamic_size_rate_2;
     double build_resize;
+    UInt64 probe_version;
 
     std::mutex wait_remaining_mutex;
     std::condition_variable wait_remaining_cv;
@@ -370,6 +372,8 @@ public:
         size_t pos = 0;
         UInt64 probe_hash = 0;
         UInt64 probe_tuple = 0;
+        std::vector<PaddedPODArray<const IColumn*>> column_ptrs;
+        PaddedPODArray<size_t> column_pos;
     };
 
     mutable std::vector<ProbeMetric> probe_metrics;

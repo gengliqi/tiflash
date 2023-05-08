@@ -101,6 +101,11 @@ public:
         throw Exception("Cannot insert into " + getName(), ErrorCodes::NOT_IMPLEMENTED);
     }
 
+    void insertGatherFrom(PaddedPODArray<const IColumn*> &, const PaddedPODArray<size_t> &) override
+    {
+        throw Exception("Cannot insert into " + getName(), ErrorCodes::NOT_IMPLEMENTED);
+    }
+
     void insertData(const char *, size_t) override
     {
         throw Exception("Cannot insert into " + getName(), ErrorCodes::NOT_IMPLEMENTED);

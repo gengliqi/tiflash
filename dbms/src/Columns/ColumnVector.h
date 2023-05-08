@@ -241,6 +241,19 @@ public:
         data.push_back(*reinterpret_cast<const T *>(pos));
     }
 
+    void insertGatherFrom(PaddedPODArray<const IColumn*> & src, const PaddedPODArray<size_t> & position) override
+    {
+        assert(src.size() == position.size());
+        size_t old_size = data.size();
+        size_t to_add_size = src.size();
+        data.resize(old_size + to_add_size);
+        for (size_t i = 0; i < to_add_size; ++i)
+        {
+            const auto & column_src = static_cast<const Self &>(*src[i]);
+            data[i + old_size] = column_src.data[position[i]];
+        }
+    }
+
     bool decodeTiDBRowV2Datum(size_t cursor, const String & raw_value, size_t length, bool force_decode [[maybe_unused]]) override
     {
         if constexpr (std::is_same_v<T, Float32> || std::is_same_v<T, Float64>)

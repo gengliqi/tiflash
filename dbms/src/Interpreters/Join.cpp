@@ -141,7 +141,8 @@ Join::Join(
     UInt8 build_dynamic_size_,
     double build_dynamic_size_rate_1_,
     double build_dynamic_size_rate_2_,
-    double build_resize_)
+    double build_resize_,
+    UInt64 probe_version_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
     , build_prefetch(build_prefetch_)
@@ -150,6 +151,7 @@ Join::Join(
     , build_dynamic_size_rate_1(build_dynamic_size_rate_1_)
     , build_dynamic_size_rate_2(build_dynamic_size_rate_2_)
     , build_resize(build_resize_)
+    , probe_version(probe_version_)
     , kind(kind_)
     , strictness(strictness_)
     , key_names_left(key_names_left_)
@@ -1931,6 +1933,7 @@ struct Adder<KIND, ASTTableJoin::Strictness::All, Map>
 
 template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map, bool has_null_map>
 void NO_INLINE joinBlockImplTypeCase(
+    const Join & join,
     const Map & map,
     const Blocks & blocks,
     size_t rows,
@@ -1946,7 +1949,8 @@ void NO_INLINE joinBlockImplTypeCase(
     bool enable_fine_grained_shuffle,
     size_t fine_grained_shuffle_count,
     ProbeProcessInfo & probe_process_info,
-    Join::ProbeMetric & metric)
+    Join::ProbeMetric & metric,
+    size_t num_columns_to_skip [[maybe_unused]])
 {
     if (rows == 0)
     {
@@ -1980,17 +1984,22 @@ void NO_INLINE joinBlockImplTypeCase(
     const auto & shuffle_hash_data = shuffle_hash.getData();
     assert(probe_process_info.start_row < rows);
 
-    Stopwatch watch;
-    if (probe_process_info.start_row == 0)
+    if (join.probe_version == 0)
     {
-        metric.find_buffer.clear();
-        metric.find_buffer.reserve(rows);
-
-        for (size_t i = 0; i < rows; ++i)
+        size_t i;
+        bool block_full = false;
+        for (i = probe_process_info.start_row; i < rows; ++i)
         {
             if (has_null_map && (*null_map)[i])
             {
-                metric.find_buffer.push_back(nullptr);
+                block_full = Adder<KIND, STRICTNESS, Map>::addNotFound(
+                    num_columns_to_add,
+                    added_columns,
+                    i,
+                    filter.get(),
+                    current_offset,
+                    offsets_to_replicate.get(),
+                    probe_process_info);
             }
             else
             {
@@ -1998,7 +2007,7 @@ void NO_INLINE joinBlockImplTypeCase(
                 auto key = keyHolderGetKey(key_holder);
                 size_t hash_value = 0;
                 bool zero_flag = ZeroTraits::check(key);
-                if (!zero_flag)
+                if (segment_size > 0 && !zero_flag)
                 {
                     hash_value = map.hash(key);
                 }
@@ -2006,6 +2015,7 @@ void NO_INLINE joinBlockImplTypeCase(
                 size_t segment_index = 0;
                 if (enable_fine_grained_shuffle)
                 {
+                    RUNTIME_CHECK(segment_size > 0);
                     /// Need to calculate the correct segment_index so that rows with same key will map to the same segment_index both in Build and Prob
                     /// The "reproduce" of segment_index generated in Build phase relies on the facts that:
                     /// Possible pipelines(FineGrainedShuffleWriter => ExchangeReceiver => HashBuild)
@@ -2020,75 +2030,329 @@ void NO_INLINE joinBlockImplTypeCase(
                 }
                 else
                 {
-                    if (!zero_flag)
+                    if (segment_size > 0 && !zero_flag)
                     {
-                        segment_index = hash_value & (segment_size - 1);
+                        segment_index = hash_value % segment_size;
                     }
                 }
 
                 auto & internal_map = map.getSegmentTable(segment_index);
                 /// do not require segment lock because in join, the hash table can not be changed in probe stage.
-                auto it = internal_map.find(key, hash_value);
+                auto it = segment_size > 0 ? internal_map.find(key, hash_value) : internal_map.find(key);
                 if (it != internal_map.end())
                 {
                     it->getMapped().setUsed();
-                    metric.find_buffer.push_back(static_cast<const void*>(it));
+                    block_full = Adder<KIND, STRICTNESS, Map>::addFound(
+                        blocks,
+                        it,
+                        num_columns_to_add,
+                        added_columns,
+                        i,
+                        filter.get(),
+                        current_offset,
+                        offsets_to_replicate.get(),
+                        right_indexes,
+                        probe_process_info);
                 }
                 else
+                    block_full = Adder<KIND, STRICTNESS, Map>::addNotFound(
+                        num_columns_to_add,
+                        added_columns,
+                        i,
+                        filter.get(),
+                        current_offset,
+                        offsets_to_replicate.get(),
+                        probe_process_info);
+                keyHolderDiscardKey(key_holder);
+            }
+
+            // if block_full is true means that the current offset is greater than max_block_size, we need break the loop.
+            if (block_full)
+            {
+                break;
+            }
+        }
+
+        probe_process_info.end_row = i;
+        // if i == rows, it means that all probe rows have been joined finish.
+        probe_process_info.all_rows_joined_finish = (i == rows);
+    }
+    else if (join.probe_version == 1)
+    {
+        Stopwatch watch;
+
+        if (probe_process_info.start_row == 0)
+        {
+            metric.find_buffer.clear();
+            metric.find_buffer.reserve(rows);
+
+            for (size_t i = 0; i < rows; ++i)
+            {
+                if (has_null_map && (*null_map)[i])
                 {
                     metric.find_buffer.push_back(nullptr);
                 }
+                else
+                {
+                    auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                    auto key = keyHolderGetKey(key_holder);
+                    size_t hash_value = 0;
+                    bool zero_flag = ZeroTraits::check(key);
+                    if (!zero_flag)
+                    {
+                        hash_value = map.hash(key);
+                    }
 
-                keyHolderDiscardKey(key_holder);
+                    size_t segment_index = 0;
+                    if (enable_fine_grained_shuffle)
+                    {
+                        /// Need to calculate the correct segment_index so that rows with same key will map to the same segment_index both in Build and Prob
+                        /// The "reproduce" of segment_index generated in Build phase relies on the facts that:
+                        /// Possible pipelines(FineGrainedShuffleWriter => ExchangeReceiver => HashBuild)
+                        /// 1. In FineGrainedShuffleWriter, selector value finally maps to packet_stream_id by '% fine_grained_shuffle_count'
+                        /// 2. In ExchangeReceiver, build_stream_id = packet_stream_id % build_stream_count;
+                        /// 3. In HashBuild, build_concurrency decides map's segment size, and build_steam_id decides the segment index
+                        auto packet_stream_id = shuffle_hash_data[i] % fine_grained_shuffle_count;
+                        if likely (fine_grained_shuffle_count == segment_size)
+                            segment_index = packet_stream_id;
+                        else
+                            segment_index = packet_stream_id % segment_size;
+                    }
+                    else
+                    {
+                        if (!zero_flag)
+                        {
+                            segment_index = hash_value & (segment_size - 1);
+                        }
+                    }
+
+                    auto & internal_map = map.getSegmentTable(segment_index);
+                    /// do not require segment lock because in join, the hash table can not be changed in probe stage.
+                    auto it = internal_map.find(key, hash_value);
+                    if (it != internal_map.end())
+                    {
+                        it->getMapped().setUsed();
+                        metric.find_buffer.push_back(static_cast<const void *>(it));
+                    }
+                    else
+                    {
+                        metric.find_buffer.push_back(nullptr);
+                    }
+
+                    keyHolderDiscardKey(key_holder);
+                }
+            }
+            metric.probe_hash += watch.elapsedFromLastTime();
+        }
+        assert(metric.find_buffer.size() == rows);
+        size_t pos = probe_process_info.start_row;
+        bool block_full = false;
+        for (; pos < rows; ++pos)
+        {
+            if (metric.find_buffer[pos] == nullptr)
+            {
+                block_full = Adder<KIND, STRICTNESS, Map>::addNotFound(
+                    num_columns_to_add,
+                    added_columns,
+                    pos,
+                    filter.get(),
+                    current_offset,
+                    offsets_to_replicate.get(),
+                    probe_process_info);
+            }
+            else
+            {
+                block_full = Adder<KIND, STRICTNESS, Map>::addFound(
+                    blocks,
+                    static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(metric.find_buffer[pos]),
+                    num_columns_to_add,
+                    added_columns,
+                    pos,
+                    filter.get(),
+                    current_offset,
+                    offsets_to_replicate.get(),
+                    right_indexes,
+                    probe_process_info);
+            }
+            // if block_full is true means that the current offset is greater than max_block_size, we need break the loop.
+            if (block_full)
+            {
+                break;
             }
         }
-        metric.probe_hash += watch.elapsedFromLastTime();
+        metric.probe_tuple += watch.elapsedFromLastTime();
+
+        probe_process_info.end_row = pos;
+        // if i == rows, it means that all probe rows have been joined finish.
+        probe_process_info.all_rows_joined_finish = (pos == rows);
     }
-    assert(metric.find_buffer.size() == rows);
-    size_t pos = probe_process_info.start_row;
-    bool block_full = false;
-    for (; pos < rows; ++pos)
+    else if (join.probe_version == 2)
     {
-        if (metric.find_buffer[pos] == nullptr)
+        Stopwatch watch;
+
+        if (probe_process_info.start_row == 0)
         {
-            block_full = Adder<KIND, STRICTNESS, Map>::addNotFound(
-                num_columns_to_add,
-                added_columns,
-                pos,
-                filter.get(),
-                current_offset,
-                offsets_to_replicate.get(),
-                probe_process_info);
+            metric.find_buffer.clear();
+            metric.find_buffer.reserve(rows);
+
+            for (size_t i = 0; i < rows; ++i)
+            {
+                if (has_null_map && (*null_map)[i])
+                {
+                    metric.find_buffer.push_back(nullptr);
+                }
+                else
+                {
+                    auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                    auto key = keyHolderGetKey(key_holder);
+                    size_t hash_value = 0;
+                    bool zero_flag = ZeroTraits::check(key);
+                    if (!zero_flag)
+                    {
+                        hash_value = map.hash(key);
+                    }
+
+                    size_t segment_index = 0;
+                    if (enable_fine_grained_shuffle)
+                    {
+                        /// Need to calculate the correct segment_index so that rows with same key will map to the same segment_index both in Build and Prob
+                        /// The "reproduce" of segment_index generated in Build phase relies on the facts that:
+                        /// Possible pipelines(FineGrainedShuffleWriter => ExchangeReceiver => HashBuild)
+                        /// 1. In FineGrainedShuffleWriter, selector value finally maps to packet_stream_id by '% fine_grained_shuffle_count'
+                        /// 2. In ExchangeReceiver, build_stream_id = packet_stream_id % build_stream_count;
+                        /// 3. In HashBuild, build_concurrency decides map's segment size, and build_steam_id decides the segment index
+                        auto packet_stream_id = shuffle_hash_data[i] % fine_grained_shuffle_count;
+                        if likely (fine_grained_shuffle_count == segment_size)
+                            segment_index = packet_stream_id;
+                        else
+                            segment_index = packet_stream_id % segment_size;
+                    }
+                    else
+                    {
+                        if (!zero_flag)
+                        {
+                            segment_index = hash_value & (segment_size - 1);
+                        }
+                    }
+
+                    auto & internal_map = map.getSegmentTable(segment_index);
+                    /// do not require segment lock because in join, the hash table can not be changed in probe stage.
+                    auto it = internal_map.find(key, hash_value);
+                    if (it != internal_map.end())
+                    {
+                        it->getMapped().setUsed();
+                        metric.find_buffer.push_back(static_cast<const void *>(it));
+                    }
+                    else
+                    {
+                        metric.find_buffer.push_back(nullptr);
+                    }
+
+                    keyHolderDiscardKey(key_holder);
+                }
+            }
+            metric.probe_hash += watch.elapsedFromLastTime();
+        }
+        assert(metric.find_buffer.size() == rows);
+
+        size_t pos = probe_process_info.start_row;
+        bool block_full = false;
+
+        if constexpr (KIND == ASTTableJoin::Kind::Inner && STRICTNESS == ASTTableJoin::Strictness::All)
+        {
+            metric.column_pos.clear();
+            metric.column_pos.reserve(rows - pos);
+            metric.column_ptrs.resize(num_columns_to_add);
+            for (size_t i = 0; i < num_columns_to_add; ++i)
+            {
+                metric.column_ptrs[i].clear();
+                metric.column_ptrs[i].reserve(rows - pos);
+            }
+            auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
+            for (; pos < rows; ++pos)
+            {
+                if unlikely (current_offset > probe_process_info.max_block_size)
+                {
+                    break;
+                }
+                if (metric.find_buffer[pos] != nullptr)
+                {
+                    const auto * it = static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(metric.find_buffer[pos]);
+                    for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped()); current != nullptr; current = current->next)
+                    {
+                        if (current->next != nullptr)
+                            __builtin_prefetch(current->next);
+                        const auto * block = &blocks[current->block_index];
+                        metric.column_pos.emplace_back(current->row_num);
+                        for (size_t i = 0; i < num_columns_to_add; ++i)
+                        {
+                            metric.column_ptrs[i].emplace_back(block->safeGetByPosition(i + num_columns_to_skip).column.get());
+                        }
+                        ++current_offset;
+                    }
+                }
+                (*offsets_to_replicate_ptr)[pos] = current_offset;
+            }
+            /*
+            size_t total_size = 0, original_size = added_columns[0]->size();
+            for (size_t i = 0; i < num_columns_to_add; ++i)
+            {
+                added_columns[i]->insertGatherFrom(metric.column_ptrs[i], metric.column_pos);
+                if (i == 0)
+                    total_size = added_columns[i]->size();
+                else
+                    assert(total_size == added_columns[i]->size());
+            }
+            assert(original_size + current_offset == total_size);
+            */
         }
         else
         {
-            block_full = Adder<KIND, STRICTNESS, Map>::addFound(
-                blocks,
-                static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(metric.find_buffer[pos]),
-                num_columns_to_add,
-                added_columns,
-                pos,
-                filter.get(),
-                current_offset,
-                offsets_to_replicate.get(),
-                right_indexes,
-                probe_process_info);
+            for (; pos < rows; ++pos)
+            {
+                if (metric.find_buffer[pos] == nullptr)
+                {
+                    block_full = Adder<KIND, STRICTNESS, Map>::addNotFound(
+                        num_columns_to_add,
+                        added_columns,
+                        pos,
+                        filter.get(),
+                        current_offset,
+                        offsets_to_replicate.get(),
+                        probe_process_info);
+                }
+                else
+                {
+                    block_full = Adder<KIND, STRICTNESS, Map>::addFound(
+                        blocks,
+                        static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(metric.find_buffer[pos]),
+                        num_columns_to_add,
+                        added_columns,
+                        pos,
+                        filter.get(),
+                        current_offset,
+                        offsets_to_replicate.get(),
+                        right_indexes,
+                        probe_process_info);
+                }
+                // if block_full is true means that the current offset is greater than max_block_size, we need break the loop.
+                if (block_full)
+                {
+                    break;
+                }
+            }
         }
-        // if block_full is true means that the current offset is greater than max_block_size, we need break the loop.
-        if (block_full)
-        {
-            break;
-        }
-    }
-    metric.probe_tuple += watch.elapsedFromLastTime();
+        metric.probe_tuple += watch.elapsedFromLastTime();
 
-    probe_process_info.end_row = pos;
-    // if i == rows, it means that all probe rows have been joined finish.
-    probe_process_info.all_rows_joined_finish = (pos == rows);
+        probe_process_info.end_row = pos;
+        // if i == rows, it means that all probe rows have been joined finish.
+        probe_process_info.all_rows_joined_finish = (pos == rows);
+    }
 }
 
 template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
 void joinBlockImplType(
+    const Join & join,
     const Map & map,
     const Blocks & blocks,
     size_t rows,
@@ -2104,10 +2368,12 @@ void joinBlockImplType(
     bool enable_fine_grained_shuffle,
     size_t fine_grained_shuffle_count,
     ProbeProcessInfo & probe_process_info,
-    Join::ProbeMetric & metric)
+    Join::ProbeMetric & metric,
+    size_t num_columns_to_skip)
 {
     if (null_map)
         joinBlockImplTypeCase<KIND, STRICTNESS, KeyGetter, Map, true>(
+            join,
             map,
             blocks,
             rows,
@@ -2123,9 +2389,11 @@ void joinBlockImplType(
             enable_fine_grained_shuffle,
             fine_grained_shuffle_count,
             probe_process_info,
-            metric);
+            metric,
+            num_columns_to_skip);
     else
         joinBlockImplTypeCase<KIND, STRICTNESS, KeyGetter, Map, false>(
+            join,
             map,
             blocks,
             rows,
@@ -2141,7 +2409,8 @@ void joinBlockImplType(
             enable_fine_grained_shuffle,
             fine_grained_shuffle_count,
             probe_process_info,
-            metric);
+            metric,
+            num_columns_to_skip);
 }
 } // namespace
 
@@ -2471,6 +2740,7 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
 #define M(TYPE)                                                                                                                                \
     case Join::Type::TYPE:                                                                                                                     \
         joinBlockImplType<KIND, STRICTNESS, typename KeyGetterForType<Join::Type::TYPE, std::remove_reference_t<decltype(*maps.TYPE)>>::Type>( \
+            *this,                                                                                                                                   \
             *maps.TYPE,                                                                                                                        \
             blocks,                                                                                                                                   \
             rows,                                                                                                                              \
@@ -2486,7 +2756,8 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
             enable_fine_grained_shuffle,                                                                                                       \
             fine_grained_shuffle_count,                                                                                                        \
             probe_process_info,                                                                                                                \
-            probe_metrics[stream_index]);                                                                                                               \
+            probe_metrics[stream_index],                                                                                                        \
+            num_columns_to_skip);                                                                                                               \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M

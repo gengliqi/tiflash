@@ -204,6 +204,18 @@ public:
         return insertDataImpl<true>(pos, length);
     }
 
+    void insertGatherFrom(PaddedPODArray<const IColumn*> & src, const PaddedPODArray<size_t> & position) override
+    {
+        assert(src.size() == position.size());
+        size_t size = src.size();
+        offsets.reserve(offsets.size() + size);
+        for (size_t i = 0; i < size; ++i)
+        {
+            const auto & column_src = static_cast<const ColumnString &>(*src[i]);
+            insertFromImpl(column_src, position[i]);
+        }
+    }
+
     bool decodeTiDBRowV2Datum(size_t cursor, const String & raw_value, size_t length, bool /* force_decode */) override
     {
         insertData(raw_value.c_str() + cursor, length);

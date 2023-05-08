@@ -132,6 +132,17 @@ public:
 
     void insertData(const char * pos, size_t length) override;
 
+    void insertGatherFrom(PaddedPODArray<const IColumn*> & sr, const PaddedPODArray<size_t> & position) override
+    {
+        assert(sr.size() == position.size());
+        size_t size = sr.size();
+        for (size_t i = 0; i < size; ++i)
+        {
+            const auto & column_src = static_cast<const ColumnAggregateFunction &>(*sr[i]);
+            insertFrom(column_src, position[i]);
+        }
+    }
+
     void insertFrom(const IColumn & src, size_t n) override;
 
     void insertManyFrom(const IColumn & src_, size_t n, size_t length) override

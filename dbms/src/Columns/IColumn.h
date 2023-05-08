@@ -148,6 +148,8 @@ public:
     /// Parameter length could be ignored if column values have fixed size.
     virtual void insertData(const char * pos, size_t length) = 0;
 
+    virtual void insertGatherFrom(PaddedPODArray<const IColumn*> & src, const PaddedPODArray<size_t> & position) = 0;
+
     /// decode row data synced from tikv
     /// only support v2 format row: https://github.com/pingcap/tidb/blob/master/docs/design/2018-07-19-row-format.md
     /// when the column failed to decoding value from `data`, it will either

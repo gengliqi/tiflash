@@ -104,6 +104,8 @@ public:
 
     void insertData(const char * pos, size_t length) override;
 
+    void insertGatherFrom(PaddedPODArray<const IColumn*> & src, const PaddedPODArray<size_t> & position) override;
+
     void insertDefault() override
     {
         chars.resize_fill(chars.size() + n);

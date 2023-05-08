@@ -116,6 +116,11 @@ public:
         s += length;
     }
 
+    void insertGatherFrom(PaddedPODArray<const IColumn*> &, const PaddedPODArray<size_t> & position) override
+    {
+        s += position.size();
+    }
+
     ColumnPtr filter(const Filter & filt, ssize_t /*result_size_hint*/) const override
     {
         return cloneDummy(countBytesInFilter(filt));
