@@ -2302,19 +2302,18 @@ void NO_INLINE joinBlockImplTypeCase(
         }
 
         using KetGetterType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
-        const size_t PREFETCH_SIZE = 8;
-
+        const size_t PREFETCH_SIZE = 4;
+        std::tuple<bool, KetGetterType, size_t> key_holders[PREFETCH_SIZE];
         for (size_t i = probe_process_info.start_row; i < rows;)
         {
             size_t start = i;
-            std::tuple<bool, KetGetterType, size_t> key_holders[PREFETCH_SIZE];
             for (; i < rows && i < start + PREFETCH_SIZE; ++i)
             {
                 if (!has_null_map || !(*null_map)[i])
                 {
                     std::get<0>(key_holders[i - start]) = true;
                     std::get<1>(key_holders[i - start]) = key_getter.getKeyHolder(i, &pool, sort_key_containers);
-                    auto key = keyHolderGetKey(std::get<1>(key_holders[i - start]));
+                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[i - start]));
                     size_t hash_value = 0;
                     size_t segment_index = 0;
                     bool zero_flag = ZeroTraits::check(key);
@@ -2351,7 +2350,7 @@ void NO_INLINE joinBlockImplTypeCase(
                 }
                 if (std::get<0>(key_holders[pos - start]))
                 {
-                    auto key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
+                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
                     size_t hash_value = std::get<2>(key_holders[pos - start]);
                     size_t segment_index = hash_value & (segment_size - 1);
 
