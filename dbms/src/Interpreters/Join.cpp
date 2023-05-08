@@ -2286,25 +2286,18 @@ void NO_INLINE joinBlockImplTypeCase(
                         metric.column_pos.emplace_back(current->row_num);
                         for (size_t i = 0; i < num_columns_to_add; ++i)
                         {
-                            metric.column_ptrs[i].emplace_back(block->safeGetByPosition(i + num_columns_to_skip).column.get());
+                            metric.column_ptrs[i].emplace_back(block->getByPosition(i + num_columns_to_skip).column.get());
                         }
                         ++current_offset;
                     }
                 }
                 (*offsets_to_replicate_ptr)[pos] = current_offset;
             }
-            /*
-            size_t total_size = 0, original_size = added_columns[0]->size();
+
             for (size_t i = 0; i < num_columns_to_add; ++i)
             {
                 added_columns[i]->insertGatherFrom(metric.column_ptrs[i], metric.column_pos);
-                if (i == 0)
-                    total_size = added_columns[i]->size();
-                else
-                    assert(total_size == added_columns[i]->size());
             }
-            assert(original_size + current_offset == total_size);
-            */
         }
         else
         {
