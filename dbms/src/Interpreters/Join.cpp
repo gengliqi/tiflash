@@ -2307,13 +2307,14 @@ void NO_INLINE joinBlockImplTypeCase(
         for (size_t i = probe_process_info.start_row; i < rows;)
         {
             size_t start = i;
-            std::pair<KetGetterType, size_t> key_holders[PREFETCH_SIZE];
+            std::tuple<bool, KetGetterType, size_t> key_holders[PREFETCH_SIZE];
             for (; i < rows && i < start + PREFETCH_SIZE; ++i)
             {
                 if (!has_null_map || !(*null_map)[i])
                 {
-                    key_holders[i - start].first = key_getter.getKeyHolder(i, &pool, sort_key_containers);
-                    auto key = keyHolderGetKey(key_holders[i - start].first);
+                    std::get<0>(key_holders[i - start]) = true;
+                    std::get<1>(key_holders[i - start]) = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                    auto key = keyHolderGetKey(std::get<1>(key_holders[i - start]));
                     size_t hash_value = 0;
                     size_t segment_index = 0;
                     bool zero_flag = ZeroTraits::check(key);
@@ -2322,7 +2323,19 @@ void NO_INLINE joinBlockImplTypeCase(
                         hash_value = map.hash(key);
                         segment_index = hash_value & (segment_size - 1);
                     }
-                    key_holders[i - start].second = hash_value;
+                    std::get<2>(key_holders[i - start]) = hash_value;
+                    __builtin_prefetch(map.getSegmentVecData() + segment_index);
+                }
+                else
+                    std::get<0>(key_holders[i - start]) = false;
+            }
+
+            for (size_t j = start; j < i; ++j)
+            {
+                if (std::get<0>(key_holders[j - start]))
+                {
+                    size_t hash_value = std::get<2>(key_holders[j - start]);
+                    size_t segment_index = hash_value & (segment_size - 1);
                     auto & internal_map = map.getSegmentTable(segment_index);
                     internal_map.prefetch(hash_value);
                 }
@@ -2336,10 +2349,10 @@ void NO_INLINE joinBlockImplTypeCase(
                     max_block_break = true;
                     break;
                 }
-                if (!has_null_map || !(*null_map)[pos])
+                if (std::get<0>(key_holders[pos - start]))
                 {
-                    auto key = keyHolderGetKey(key_holders[pos - start].first);
-                    size_t hash_value = key_holders[pos - start].second;
+                    auto key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
+                    size_t hash_value = std::get<2>(key_holders[pos - start]);
                     size_t segment_index = hash_value & (segment_size - 1);
 
                     auto & internal_map = map.getSegmentTable(segment_index);

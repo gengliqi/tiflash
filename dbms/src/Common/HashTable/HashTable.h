@@ -1593,6 +1593,11 @@ public:
         return segments[segment_index].getHashTable();
     }
 
+    const SegmentType * getSegmentVecData() const
+    {
+        return segments.data();
+    }
+
     std::mutex & getSegmentMutex(size_t segment_index)
     {
         return segments[segment_index].getMutex();
