@@ -2016,7 +2016,7 @@ void NO_INLINE joinBlockImplTypeCase(
                     if likely (fine_grained_shuffle_count == segment_size)
                         segment_index = packet_stream_id;
                     else
-                        segment_index = packet_stream_id & (segment_size - 1);
+                        segment_index = packet_stream_id % segment_size;
                 }
                 else
                 {
