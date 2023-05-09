@@ -297,7 +297,8 @@ void DAGQueryBlockInterpreter::handleJoin(const tipb::Join & join, DAGPipeline &
         settings.build_dynamic_size_rate_1,
         settings.build_dynamic_size_rate_2,
         settings.build_resize,
-        settings.probe_version);
+        settings.probe_version,
+        settings.probe_prefetch_size);
 
     recordJoinExecuteInfo(tiflash_join.build_side_index, join_ptr);
 

@@ -142,7 +142,8 @@ Join::Join(
     double build_dynamic_size_rate_1_,
     double build_dynamic_size_rate_2_,
     double build_resize_,
-    UInt64 probe_version_)
+    UInt64 probe_version_,
+    UInt64 probe_prefetch_size_)
     : match_helper_name(match_helper_name)
     , write_combine_buffer_size(write_combine_buffer_size_)
     , build_prefetch(build_prefetch_)
@@ -152,6 +153,7 @@ Join::Join(
     , build_dynamic_size_rate_2(build_dynamic_size_rate_2_)
     , build_resize(build_resize_)
     , probe_version(probe_version_)
+    , probe_prefetch_size(probe_prefetch_size_)
     , kind(kind_)
     , strictness(strictness_)
     , key_names_left(key_names_left_)
@@ -2302,12 +2304,14 @@ void NO_INLINE joinBlockImplTypeCase(
         }
 
         using KetGetterType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
-        const size_t PREFETCH_SIZE = 8;
-        std::tuple<bool, KetGetterType, size_t> key_holders[PREFETCH_SIZE];
+        size_t prefetch_size = join.probe_prefetch_size;
+        if (prefetch_size == 0)
+            prefetch_size = 8;
+        std::vector<std::tuple<bool, KetGetterType, size_t>> key_holders(prefetch_size);
         for (size_t i = probe_process_info.start_row; i < rows;)
         {
             size_t start = i;
-            for (; i < rows && i < start + PREFETCH_SIZE; ++i)
+            for (; i < rows && i < start + prefetch_size; ++i)
             {
                 if (!has_null_map || !(*null_map)[i])
                 {

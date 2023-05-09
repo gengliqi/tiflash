@@ -320,6 +320,7 @@ struct Settings
     M(SettingDouble, build_dynamic_size_rate_2, 0, "")                                                                                                                                                                                                                                    \
     M(SettingDouble, build_resize, 0, "")                                                                                                                                                                                                                                    \
     M(SettingUInt64, probe_version, 0, "")                                                                                                                                                                                                                                    \
+    M(SettingUInt64, probe_prefetch_size, 0, "")                                                                                                                                                                                                                                    \
     M(SettingBool, build_hash_table_at_end, false, "")
 
 // clang-format on
