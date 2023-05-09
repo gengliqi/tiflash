@@ -2302,7 +2302,7 @@ void NO_INLINE joinBlockImplTypeCase(
         }
 
         using KetGetterType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
-        const size_t PREFETCH_SIZE = 4;
+        const size_t PREFETCH_SIZE = 8;
         std::tuple<bool, KetGetterType, size_t> key_holders[PREFETCH_SIZE];
         for (size_t i = probe_process_info.start_row; i < rows;)
         {
