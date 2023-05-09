@@ -2413,6 +2413,137 @@ void NO_INLINE joinBlockImplTypeCase(
         // if i == rows, it means that all probe rows have been joined finish.
         probe_process_info.all_rows_joined_finish = (pos == rows);
     }
+    else if (probe_version == 4)
+    {
+        Stopwatch watch;
+
+        auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
+
+        size_t pos = probe_process_info.start_row;
+
+        metric.column_pos.clear();
+        metric.column_pos.reserve(rows - pos);
+        metric.block_pos.clear();
+        metric.block_pos.reserve(rows - pos);
+        metric.column_ptrs.resize(num_columns_to_add);
+
+        using KetGetterType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
+        size_t prefetch_size = join.probe_prefetch_size;
+        if (prefetch_size == 0)
+            prefetch_size = 8;
+        std::vector<std::tuple<bool, KetGetterType, size_t>> key_holders(prefetch_size);
+        for (size_t i = probe_process_info.start_row; i < rows;)
+        {
+            size_t start = i;
+            for (; i < rows && i < start + prefetch_size; ++i)
+            {
+                if (!has_null_map || !(*null_map)[i])
+                {
+                    std::get<0>(key_holders[i - start]) = true;
+                    std::get<1>(key_holders[i - start]) = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[i - start]));
+                    size_t hash_value = 0;
+                    size_t segment_index = 0;
+                    bool zero_flag = ZeroTraits::check(key);
+                    if (!zero_flag)
+                    {
+                        hash_value = map.hash(key);
+                        segment_index = hash_value & (segment_size - 1);
+                    }
+                    std::get<2>(key_holders[i - start]) = hash_value;
+                    __builtin_prefetch(map.getSegmentVecData() + segment_index);
+                }
+                else
+                    std::get<0>(key_holders[i - start]) = false;
+            }
+
+            for (size_t j = start; j < i; ++j)
+            {
+                if (std::get<0>(key_holders[j - start]))
+                {
+                    size_t hash_value = std::get<2>(key_holders[j - start]);
+                    size_t segment_index = hash_value & (segment_size - 1);
+                    auto & internal_map = map.getSegmentTable(segment_index);
+                    internal_map.prefetch(hash_value);
+                }
+            }
+
+            bool max_block_break = false;
+            for (pos = start; pos < i; ++pos)
+            {
+                if unlikely (current_offset > probe_process_info.max_block_size)
+                {
+                    max_block_break = true;
+                    break;
+                }
+                if (std::get<0>(key_holders[pos - start]))
+                {
+                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
+                    size_t hash_value = std::get<2>(key_holders[pos - start]);
+                    size_t segment_index = hash_value & (segment_size - 1);
+
+                    auto & internal_map = map.getSegmentTable(segment_index);
+                    auto it = internal_map.find(key, hash_value);
+                    if (it != internal_map.end())
+                    {
+                        it->getMapped().setUsed();
+                        const auto * iter = static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(it);
+                        if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
+                        {
+                            auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped());
+                            metric.column_pos.emplace_back(current->row_num);
+                            metric.block_pos.emplace_back(current->block_index);
+                            ++current_offset;
+                        }
+                        else
+                        {
+                            for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped()); current != nullptr; current = current->next)
+                            {
+                                if (current->next != nullptr)
+                                    __builtin_prefetch(current->next);
+                                metric.column_pos.emplace_back(current->row_num);
+                                metric.block_pos.emplace_back(current->block_index);
+                                ++current_offset;
+                            }
+                        }
+                    }
+
+                    keyHolderDiscardKey(key_holders[pos - start]);
+                }
+                (*offsets_to_replicate_ptr)[pos] = current_offset;
+            }
+
+            if unlikely (max_block_break)
+                break;
+        }
+        metric.probe_hash += watch.elapsedFromLastTime();
+
+        size_t added_size = metric.block_pos.size();
+        for (size_t i = 0; i < num_columns_to_add; ++i)
+            metric.column_ptrs[i].resize(added_size);
+
+        for (size_t i = 0; i < added_size; ++i)
+        {
+            const auto * block = &blocks[metric.block_pos[i]];
+            for (size_t j = 0; j < num_columns_to_add; ++j)
+            {
+                metric.column_ptrs[j][i] = block->getByPosition(j + num_columns_to_skip).column.get();
+            }
+        }
+
+        metric.probe_column_ptr += watch.elapsedFromLastTime();
+
+        for (size_t i = 0; i < num_columns_to_add; ++i)
+        {
+            added_columns[i]->insertGatherFrom(metric.column_ptrs[i], metric.column_pos);
+        }
+
+        metric.probe_tuple += watch.elapsedFromLastTime();
+
+        probe_process_info.end_row = pos;
+        // if i == rows, it means that all probe rows have been joined finish.
+        probe_process_info.all_rows_joined_finish = (pos == rows);
+    }
 }
 
 template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Map>
@@ -3155,7 +3286,8 @@ void Join::checkTypesOfKeys(const Block & block_left, const Block & block_right)
 
 void Join::finishOneProbe(size_t stream_index)
 {
-    LOG_INFO(log, "{} finish one probe, probe {}, tuple {}", stream_index, probe_metrics[stream_index].probe_hash, probe_metrics[stream_index].probe_tuple);
+    auto & metrics = probe_metrics[stream_index];
+    LOG_INFO(log, "{} finish one probe, probe {}, column_ptr {}, tuple {}", stream_index, metrics.probe_hash, metrics.probe_column_ptr, metrics.probe_tuple);
     std::unique_lock lock(build_probe_mutex);
     if (active_probe_concurrency == 1)
     {
