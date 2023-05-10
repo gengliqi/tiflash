@@ -2745,7 +2745,7 @@ void NO_INLINE joinBlockImplTypeCase(
 
         std::vector<State> states(prefetch_size);
         size_t water_mark [[maybe_unused]] = pos;
-        auto func = [&](State & s, size_t & i) -> bool {
+        auto func = [&](State & s, size_t & i) ALWAYS_INLINE -> bool {
             switch (s.stage)
             {
             case 0:
@@ -2892,7 +2892,18 @@ void NO_INLINE joinBlockImplTypeCase(
         for (auto & p : sort_vec)
         {
             auto & s = states[p.second];
-            while (s.stage != 0 && !func(s, dummy_i));
+            bool block_full = false;
+            while (s.stage != 0)
+            {
+                if (func(s, dummy_i))
+                {
+                    block_full = true;
+                    pos = s.idx;
+                    break;
+                }
+            }
+            if (block_full)
+                break;
         }
 
         size_t prev_offset = 0;
