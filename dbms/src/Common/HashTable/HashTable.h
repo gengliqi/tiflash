@@ -446,7 +446,7 @@ template <
 class HashTable : private boost::noncopyable
     , public HashType
     , protected AllocatorType
-    , protected CellType::State
+    , public CellType::State
     , protected ZeroValueStorage<CellType::need_zero_value_storage, CellType> /// empty base optimization
 {
 public:

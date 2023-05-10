@@ -832,8 +832,13 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             const auto & key = keyHolderGetKey(key_holder);
 
-            size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value & (segment_size - 1);
+            size_t segment_index = 0;
+            size_t hash_value = 0;
+            if (!ZeroTraits::check(key))
+            {
+                hash_value = map.hash(key);
+                segment_index = hash_value & (segment_size - 1);
+            }
 
             auto * p = batch_pointers[segment_index];
             p->emplace_back(key, typename Map::mapped_type(block_index, i));
@@ -884,8 +889,13 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             const auto & key = keyHolderGetKey(key_holder);
 
-            size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value & (segment_size - 1);
+            size_t segment_index = 0;
+            size_t hash_value = 0;
+            if (!ZeroTraits::check(key))
+            {
+                hash_value = map.hash(key);
+                segment_index = hash_value & (segment_size - 1);
+            }
 
             auto * p = batch_pointers[segment_index];
             p->emplace_back(key, typename Map::mapped_type(block_index, i));
@@ -938,8 +948,13 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             const auto & key = keyHolderGetKey(key_holder);
 
-            size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value & (segment_size - 1);
+            size_t segment_index = 0;
+            size_t hash_value = 0;
+            if (!ZeroTraits::check(key))
+            {
+                hash_value = map.hash(key);
+                segment_index = hash_value & (segment_size - 1);
+            }
 
             auto * p = batch_pointers[segment_index];
             p->emplace_back(key, typename Map::mapped_type(block_index, i));
@@ -993,8 +1008,13 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
             const auto & key = keyHolderGetKey(key_holder);
 
-            size_t hash_value = map.hash(key);
-            size_t segment_index = hash_value & (segment_size - 1);
+            size_t segment_index = 0;
+            size_t hash_value = 0;
+            if (!ZeroTraits::check(key))
+            {
+                hash_value = map.hash(key);
+                segment_index = hash_value & (segment_size - 1);
+            }
 
             size_t pos = segment_index * buffer_size + batch.write_pos[segment_index];
             buffer[pos] = typename Map::Cell(key, typename Map::mapped_type(block_index, i));
@@ -1120,7 +1140,11 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
 
                         for (size_t k = 0; k < join.build_prefetch && k < size; ++k)
                         {
-                            batch.precalculate_hash[k] = (*insert)[k].getHash(hash_table);
+                            auto & cell = (*insert)[k];
+                            if (!cell.isZero(hash_table))
+                                batch.precalculate_hash[k] = cell.getHash(hash_table);
+                            else
+                                batch.precalculate_hash[k] = 0;
                             hash_table.prefetch(batch.precalculate_hash[k]);
                         }
 
@@ -1131,7 +1155,11 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                             size_t prefetch = k + join.build_prefetch;
                             if (prefetch < size)
                             {
-                                batch.precalculate_hash[pos] = (*insert)[prefetch].getHash(hash_table);
+                                auto & cell = (*insert)[prefetch];
+                                if (!cell.isZero(hash_table))
+                                    batch.precalculate_hash[pos] = cell.getHash(hash_table);
+                                else
+                                    batch.precalculate_hash[pos] = 0;
                                 hash_table.prefetch(batch.precalculate_hash[pos]);
                             }
 
@@ -1328,7 +1356,11 @@ void insertRemainingImplType(
 
                     for (size_t k = 0; k < join.build_prefetch && k < size; ++k)
                     {
-                        batch.precalculate_hash[k] = (*insert)[k].getHash(hash_table);
+                        auto & cell = (*insert)[k];
+                        if (!cell.isZero(hash_table))
+                            batch.precalculate_hash[k] = cell.getHash(hash_table);
+                        else
+                            batch.precalculate_hash[k] = 0;
                         hash_table.prefetch(batch.precalculate_hash[k]);
                     }
 
@@ -1339,7 +1371,11 @@ void insertRemainingImplType(
                         size_t prefetch = k + join.build_prefetch;
                         if (prefetch < size)
                         {
-                            batch.precalculate_hash[pos] = (*insert)[prefetch].getHash(hash_table);
+                            auto & cell = (*insert)[prefetch];
+                            if (!cell.isZero(hash_table))
+                                batch.precalculate_hash[pos] = cell.getHash(hash_table);
+                            else
+                                batch.precalculate_hash[pos] = 0;
                             hash_table.prefetch(batch.precalculate_hash[pos]);
                         }
 
