@@ -30,7 +30,7 @@ struct AdderNonJoined;
 template <typename Mapped>
 struct AdderNonJoined<ASTTableJoin::Strictness::Any, Mapped>
 {
-    static size_t add(const Blocks & blocks, const Mapped & mapped, size_t key_num, size_t num_columns_left, MutableColumns & columns_left, size_t num_columns_right, MutableColumns & columns_right, const void *&, const size_t)
+    static size_t add(const Blocks & blocks, const Mapped & mapped, size_t key_num, size_t num_columns_left, MutableColumns & columns_left, size_t num_columns_right, MutableColumns & columns_right, const void *&, size_t &, const size_t)
     {
         for (size_t j = 0; j < num_columns_left; ++j)
             /// should fill the key column with key columns from right block
@@ -48,18 +48,45 @@ struct AdderNonJoined<ASTTableJoin::Strictness::Any, Mapped>
 template <typename Mapped>
 struct AdderNonJoined<ASTTableJoin::Strictness::All, Mapped>
 {
-    static size_t add(const Blocks & blocks, const Mapped & mapped, size_t key_num, size_t num_columns_left, MutableColumns & columns_left, size_t num_columns_right, MutableColumns & columns_right, const void *& next_element_in_row_list, const size_t max_row_added)
+    static size_t add(const Blocks & blocks, const Mapped & mapped, size_t key_num, size_t num_columns_left, MutableColumns & columns_left, size_t num_columns_right, MutableColumns & columns_right, const void *& next_element_in_row_list, size_t & remaining_size, const size_t max_row_added)
     {
         size_t rows_added = 0;
         auto current = &static_cast<const typename Mapped::Base_t &>(mapped);
+        bool first_one = true;
         if unlikely (next_element_in_row_list != nullptr)
-            current = reinterpret_cast<const typename Mapped::Base_t *>(next_element_in_row_list);
-        for (; rows_added < max_row_added && current != nullptr; current = current->next)
         {
+            current = reinterpret_cast<const typename Mapped::Base_t *>(next_element_in_row_list);
+            first_one = false;
+        }
+        else
+        {
+            remaining_size = current->size;
+        }
+
+        auto add_func = [&](const Join::RowRef * row_ref) {
             /// handle left columns later to utilize insertManyDefaults
             for (size_t j = 0; j < num_columns_right; ++j)
-                columns_right[j]->insertFrom(*blocks[current->block_index].getByPosition(key_num + j).column.get(), current->row_num);
+                columns_right[j]->insertFrom(*blocks[row_ref->block_index].getByPosition(key_num + j).column.get(), row_ref->row_num);
             ++rows_added;
+        };
+        if (first_one)
+        {
+            if (remaining_size == 1)
+                add_func(&current->row_ref_next);
+            else
+                current = current->next;
+        }
+        while (remaining_size > 1 && rows_added < max_row_added)
+        {
+            add_func(&current->row_ref);
+            --remaining_size;
+            if (remaining_size == 1)
+            {
+                add_func(&current->row_ref_next);
+                current = nullptr;
+                break;
+            }
+            current = current->next;
         }
         for (size_t j = 0; j < num_columns_left; ++j)
             /// should fill the key column with key columns from right block
@@ -215,7 +242,7 @@ size_t NonJoinedBlockInputStream::fillColumns(const Map & map,
     size_t rows_added = 0;
     size_t key_num = parent.key_names_right.size();
     /// first add rows that is not in the hash table
-    while (current_not_mapped_row != nullptr)
+    /*while (current_not_mapped_row != nullptr)
     {
         ++rows_added;
         /// handle left columns later to utilize insertManyDefaults
@@ -227,7 +254,7 @@ size_t NonJoinedBlockInputStream::fillColumns(const Map & map,
         setNextCurrentNotMappedRow();
         if (rows_added == max_block_size)
             break;
-    }
+    }*/
     /// Fill left columns with defaults
     for (size_t j = 0; j < num_columns_left; ++j)
         /// should fill the key column with key columns from right block
@@ -276,7 +303,7 @@ size_t NonJoinedBlockInputStream::fillColumns(const Map & map,
             continue;
         }
 
-        rows_added += AdderNonJoined<STRICTNESS, typename Map::mapped_type>::add(parent.blocks, (*it)->getMapped(), key_num, num_columns_left, mutable_columns_left, num_columns_right, mutable_columns_right, next_element_in_row_list, max_block_size - rows_added);
+        rows_added += AdderNonJoined<STRICTNESS, typename Map::mapped_type>::add(parent.blocks, (*it)->getMapped(), key_num, num_columns_left, mutable_columns_left, num_columns_right, mutable_columns_right, next_element_in_row_list, remaining_size, max_block_size - rows_added);
         assert(rows_added <= max_block_size);
         if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
         {

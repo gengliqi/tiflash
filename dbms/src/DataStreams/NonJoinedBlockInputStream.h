@@ -56,6 +56,7 @@ private:
 
     std::unique_ptr<void, std::function<void(void *)>> position; /// type erasure
     const void * next_element_in_row_list = nullptr;
+    size_t remaining_size = 0;
     size_t current_segment = 0;
     Join::RowRefList * current_not_mapped_row = nullptr;
 

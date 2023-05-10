@@ -194,13 +194,24 @@ public:
     };
 
     /// Single linked list of references to rows. Used for ALL JOINs (non-unique JOINs)
-    struct RowRefList : RowRef
+    struct RowRefList
     {
-        RowRefList * next = nullptr;
+        /// For the first one in hash map, size is the total size of this list.
+        /// For the other ones, only row_ref makes sense.
+        union {
+            size_t size;
+            RowRef row_ref;
+        };
+        /// If there is only one next left, row_ref_next will store the RowRef.
+        /// Otherwise next store the next pointer of RowRefList.
+        union {
+            RowRefList * next;
+            RowRef row_ref_next;
+        };
 
         RowRefList() = default;
         RowRefList(UInt32 block_index_, UInt32 row_num_)
-            : RowRef(block_index_, row_num_)
+            : size(1), row_ref_next(block_index_, row_num_)
         {}
     };
 

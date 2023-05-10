@@ -601,10 +601,22 @@ namespace
 {
 inline void insertRowToList(Join::RowRefList * list, Join::RowRefList * elem, UInt32 block_index, UInt32 index)
 {
-    elem->next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
-    list->next = elem;
-    elem->block_index = block_index;
-    elem->row_num = index;
+    if (list->size == 1)
+    {
+        list->size = 2;
+        elem->row_ref = list->row_ref_next;
+        elem->row_ref_next.block_index = block_index;
+        elem->row_ref_next.row_num = index;
+        list->next = elem;
+    }
+    else
+    {
+        ++list->size;
+        elem->row_ref.block_index = block_index;
+        elem->row_ref.row_num = index;
+        elem->next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
+        list->next = elem;
+    }
 }
 
 /// Inserting an element into a hash table of the form `key -> reference to a string`, which will then be used by JOIN.
@@ -684,7 +696,7 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
         }
     }
 
-    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value, UInt8 dynamic_size_hint)
+    static void insert(Map & map, typename Map::Cell & cell, size_t hash_value, UInt8 dynamic_size_hint) // NOLINT(clang-analyzer-core.NullDereference)
     {
         typename Map::LookupResult emplace_result;
         bool inserted = false;
@@ -692,6 +704,20 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
         if (!inserted)
         {
             Join::RowRefList * list = &emplace_result->getMapped();
+            Join::RowRefList * elem = &cell.getMapped();
+            if (list->size == 1)
+            {
+                list->size = 2;
+                elem->row_ref = list->row_ref_next;
+                list->next = elem;
+            }
+            else
+            {
+                ++list->size;
+                elem->row_ref = elem->row_ref_next;
+                elem->next = list->next;
+                list->next = elem;
+            }
             cell.getMapped().next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
             list->next = &cell.getMapped();
         }
@@ -1176,8 +1202,13 @@ void NO_INLINE insertFromBlockImplTypeCaseWithLock(
                         size_t size = insert->size();
                         for (size_t k = 0; k < size; ++k)
                         {
-                            auto * data = &(*insert)[k];
-                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), 0);
+                            auto & cell = (*insert)[k];
+                            size_t hash_value;
+                            if (!cell.isZero(hash_table))
+                                hash_value = cell.getHash(hash_table);
+                            else
+                                hash_value = 0;
+                            Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, cell, hash_value, 0);
                         }
                     }
                 }
@@ -1408,8 +1439,13 @@ void insertRemainingImplType(
                         else
                             dynamic_size_hint = 0;
 
-                        auto * data = &(*insert)[k];
-                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, *data, data->getHash(hash_table), dynamic_size_hint);
+                        auto & cell = (*insert)[k];
+                        size_t hash_value;
+                        if (!cell.isZero(hash_table))
+                            hash_value = cell.getHash(hash_table);
+                        else
+                            hash_value = 0;
+                        Inserter<STRICTNESS, typename Map::SegmentType::HashTable, KeyGetter>::insert(hash_table, cell, hash_value, dynamic_size_hint);
                     }
                 }
             }
@@ -1886,12 +1922,34 @@ struct Adder<ASTTableJoin::Kind::LeftSemi, ASTTableJoin::Strictness::All, Map>
 {
     static bool addFound(const Blocks & blocks, const typename Map::SegmentType::HashTable::ConstLookupResult & it, size_t num_columns_to_add, MutableColumns & added_columns, size_t i, IColumn::Filter * /*filter*/, IColumn::Offset & current_offset, IColumn::Offsets * offsets, const std::vector<size_t> & right_indexes, ProbeProcessInfo & /*probe_process_info*/)
     {
-        for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped()); current != nullptr; current = current->next)
-        {
+        auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped());
+        auto add_func = [&](const Join::RowRef * row_ref) {
             for (size_t j = 0; j < num_columns_to_add - 1; ++j)
-                added_columns[j]->insertFrom(*blocks[current->block_index].getByPosition(right_indexes[j]).column.get(), current->row_num);
-            ++current_offset;
+                added_columns[j]->insertFrom(*blocks[row_ref->block_index].getByPosition(right_indexes[j]).column.get(), row_ref->row_num);
+        };
+        size_t rows_joined = current->size;
+        if (rows_joined == 1)
+        {
+            add_func(&current->row_ref_next);
         }
+        else
+        {
+            size_t idx = current->size;
+            current = current->next;
+            while (true)
+            {
+                add_func(&current->row_ref);
+                --idx;
+                if (idx == 1)
+                {
+                    add_func(&current->row_ref_next);
+                    break;
+                }
+                current = current->next;
+            }
+        }
+
+        current_offset += rows_joined;
         (*offsets)[i] = current_offset;
         /// we insert only one row to `match-helper` for each row of left block
         /// so before the execution of `HandleOtherConditions`, column sizes of temporary block may be different.
@@ -1916,22 +1974,37 @@ struct Adder<KIND, ASTTableJoin::Strictness::All, Map>
 {
     static bool addFound(const Blocks & blocks, const typename Map::SegmentType::HashTable::ConstLookupResult & it, size_t num_columns_to_add, MutableColumns & added_columns, size_t i, IColumn::Filter * filter, IColumn::Offset & current_offset, IColumn::Offsets * offsets, const std::vector<size_t> & right_indexes, ProbeProcessInfo & probe_process_info)
     {
-        size_t rows_joined = 0;
         // If there are too many rows in the column to split, record the number of rows that have been expanded for next read.
         // and it means the rows in this block are not joined finish.
-
-        for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped()); current != nullptr; current = current->next)
-            ++rows_joined;
-
-        if (current_offset && current_offset + rows_joined > probe_process_info.max_block_size)
+        auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped());
+        if (current_offset && current_offset + current->size > probe_process_info.max_block_size)
         {
             return true;
         }
-
-        for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped()); current != nullptr; current = current->next)
-        {
+        auto add_func = [&](const Join::RowRef * row_ref) {
             for (size_t j = 0; j < num_columns_to_add; ++j)
-                added_columns[j]->insertFrom(*blocks[current->block_index].getByPosition(right_indexes[j]).column.get(), current->row_num);
+                added_columns[j]->insertFrom(*blocks[row_ref->block_index].getByPosition(right_indexes[j]).column.get(), row_ref->row_num);
+        };
+        size_t rows_joined = current->size;
+        if (rows_joined == 1)
+        {
+            add_func(&current->row_ref_next);
+        }
+        else
+        {
+            size_t idx = current->size;
+            current = current->next;
+            while (true)
+            {
+                add_func(&current->row_ref);
+                --idx;
+                if (idx == 1)
+                {
+                    add_func(&current->row_ref_next);
+                    break;
+                }
+                current = current->next;
+            }
         }
 
         current_offset += rows_joined;
@@ -2290,17 +2363,37 @@ void NO_INLINE joinBlockImplTypeCase(
                     }
                     else
                     {
-                        for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped()); current != nullptr; current = current->next)
-                        {
-                            if (current->next != nullptr)
-                                __builtin_prefetch(current->next);
-                            const auto * block = &blocks[current->block_index];
-                            metric.column_pos.emplace_back(current->row_num);
+                        auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped());
+                        auto add_func = [&](const Join::RowRef * row_ref) {
+                            const auto * block = &blocks[row_ref->block_index];
+                            metric.column_pos.emplace_back(row_ref->row_num);
                             for (size_t i = 0; i < num_columns_to_add; ++i)
                             {
                                 metric.column_ptrs[i].emplace_back(block->getByPosition(i + num_columns_to_skip).column.get());
                             }
                             ++current_offset;
+                        };
+                        if (current->size == 1)
+                        {
+                            add_func(&current->row_ref_next);
+                        }
+                        else
+                        {
+                            size_t idx = current->size;
+                            current = current->next;
+                            while (true)
+                            {
+                                if (idx > 2)
+                                    __builtin_prefetch(current->next);
+                                add_func(&current->row_ref);
+                                --idx;
+                                if (idx == 1)
+                                {
+                                    add_func(&current->row_ref_next);
+                                    break;
+                                }
+                                current = current->next;
+                            }
                         }
                     }
                 }
@@ -2413,17 +2506,37 @@ void NO_INLINE joinBlockImplTypeCase(
                         }
                         else
                         {
-                            for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped()); current != nullptr; current = current->next)
-                            {
-                                if (current->next != nullptr)
-                                    __builtin_prefetch(current->next);
-                                const auto * block = &blocks[current->block_index];
-                                metric.column_pos.emplace_back(current->row_num);
-                                for (size_t j = 0; j < num_columns_to_add; ++j)
+                            auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped());
+                            auto add_func = [&](const Join::RowRef * row_ref) {
+                                const auto * block = &blocks[row_ref->block_index];
+                                metric.column_pos.emplace_back(row_ref->row_num);
+                                for (size_t i = 0; i < num_columns_to_add; ++i)
                                 {
-                                    metric.column_ptrs[j].emplace_back(block->getByPosition(j + num_columns_to_skip).column.get());
+                                    metric.column_ptrs[i].emplace_back(block->getByPosition(i + num_columns_to_skip).column.get());
                                 }
                                 ++current_offset;
+                            };
+                            if (current->size == 1)
+                            {
+                                add_func(&current->row_ref_next);
+                            }
+                            else
+                            {
+                                size_t idx = current->size;
+                                current = current->next;
+                                while (true)
+                                {
+                                    if (idx > 2)
+                                        __builtin_prefetch(current->next);
+                                    add_func(&current->row_ref);
+                                    --idx;
+                                    if (idx == 1)
+                                    {
+                                        add_func(&current->row_ref_next);
+                                        break;
+                                    }
+                                    current = current->next;
+                                }
                             }
                         }
                     }
@@ -2533,13 +2646,33 @@ void NO_INLINE joinBlockImplTypeCase(
                         }
                         else
                         {
-                            for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped()); current != nullptr; current = current->next)
-                            {
-                                if (current->next != nullptr)
-                                    __builtin_prefetch(current->next);
-                                metric.column_pos.emplace_back(current->row_num);
-                                metric.block_pos.emplace_back(current->block_index);
+                            auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped());
+                            auto add_func = [&](const Join::RowRef * row_ref) {
+                                metric.column_pos.emplace_back(row_ref->row_num);
+                                metric.block_pos.emplace_back(row_ref->block_index);
                                 ++current_offset;
+                            };
+                            if (current->size == 1)
+                            {
+                                add_func(&current->row_ref_next);
+                            }
+                            else
+                            {
+                                size_t idx = current->size;
+                                current = current->next;
+                                while (true)
+                                {
+                                    if (idx > 2)
+                                        __builtin_prefetch(current->next);
+                                    add_func(&current->row_ref);
+                                    --idx;
+                                    if (idx == 1)
+                                    {
+                                        add_func(&current->row_ref_next);
+                                        break;
+                                    }
+                                    current = current->next;
+                                }
                             }
                         }
                     }
@@ -2579,6 +2712,258 @@ void NO_INLINE joinBlockImplTypeCase(
         probe_process_info.end_row = pos;
         // if i == rows, it means that all probe rows have been joined finish.
         probe_process_info.all_rows_joined_finish = (pos == rows);
+    }
+    else if (probe_version == 5)
+    {
+        /*Stopwatch watch;
+
+        auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
+
+        size_t pos = probe_process_info.start_row;
+
+        metric.column_pos.clear();
+        metric.column_pos.reserve(rows - pos);
+        metric.block_pos.clear();
+        metric.block_pos.reserve(rows - pos);
+        metric.column_ptrs.resize(num_columns_to_add);
+
+        size_t prefetch_size = join.probe_prefetch_size;
+        if (prefetch_size == 0)
+            prefetch_size = 8;
+
+        using KetGetterType = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
+        using HashTableType = typename Map::SegmentType::HashTable;
+        using MappedType = const typename Map::mapped_type::Base_t;
+        struct State {
+            UInt32 stage = 0;
+            size_t idx = 0;
+            KetGetterType key_holder;
+            size_t hash_value = 0;
+            const HashTableType * hash_table;
+            MappedType * look_up_res;
+            size_t count = 0;
+        };
+
+        std::vector<State> states(prefetch_size);
+        size_t k = 0, matched_size = 0;
+        auto func = [&](State & s, size_t & i) -> bool {
+            switch (s.stage)
+            {
+            case 0:
+            {
+                if (has_null_map && (*null_map)[i])
+                    break;
+                s.key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                const auto & key = keyHolderGetKey(s.key_holder);
+                size_t segment_index = 0;
+                bool zero_flag = ZeroTraits::check(key);
+                if (!zero_flag)
+                {
+                    s.hash_value = map.hash(key);
+                    segment_index = s.hash_value & (segment_size - 1);
+                }
+                __builtin_prefetch(map.getSegmentVecData() + segment_index);
+                s.idx = i;
+                s.stage = 1;
+                ++i;
+                break;
+            }
+            case 1:
+            {
+                size_t segment_index = s.hash_value & (segment_size - 1);
+                s.hash_table = &map.getSegmentTable(segment_index);
+                s.hash_table->prefetch(s.hash_value);
+                s.stage = 2;
+                break;
+            }
+            case 2:
+            {
+                const auto & key = keyHolderGetKey(s.key_holder);
+                auto it = s.hash_table->find(key, s.hash_value);
+                if (it != s.hash_table->end())
+                {
+                    it->getMapped().setUsed();
+                    auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped());
+                    metric.column_pos.emplace_back(current->row_num);
+                    metric.block_pos.emplace_back(current->block_index);
+                    (*offsets_to_replicate_ptr)[s.idx] = 1;
+                    if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
+                    {
+                        s.stage = 0;
+                    }
+                    else
+                    {
+                        if (current->next != nullptr)
+                        {
+                            __builtin_prefetch(current->next);
+                            s.stage = 3;
+                            s.look_up_res = current->next;
+                        }
+                        else
+                        {
+                            s.stage = 0;
+                        }
+                    }
+                }
+                else
+                    s.stage = 0;
+                break;
+            }
+            case 3:
+            {
+                if constexpr (STRICTNESS == ASTTableJoin::Strictness::All)
+                {
+                    auto * current = s.look_up_res;
+                    metric.column_pos.emplace_back(current->row_num);
+                    metric.block_pos.emplace_back(current->block_index);
+                    ++(*offsets_to_replicate_ptr)[s.idx];
+                    if (current->next != nullptr)
+                    {
+                        __builtin_prefetch(current->next);
+                        s.look_up_res = current->next;
+                    }
+                    else
+                    {
+                        s.stage = 0;
+                    }
+                }
+                else
+                {
+                    __builtin_unreachable();
+                }
+                break;
+            }
+            default:
+                __builtin_unreachable();
+            }
+            return false;
+        };
+        for (size_t i = probe_process_info.start_row; i < rows; )
+        {
+            k = k == prefetch_size ? 0 : k;
+            func(states[k], i);
+            ++k;
+        }
+
+        size_t dummy_i;
+        for (size_t i = 0; i < prefetch_size; ++i)
+        {
+            auto & s = states[i];
+            while (s.stage != 0)
+                func(s, dummy_i);
+        }
+
+        //TODO: current_offset > probe_process_info.max_block_size and prefix sum.
+
+            size_t start = i;
+            for (; i < rows && i < start + prefetch_size; ++i)
+            {
+                if (!has_null_map || !(*null_map)[i])
+                {
+                    std::get<0>(key_holders[i - start]) = true;
+                    std::get<1>(key_holders[i - start]) = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[i - start]));
+                    size_t hash_value = 0;
+                    size_t segment_index = 0;
+                    bool zero_flag = ZeroTraits::check(key);
+                    if (!zero_flag)
+                    {
+                        hash_value = map.hash(key);
+                        segment_index = hash_value & (segment_size - 1);
+                    }
+                    std::get<2>(key_holders[i - start]) = hash_value;
+                    __builtin_prefetch(map.getSegmentVecData() + segment_index);
+                }
+                else
+                    std::get<0>(key_holders[i - start]) = false;
+            }
+
+            for (size_t j = start; j < i; ++j)
+            {
+                if (std::get<0>(key_holders[j - start]))
+                {
+                    size_t hash_value = std::get<2>(key_holders[j - start]);
+                    size_t segment_index = hash_value & (segment_size - 1);
+                    auto & internal_map = map.getSegmentTable(segment_index);
+                    internal_map.prefetch(hash_value);
+                }
+            }
+
+            bool max_block_break = false;
+            for (pos = start; pos < i; ++pos)
+            {
+                if unlikely (current_offset > probe_process_info.max_block_size)
+                {
+                    max_block_break = true;
+                    break;
+                }
+                if (std::get<0>(key_holders[pos - start]))
+                {
+                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
+                    size_t hash_value = std::get<2>(key_holders[pos - start]);
+                    size_t segment_index = hash_value & (segment_size - 1);
+
+                    auto & internal_map = map.getSegmentTable(segment_index);
+                    auto it = internal_map.find(key, hash_value);
+                    if (it != internal_map.end())
+                    {
+                        it->getMapped().setUsed();
+                        const auto * iter = static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(it);
+                        if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
+                        {
+                            auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped());
+                            metric.column_pos.emplace_back(current->row_num);
+                            metric.block_pos.emplace_back(current->block_index);
+                            ++current_offset;
+                        }
+                        else
+                        {
+                            for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped()); current != nullptr; current = current->next)
+                            {
+                                if (current->next != nullptr)
+                                    __builtin_prefetch(current->next);
+                                metric.column_pos.emplace_back(current->row_num);
+                                metric.block_pos.emplace_back(current->block_index);
+                                ++current_offset;
+                            }
+                        }
+                    }
+
+                    keyHolderDiscardKey(key_holders[pos - start]);
+                }
+                (*offsets_to_replicate_ptr)[pos] = current_offset;
+            }
+
+            if unlikely (max_block_break)
+                break;
+        metric.probe_hash += watch.elapsedFromLastTime();
+
+        size_t added_size = metric.block_pos.size();
+        for (size_t i = 0; i < num_columns_to_add; ++i)
+            metric.column_ptrs[i].resize(added_size);
+
+        for (size_t i = 0; i < added_size; ++i)
+        {
+            const auto * block = &blocks[metric.block_pos[i]];
+            for (size_t j = 0; j < num_columns_to_add; ++j)
+            {
+                metric.column_ptrs[j][i] = block->getByPosition(j + num_columns_to_skip).column.get();
+            }
+        }
+
+        metric.probe_column_ptr += watch.elapsedFromLastTime();
+
+        for (size_t i = 0; i < num_columns_to_add; ++i)
+        {
+            added_columns[i]->insertGatherFrom(metric.column_ptrs[i], metric.column_pos);
+        }
+
+        metric.probe_tuple += watch.elapsedFromLastTime();
+
+        probe_process_info.end_row = pos;
+        // if i == rows, it means that all probe rows have been joined finish.
+        probe_process_info.all_rows_joined_finish = (pos == rows);
+         */
     }
 }
 

@@ -1123,6 +1123,11 @@ public:
                 it = &buf[new_place];
             }
         }
+        else
+        {
+            if (inserted)
+                it->getMapped() = cell.getMapped();
+        }
     }
 
     void ALWAYS_INLINE prefetch(size_t hash_value) const
