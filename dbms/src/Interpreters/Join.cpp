@@ -2744,7 +2744,7 @@ void NO_INLINE joinBlockImplTypeCase(
         };
 
         std::vector<State> states(prefetch_size);
-        size_t water_level = pos;
+        size_t water_mark [[maybe_unused]] = pos;
         auto func = [&](State & s, size_t & i) -> bool {
             switch (s.stage)
             {
@@ -2790,8 +2790,8 @@ void NO_INLINE joinBlockImplTypeCase(
                     it->getMapped().setUsed();
 
                     /// Correctness depends on the fact that each row that reach here has the same count of steps.
-                    assert(s.idx >= water_level);
-                    water_level = s.idx;
+                    assert(s.idx >= water_mark);
+                    water_mark = s.idx;
 
                     auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped());
                     if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
