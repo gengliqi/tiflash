@@ -202,16 +202,16 @@ public:
             size_t size;
             RowRef row_ref;
         };
-        /// If there is only one next left, row_ref_next will store the RowRef.
+        /// If there is only one next left, next_row_ref will store the RowRef.
         /// Otherwise next store the next pointer of RowRefList.
         union {
             RowRefList * next;
-            RowRef row_ref_next;
+            RowRef next_row_ref;
         };
 
         RowRefList() = default;
         RowRefList(UInt32 block_index_, UInt32 row_num_)
-            : size(1), row_ref_next(block_index_, row_num_)
+            : size(1), next_row_ref(block_index_, row_num_)
         {}
     };
 
@@ -384,6 +384,7 @@ public:
         std::vector<const void *> find_buffer;
         size_t pos = 0;
         UInt64 probe_hash = 0;
+        UInt64 probe_hash_remain = 0;
         UInt64 probe_column_ptr = 0;
         UInt64 probe_tuple = 0;
         std::vector<PaddedPODArray<const IColumn*>> column_ptrs;

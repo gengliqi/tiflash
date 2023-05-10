@@ -604,9 +604,9 @@ inline void insertRowToList(Join::RowRefList * list, Join::RowRefList * elem, UI
     if (list->size == 1)
     {
         list->size = 2;
-        elem->row_ref = list->row_ref_next;
-        elem->row_ref_next.block_index = block_index;
-        elem->row_ref_next.row_num = index;
+        elem->row_ref = list->next_row_ref;
+        elem->next_row_ref.block_index = block_index;
+        elem->next_row_ref.row_num = index;
         list->next = elem;
     }
     else
@@ -708,18 +708,16 @@ struct Inserter<ASTTableJoin::Strictness::All, Map, KeyGetter>
             if (list->size == 1)
             {
                 list->size = 2;
-                elem->row_ref = list->row_ref_next;
+                elem->row_ref = list->next_row_ref;
                 list->next = elem;
             }
             else
             {
                 ++list->size;
-                elem->row_ref = elem->row_ref_next;
+                elem->row_ref = elem->next_row_ref;
                 elem->next = list->next;
                 list->next = elem;
             }
-            cell.getMapped().next = list->next; // NOLINT(clang-analyzer-core.NullDereference)
-            list->next = &cell.getMapped();
         }
     }
 };
@@ -1930,7 +1928,7 @@ struct Adder<ASTTableJoin::Kind::LeftSemi, ASTTableJoin::Strictness::All, Map>
         size_t rows_joined = current->size;
         if (rows_joined == 1)
         {
-            add_func(&current->row_ref_next);
+            add_func(&current->next_row_ref);
         }
         else
         {
@@ -1942,7 +1940,7 @@ struct Adder<ASTTableJoin::Kind::LeftSemi, ASTTableJoin::Strictness::All, Map>
                 --idx;
                 if (idx == 1)
                 {
-                    add_func(&current->row_ref_next);
+                    add_func(&current->next_row_ref);
                     break;
                 }
                 current = current->next;
@@ -1988,7 +1986,7 @@ struct Adder<KIND, ASTTableJoin::Strictness::All, Map>
         size_t rows_joined = current->size;
         if (rows_joined == 1)
         {
-            add_func(&current->row_ref_next);
+            add_func(&current->next_row_ref);
         }
         else
         {
@@ -2000,7 +1998,7 @@ struct Adder<KIND, ASTTableJoin::Strictness::All, Map>
                 --idx;
                 if (idx == 1)
                 {
-                    add_func(&current->row_ref_next);
+                    add_func(&current->next_row_ref);
                     break;
                 }
                 current = current->next;
@@ -2375,7 +2373,7 @@ void NO_INLINE joinBlockImplTypeCase(
                         };
                         if (current->size == 1)
                         {
-                            add_func(&current->row_ref_next);
+                            add_func(&current->next_row_ref);
                         }
                         else
                         {
@@ -2389,7 +2387,7 @@ void NO_INLINE joinBlockImplTypeCase(
                                 --idx;
                                 if (idx == 1)
                                 {
-                                    add_func(&current->row_ref_next);
+                                    add_func(&current->next_row_ref);
                                     break;
                                 }
                                 current = current->next;
@@ -2518,7 +2516,7 @@ void NO_INLINE joinBlockImplTypeCase(
                             };
                             if (current->size == 1)
                             {
-                                add_func(&current->row_ref_next);
+                                add_func(&current->next_row_ref);
                             }
                             else
                             {
@@ -2532,7 +2530,7 @@ void NO_INLINE joinBlockImplTypeCase(
                                     --idx;
                                     if (idx == 1)
                                     {
-                                        add_func(&current->row_ref_next);
+                                        add_func(&current->next_row_ref);
                                         break;
                                     }
                                     current = current->next;
@@ -2654,7 +2652,7 @@ void NO_INLINE joinBlockImplTypeCase(
                             };
                             if (current->size == 1)
                             {
-                                add_func(&current->row_ref_next);
+                                add_func(&current->next_row_ref);
                             }
                             else
                             {
@@ -2668,7 +2666,7 @@ void NO_INLINE joinBlockImplTypeCase(
                                     --idx;
                                     if (idx == 1)
                                     {
-                                        add_func(&current->row_ref_next);
+                                        add_func(&current->next_row_ref);
                                         break;
                                     }
                                     current = current->next;
@@ -2715,7 +2713,7 @@ void NO_INLINE joinBlockImplTypeCase(
     }
     else if (probe_version == 5)
     {
-        /*Stopwatch watch;
+        Stopwatch watch;
 
         auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
 
@@ -2741,30 +2739,37 @@ void NO_INLINE joinBlockImplTypeCase(
             size_t hash_value = 0;
             const HashTableType * hash_table;
             MappedType * look_up_res;
-            size_t count = 0;
+            size_t row_list_pos;
+            size_t row_list_count;
         };
 
         std::vector<State> states(prefetch_size);
-        size_t k = 0, matched_size = 0;
+        size_t water_level = pos;
         auto func = [&](State & s, size_t & i) -> bool {
             switch (s.stage)
             {
             case 0:
             {
-                if (has_null_map && (*null_map)[i])
-                    break;
-                s.key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
-                const auto & key = keyHolderGetKey(s.key_holder);
-                size_t segment_index = 0;
-                bool zero_flag = ZeroTraits::check(key);
-                if (!zero_flag)
+                (*offsets_to_replicate_ptr)[i] = 0;
+                if (!has_null_map || !(*null_map)[i])
                 {
-                    s.hash_value = map.hash(key);
-                    segment_index = s.hash_value & (segment_size - 1);
+                    s.key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+                    const auto & key = keyHolderGetKey(s.key_holder);
+                    size_t segment_index = 0;
+                    bool zero_flag = ZeroTraits::check(key);
+                    if (!zero_flag)
+                    {
+                        s.hash_value = map.hash(key);
+                        segment_index = s.hash_value & (segment_size - 1);
+                    }
+                    else
+                    {
+                        s.hash_value = 0;
+                    }
+                    __builtin_prefetch(map.getSegmentVecData() + segment_index);
+                    s.idx = i;
+                    s.stage = 1;
                 }
-                __builtin_prefetch(map.getSegmentVecData() + segment_index);
-                s.idx = i;
-                s.stage = 1;
                 ++i;
                 break;
             }
@@ -2783,30 +2788,50 @@ void NO_INLINE joinBlockImplTypeCase(
                 if (it != s.hash_table->end())
                 {
                     it->getMapped().setUsed();
+
+                    /// Correctness depends on the fact that each row that reach here has the same count of steps.
+                    assert(s.idx >= water_level);
+                    water_level = s.idx;
+
                     auto current = &static_cast<const typename Map::mapped_type::Base_t &>(it->getMapped());
-                    metric.column_pos.emplace_back(current->row_num);
-                    metric.block_pos.emplace_back(current->block_index);
-                    (*offsets_to_replicate_ptr)[s.idx] = 1;
                     if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
                     {
+                        metric.column_pos.emplace_back(current->row_num);
+                        metric.block_pos.emplace_back(current->block_index);
+                        ++current_offset;
                         s.stage = 0;
                     }
                     else
                     {
-                        if (current->next != nullptr)
+                        if (current_offset + current->size > probe_process_info.max_block_size)
                         {
-                            __builtin_prefetch(current->next);
-                            s.stage = 3;
-                            s.look_up_res = current->next;
+                            return true;
+                        }
+
+                        current_offset += current->size;
+                        if (current->size == 1)
+                        {
+                            metric.column_pos.emplace_back(current->next_row_ref.row_num);
+                            metric.block_pos.emplace_back(current->next_row_ref.block_index);
+                            s.stage = 0;
                         }
                         else
                         {
-                            s.stage = 0;
+                            __builtin_prefetch(current->next);
+                            s.look_up_res = current->next;
+                            s.row_list_pos = metric.column_pos.size();
+                            s.row_list_count = current->size;
+                            metric.column_pos.resize(s.row_list_pos + current->size);
+                            metric.block_pos.resize(s.row_list_pos + current->size);
+                            s.stage = 3;
                         }
                     }
+                    (*offsets_to_replicate_ptr)[s.idx] = current_offset;
                 }
                 else
+                {
                     s.stage = 0;
+                }
                 break;
             }
             case 3:
@@ -2814,17 +2839,20 @@ void NO_INLINE joinBlockImplTypeCase(
                 if constexpr (STRICTNESS == ASTTableJoin::Strictness::All)
                 {
                     auto * current = s.look_up_res;
-                    metric.column_pos.emplace_back(current->row_num);
-                    metric.block_pos.emplace_back(current->block_index);
-                    ++(*offsets_to_replicate_ptr)[s.idx];
-                    if (current->next != nullptr)
+                    metric.column_pos[s.row_list_pos] = current->row_ref.row_num;
+                    metric.block_pos[s.row_list_pos] = current->row_ref.block_index;
+                    ++s.row_list_pos;
+                    --s.row_list_count;
+                    if (s.row_list_count == 1)
                     {
-                        __builtin_prefetch(current->next);
-                        s.look_up_res = current->next;
+                        metric.column_pos[s.row_list_pos] = current->next_row_ref.row_num;
+                        metric.block_pos[s.row_list_pos] = current->next_row_ref.block_index;
+                        s.stage = 0;
                     }
                     else
                     {
-                        s.stage = 0;
+                        __builtin_prefetch(current->next);
+                        s.look_up_res = current->next;
                     }
                 }
                 else
@@ -2838,105 +2866,48 @@ void NO_INLINE joinBlockImplTypeCase(
             }
             return false;
         };
-        for (size_t i = probe_process_info.start_row; i < rows; )
+        size_t k = 0;
+        while (pos < rows)
         {
             k = k == prefetch_size ? 0 : k;
-            func(states[k], i);
-            ++k;
-        }
+            if (func(states[k], pos))
+            {
+                pos = states[k].idx;
+                break;
+            }
 
-        size_t dummy_i;
+            if (states[k].stage > 0)
+                ++k;
+        }
+        metric.probe_hash += watch.elapsedFromLastTime();
+
+        std::vector<std::pair<size_t, size_t>> sort_vec;
         for (size_t i = 0; i < prefetch_size; ++i)
         {
-            auto & s = states[i];
-            while (s.stage != 0)
-                func(s, dummy_i);
+            if (states[i].stage != 0 && states[i].idx < pos)
+                sort_vec.emplace_back(states[i].idx, i);
+        }
+        std::sort(sort_vec.begin(), sort_vec.end());
+        size_t dummy_i;
+        for (auto & p : sort_vec)
+        {
+            auto & s = states[p.second];
+            while (s.stage != 0 && !func(s, dummy_i));
         }
 
-        //TODO: current_offset > probe_process_info.max_block_size and prefix sum.
-
-            size_t start = i;
-            for (; i < rows && i < start + prefetch_size; ++i)
+        size_t prev_offset = 0;
+        for (size_t i = probe_process_info.start_row; i < pos; ++i)
+        {
+            if ((*offsets_to_replicate_ptr)[i] == 0)
+                (*offsets_to_replicate_ptr)[i] = prev_offset;
+            else
             {
-                if (!has_null_map || !(*null_map)[i])
-                {
-                    std::get<0>(key_holders[i - start]) = true;
-                    std::get<1>(key_holders[i - start]) = key_getter.getKeyHolder(i, &pool, sort_key_containers);
-                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[i - start]));
-                    size_t hash_value = 0;
-                    size_t segment_index = 0;
-                    bool zero_flag = ZeroTraits::check(key);
-                    if (!zero_flag)
-                    {
-                        hash_value = map.hash(key);
-                        segment_index = hash_value & (segment_size - 1);
-                    }
-                    std::get<2>(key_holders[i - start]) = hash_value;
-                    __builtin_prefetch(map.getSegmentVecData() + segment_index);
-                }
-                else
-                    std::get<0>(key_holders[i - start]) = false;
+                assert((*offsets_to_replicate_ptr)[i] >= prev_offset);
+                prev_offset = (*offsets_to_replicate_ptr)[i];
             }
+        }
 
-            for (size_t j = start; j < i; ++j)
-            {
-                if (std::get<0>(key_holders[j - start]))
-                {
-                    size_t hash_value = std::get<2>(key_holders[j - start]);
-                    size_t segment_index = hash_value & (segment_size - 1);
-                    auto & internal_map = map.getSegmentTable(segment_index);
-                    internal_map.prefetch(hash_value);
-                }
-            }
-
-            bool max_block_break = false;
-            for (pos = start; pos < i; ++pos)
-            {
-                if unlikely (current_offset > probe_process_info.max_block_size)
-                {
-                    max_block_break = true;
-                    break;
-                }
-                if (std::get<0>(key_holders[pos - start]))
-                {
-                    const auto & key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
-                    size_t hash_value = std::get<2>(key_holders[pos - start]);
-                    size_t segment_index = hash_value & (segment_size - 1);
-
-                    auto & internal_map = map.getSegmentTable(segment_index);
-                    auto it = internal_map.find(key, hash_value);
-                    if (it != internal_map.end())
-                    {
-                        it->getMapped().setUsed();
-                        const auto * iter = static_cast<const typename Map::SegmentType::HashTable::ConstLookupResult>(it);
-                        if constexpr (STRICTNESS == ASTTableJoin::Strictness::Any)
-                        {
-                            auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped());
-                            metric.column_pos.emplace_back(current->row_num);
-                            metric.block_pos.emplace_back(current->block_index);
-                            ++current_offset;
-                        }
-                        else
-                        {
-                            for (auto current = &static_cast<const typename Map::mapped_type::Base_t &>(iter->getMapped()); current != nullptr; current = current->next)
-                            {
-                                if (current->next != nullptr)
-                                    __builtin_prefetch(current->next);
-                                metric.column_pos.emplace_back(current->row_num);
-                                metric.block_pos.emplace_back(current->block_index);
-                                ++current_offset;
-                            }
-                        }
-                    }
-
-                    keyHolderDiscardKey(key_holders[pos - start]);
-                }
-                (*offsets_to_replicate_ptr)[pos] = current_offset;
-            }
-
-            if unlikely (max_block_break)
-                break;
-        metric.probe_hash += watch.elapsedFromLastTime();
+        metric.probe_hash_remain += watch.elapsedFromLastTime();
 
         size_t added_size = metric.block_pos.size();
         for (size_t i = 0; i < num_columns_to_add; ++i)
@@ -2963,7 +2934,6 @@ void NO_INLINE joinBlockImplTypeCase(
         probe_process_info.end_row = pos;
         // if i == rows, it means that all probe rows have been joined finish.
         probe_process_info.all_rows_joined_finish = (pos == rows);
-         */
     }
 }
 
@@ -3708,7 +3678,7 @@ void Join::checkTypesOfKeys(const Block & block_left, const Block & block_right)
 void Join::finishOneProbe(size_t stream_index)
 {
     auto & metrics = probe_metrics[stream_index];
-    LOG_INFO(log, "{} finish one probe, probe {}, column_ptr {}, tuple {}", stream_index, metrics.probe_hash, metrics.probe_column_ptr, metrics.probe_tuple);
+    LOG_INFO(log, "{} finish one probe, probe {}, probe_remain {}, column_ptr {}, tuple {}", stream_index, metrics.probe_hash, metrics.probe_hash_remain, metrics.probe_column_ptr, metrics.probe_tuple);
     std::unique_lock lock(build_probe_mutex);
     if (active_probe_concurrency == 1)
     {

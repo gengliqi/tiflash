@@ -72,7 +72,7 @@ struct AdderNonJoined<ASTTableJoin::Strictness::All, Mapped>
         if (first_one)
         {
             if (remaining_size == 1)
-                add_func(&current->row_ref_next);
+                add_func(&current->next_row_ref);
             else
                 current = current->next;
         }
@@ -82,7 +82,7 @@ struct AdderNonJoined<ASTTableJoin::Strictness::All, Mapped>
             --remaining_size;
             if (remaining_size == 1)
             {
-                add_func(&current->row_ref_next);
+                add_func(&current->next_row_ref);
                 current = nullptr;
                 break;
             }
