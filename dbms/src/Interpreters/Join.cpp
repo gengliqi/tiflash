@@ -3333,6 +3333,7 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
     if (strictness == ASTTableJoin::Strictness::All)
         offsets_to_replicate = std::make_unique<IColumn::Offsets>(rows);
 
+    Stopwatch watch;
     switch (type)
     {
 #define M(TYPE)                                                                                                                                \
@@ -3369,6 +3370,7 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
         const ColumnWithTypeAndName & sample_col = sample_block_with_columns_to_add.getByPosition(i);
         block.insert(ColumnWithTypeAndName(std::move(added_columns[i]), sample_col.type, sample_col.name));
     }
+    probe_metrics[stream_index].probe_phase_1 += watch.elapsedFromLastTime();
 
     size_t process_rows = probe_process_info.end_row - probe_process_info.start_row;
 
@@ -3383,6 +3385,8 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
             for (size_t i = 0; i < existing_columns; ++i)
                 block.safeGetByPosition(i).column = block.safeGetByPosition(i).column->filter(*filter, -1);
         }
+
+        probe_metrics[stream_index].probe_phase_2 += watch.elapsedFromLastTime();
 
         /// If ALL ... JOIN - we replicate all the columns except the new ones.
         if (offsets_to_replicate)
@@ -3402,6 +3406,8 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
                 offsets_to_replicate->assign(offsets_to_replicate->begin() + probe_process_info.start_row, offsets_to_replicate->begin() + probe_process_info.end_row);
             }
         }
+
+        probe_metrics[stream_index].probe_phase_3 += watch.elapsedFromLastTime();
     }
 
     /// handle other conditions
@@ -3689,7 +3695,7 @@ void Join::checkTypesOfKeys(const Block & block_left, const Block & block_right)
 void Join::finishOneProbe(size_t stream_index)
 {
     auto & metrics = probe_metrics[stream_index];
-    LOG_INFO(log, "{} finish one probe, probe {}, probe_remain {}, column_ptr {}, tuple {}", stream_index, metrics.probe_hash, metrics.probe_hash_remain, metrics.probe_column_ptr, metrics.probe_tuple);
+    LOG_INFO(log, "{} finish one probe, phase1 {}(probe {}, probe_remain {}, column_ptr {}, tuple {}), phase2 {}, phase3 {}", stream_index, metrics.probe_phase_1, metrics.probe_hash, metrics.probe_hash_remain, metrics.probe_column_ptr, metrics.probe_tuple, metrics.probe_phase_2, metrics.probe_phase_3);
     std::unique_lock lock(build_probe_mutex);
     if (active_probe_concurrency == 1)
     {

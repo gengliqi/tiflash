@@ -249,6 +249,12 @@ public:
         data.resize(old_size + to_add_size);
         for (size_t i = 0; i < to_add_size; ++i)
         {
+            if (i + 4 < to_add_size)
+            {
+                __builtin_prefetch(static_cast<const Self &>(*src[i + 4]).data.data() + position[i + 4]);
+                if (i + 8 < to_add_size)
+                    __builtin_prefetch(src[i + 8]);
+            }
             const auto & column_src = static_cast<const Self &>(*src[i]);
             data[i + old_size] = column_src.data[position[i]];
         }

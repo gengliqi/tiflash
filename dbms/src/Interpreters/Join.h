@@ -383,10 +383,13 @@ public:
     {
         std::vector<const void *> find_buffer;
         size_t pos = 0;
+        UInt64 probe_phase_1 = 0;
         UInt64 probe_hash = 0;
         UInt64 probe_hash_remain = 0;
         UInt64 probe_column_ptr = 0;
         UInt64 probe_tuple = 0;
+        UInt64 probe_phase_2 = 0;
+        UInt64 probe_phase_3 = 0;
         std::vector<PaddedPODArray<const IColumn*>> column_ptrs;
         PaddedPODArray<size_t> column_pos;
         PaddedPODArray<UInt32> block_pos;

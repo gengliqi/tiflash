@@ -207,10 +207,17 @@ public:
     void insertGatherFrom(PaddedPODArray<const IColumn*> & src, const PaddedPODArray<size_t> & position) override
     {
         assert(src.size() == position.size());
-        size_t size = src.size();
-        offsets.reserve(offsets.size() + size);
-        for (size_t i = 0; i < size; ++i)
+        size_t to_add_size = src.size();
+        offsets.reserve(offsets.size() + to_add_size);
+        for (size_t i = 0; i < to_add_size; ++i)
         {
+            if (i + 4 < to_add_size)
+            {
+                __builtin_prefetch(static_cast<const ColumnString &>(*src[i + 4]).offsets.data() + position[i + 4]);
+                if (i + 8 < to_add_size)
+                    __builtin_prefetch(src[i + 8]);
+            }
+
             const auto & column_src = static_cast<const ColumnString &>(*src[i]);
             insertFromImpl(column_src, position[i]);
         }
