@@ -397,6 +397,7 @@ public:
         std::vector<PaddedPODArray<const IColumn*>> column_ptrs;
         PaddedPODArray<size_t> column_pos;
         PaddedPODArray<UInt32> block_pos;
+        IColumn::Offsets offsets_to_replicate;
     };
 
     mutable std::vector<ProbeMetric> probe_metrics;
@@ -525,7 +526,7 @@ public:
       *
       * @param block
       */
-    void handleOtherConditions(Block & block, std::unique_ptr<IColumn::Filter> & filter, std::unique_ptr<IColumn::Offsets> & offsets_to_replicate, const std::vector<size_t> & right_table_column) const;
+    void handleOtherConditions(Block & block, std::unique_ptr<IColumn::Filter> & filter, IColumn::Offsets * offsets_to_replicate, const std::vector<size_t> & right_table_column) const;
 
 
     template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS>

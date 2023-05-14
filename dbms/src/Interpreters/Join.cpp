@@ -2052,7 +2052,7 @@ void NO_INLINE joinBlockImplTypeCase(
     ConstNullMapPtr null_map,
     std::unique_ptr<IColumn::Filter> & filter,
     IColumn::Offset & current_offset,
-    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
+    IColumn::Offsets * offsets_to_replicate,
     const std::vector<size_t> & right_indexes,
     const TiDB::TiDBCollators & collators,
     bool enable_fine_grained_shuffle,
@@ -2117,7 +2117,7 @@ void NO_INLINE joinBlockImplTypeCase(
                     i,
                     filter.get(),
                     current_offset,
-                    offsets_to_replicate.get(),
+                    offsets_to_replicate,
                     probe_process_info);
             }
             else
@@ -2169,7 +2169,7 @@ void NO_INLINE joinBlockImplTypeCase(
                         i,
                         filter.get(),
                         current_offset,
-                        offsets_to_replicate.get(),
+                        offsets_to_replicate,
                         right_indexes,
                         probe_process_info);
                 }
@@ -2180,7 +2180,7 @@ void NO_INLINE joinBlockImplTypeCase(
                         i,
                         filter.get(),
                         current_offset,
-                        offsets_to_replicate.get(),
+                        offsets_to_replicate,
                         probe_process_info);
                 keyHolderDiscardKey(key_holder);
             }
@@ -2276,7 +2276,7 @@ void NO_INLINE joinBlockImplTypeCase(
                     pos,
                     filter.get(),
                     current_offset,
-                    offsets_to_replicate.get(),
+                    offsets_to_replicate,
                     probe_process_info);
             }
             else
@@ -2289,7 +2289,7 @@ void NO_INLINE joinBlockImplTypeCase(
                     pos,
                     filter.get(),
                     current_offset,
-                    offsets_to_replicate.get(),
+                    offsets_to_replicate,
                     right_indexes,
                     probe_process_info);
             }
@@ -2308,8 +2308,6 @@ void NO_INLINE joinBlockImplTypeCase(
     else if (probe_version == 2)
     {
         Stopwatch watch;
-
-        auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
 
         size_t pos = probe_process_info.start_row;
 
@@ -2404,7 +2402,7 @@ void NO_INLINE joinBlockImplTypeCase(
 
                 keyHolderDiscardKey(key_holder);
             }
-            (*offsets_to_replicate_ptr)[pos] = current_offset;
+            (*offsets_to_replicate)[pos] = current_offset;
         }
         metric.probe_hash += watch.elapsedFromLastTime();
 
@@ -2422,8 +2420,6 @@ void NO_INLINE joinBlockImplTypeCase(
     else if (probe_version == 3)
     {
         Stopwatch watch;
-
-        auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
 
         size_t pos = probe_process_info.start_row;
 
@@ -2555,7 +2551,7 @@ void NO_INLINE joinBlockImplTypeCase(
                     metric.probe_hash_tmp_3 += watch2.elapsedFromLastTime();
                     keyHolderDiscardKey(key_holders[pos - start]);
                 }
-                (*offsets_to_replicate_ptr)[pos] = current_offset;
+                (*offsets_to_replicate)[pos] = current_offset;
             }
 
             if unlikely (max_block_break)
@@ -2577,8 +2573,6 @@ void NO_INLINE joinBlockImplTypeCase(
     else if (probe_version == 4)
     {
         Stopwatch watch;
-
-        auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
 
         size_t pos = probe_process_info.start_row;
 
@@ -2699,7 +2693,7 @@ void NO_INLINE joinBlockImplTypeCase(
                     metric.probe_hash_tmp_3 += watch2.elapsedFromLastTime();
                     keyHolderDiscardKey(key_holders[pos - start]);
                 }
-                (*offsets_to_replicate_ptr)[pos] = current_offset;
+                (*offsets_to_replicate)[pos] = current_offset;
             }
 
             if unlikely (max_block_break)
@@ -2737,8 +2731,6 @@ void NO_INLINE joinBlockImplTypeCase(
     {
         Stopwatch watch;
 
-        auto * offsets_to_replicate_ptr = offsets_to_replicate.get();
-
         size_t pos = probe_process_info.start_row;
 
         metric.column_pos.clear();
@@ -2772,7 +2764,7 @@ void NO_INLINE joinBlockImplTypeCase(
             {
             case 0:
             {
-                (*offsets_to_replicate_ptr)[i] = 0;
+                (*offsets_to_replicate)[i] = 0;
                 if (!has_null_map || !(*null_map)[i])
                 {
                     s.key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
@@ -2848,7 +2840,7 @@ void NO_INLINE joinBlockImplTypeCase(
                             s.stage = 3;
                         }
                     }
-                    (*offsets_to_replicate_ptr)[s.idx] = current_offset;
+                    (*offsets_to_replicate)[s.idx] = current_offset;
                 }
                 else
                 {
@@ -2931,12 +2923,12 @@ void NO_INLINE joinBlockImplTypeCase(
         size_t prev_offset = 0;
         for (size_t i = probe_process_info.start_row; i < pos; ++i)
         {
-            if ((*offsets_to_replicate_ptr)[i] == 0)
-                (*offsets_to_replicate_ptr)[i] = prev_offset;
+            if ((*offsets_to_replicate)[i] == 0)
+                (*offsets_to_replicate)[i] = prev_offset;
             else
             {
-                assert((*offsets_to_replicate_ptr)[i] >= prev_offset);
-                prev_offset = (*offsets_to_replicate_ptr)[i];
+                assert((*offsets_to_replicate)[i] >= prev_offset);
+                prev_offset = (*offsets_to_replicate)[i];
             }
         }
 
@@ -2982,7 +2974,7 @@ void joinBlockImplType(
     ConstNullMapPtr null_map,
     std::unique_ptr<IColumn::Filter> & filter,
     IColumn::Offset & current_offset,
-    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
+    IColumn::Offsets * offsets_to_replicate,
     const std::vector<size_t> & right_indexes,
     const TiDB::TiDBCollators & collators,
     bool enable_fine_grained_shuffle,
@@ -3074,7 +3066,7 @@ void mergeNullAndFilterResult(Block & block, ColumnVector<UInt8>::Container & fi
  * @param left_table_columns
  * @param right_table_columns
  */
-void Join::handleOtherConditions(Block & block, std::unique_ptr<IColumn::Filter> & anti_filter, std::unique_ptr<IColumn::Offsets> & offsets_to_replicate, const std::vector<size_t> & right_table_columns) const
+void Join::handleOtherConditions(Block & block, std::unique_ptr<IColumn::Filter> & anti_filter, IColumn::Offsets * offsets_to_replicate, const std::vector<size_t> & right_table_columns) const
 {
     other_condition_ptr->execute(block);
 
@@ -3350,10 +3342,13 @@ void Join::joinBlockImpl(Block & block, const Maps & maps, ProbeProcessInfo & pr
 
     /// Used with ALL ... JOIN
     IColumn::Offset current_offset = 0;
-    std::unique_ptr<IColumn::Offsets> offsets_to_replicate;
+    IColumn::Offsets * offsets_to_replicate = nullptr;
 
     if (strictness == ASTTableJoin::Strictness::All)
-        offsets_to_replicate = std::make_unique<IColumn::Offsets>(rows);
+    {
+        probe_metrics[stream_index].offsets_to_replicate.resize(rows);
+        offsets_to_replicate = &probe_metrics[stream_index].offsets_to_replicate;
+    }
 
     Stopwatch watch;
     switch (type)
@@ -3657,7 +3652,7 @@ void Join::joinBlockImplCrossInternal(Block & block, ConstNullMapPtr null_map [[
         }
         auto block_per_iter = block.cloneWithColumns(std::move(dst_columns));
         if (other_condition_ptr != nullptr)
-            handleOtherConditions(block_per_iter, is_row_matched, expanded_row_size_after_join, right_column_index);
+            handleOtherConditions(block_per_iter, is_row_matched, expanded_row_size_after_join.get(), right_column_index);
         if (start == 0 || block_per_iter.rows() > 0)
             /// always need to generate at least one block
             result_blocks.push_back(block_per_iter);
