@@ -2322,6 +2322,7 @@ void NO_INLINE joinBlockImplTypeCase(
             metric.column_ptrs[i].reserve(rows - pos);
         }
 
+        Stopwatch watch2;
         for (; pos < rows; ++pos)
         {
             if unlikely (current_offset > probe_process_info.max_block_size)
@@ -2330,6 +2331,7 @@ void NO_INLINE joinBlockImplTypeCase(
             }
             if (!has_null_map || !(*null_map)[pos])
             {
+                watch2.restart();
                 auto key_holder = key_getter.getKeyHolder(pos, &pool, sort_key_containers);
                 auto key = keyHolderGetKey(key_holder);
                 size_t hash_value = 0;
@@ -2340,10 +2342,13 @@ void NO_INLINE joinBlockImplTypeCase(
                     hash_value = map.hash(key);
                     segment_index = hash_value & (segment_size - 1);
                 }
+                metric.probe_hash_tmp_1 += watch2.elapsedFromLastTime();
 
                 auto & internal_map = map.getSegmentTable(segment_index);
                 /// do not require segment lock because in join, the hash table can not be changed in probe stage.
                 auto it = internal_map.find(key, hash_value);
+                metric.probe_hash_tmp_2 += watch2.elapsedFromLastTime();
+
                 if (it != internal_map.end())
                 {
                     it->getMapped().setUsed();
@@ -2395,6 +2400,7 @@ void NO_INLINE joinBlockImplTypeCase(
                         }
                     }
                 }
+                metric.probe_hash_tmp_3 += watch2.elapsedFromLastTime();
 
                 keyHolderDiscardKey(key_holder);
             }
@@ -2435,8 +2441,10 @@ void NO_INLINE joinBlockImplTypeCase(
         if (prefetch_size == 0)
             prefetch_size = 8;
         std::vector<std::tuple<bool, KetGetterType, size_t>> key_holders(prefetch_size);
+        Stopwatch watch2;
         for (size_t i = probe_process_info.start_row; i < rows;)
         {
+            watch2.restart();
             size_t start = i;
             for (; i < rows && i < start + prefetch_size; ++i)
             {
@@ -2459,6 +2467,7 @@ void NO_INLINE joinBlockImplTypeCase(
                 else
                     std::get<0>(key_holders[i - start]) = false;
             }
+            metric.probe_hash_tmp_1 += watch2.elapsedFromLastTime();
 
             for (size_t j = start; j < i; ++j)
             {
@@ -2471,6 +2480,8 @@ void NO_INLINE joinBlockImplTypeCase(
                 }
             }
 
+            metric.probe_hash_tmp_map += watch2.elapsedFromLastTime();
+
             bool max_block_break = false;
             for (pos = start; pos < i; ++pos)
             {
@@ -2481,12 +2492,15 @@ void NO_INLINE joinBlockImplTypeCase(
                 }
                 if (std::get<0>(key_holders[pos - start]))
                 {
+                    watch2.restart();
                     const auto & key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
                     size_t hash_value = std::get<2>(key_holders[pos - start]);
                     size_t segment_index = hash_value & (segment_size - 1);
 
                     auto & internal_map = map.getSegmentTable(segment_index);
                     auto it = internal_map.find(key, hash_value);
+                    metric.probe_hash_tmp_2 += watch2.elapsedFromLastTime();
+
                     if (it != internal_map.end())
                     {
                         it->getMapped().setUsed();
@@ -2538,7 +2552,7 @@ void NO_INLINE joinBlockImplTypeCase(
                             }
                         }
                     }
-
+                    metric.probe_hash_tmp_3 += watch2.elapsedFromLastTime();
                     keyHolderDiscardKey(key_holders[pos - start]);
                 }
                 (*offsets_to_replicate_ptr)[pos] = current_offset;
@@ -2579,9 +2593,11 @@ void NO_INLINE joinBlockImplTypeCase(
         if (prefetch_size == 0)
             prefetch_size = 8;
         std::vector<std::tuple<bool, KetGetterType, size_t>> key_holders(prefetch_size);
+        Stopwatch watch2;
         for (size_t i = probe_process_info.start_row; i < rows;)
         {
             size_t start = i;
+            watch2.restart();
             for (; i < rows && i < start + prefetch_size; ++i)
             {
                 if (!has_null_map || !(*null_map)[i])
@@ -2603,6 +2619,7 @@ void NO_INLINE joinBlockImplTypeCase(
                 else
                     std::get<0>(key_holders[i - start]) = false;
             }
+            metric.probe_hash_tmp_1 += watch2.elapsedFromLastTime();
 
             for (size_t j = start; j < i; ++j)
             {
@@ -2615,6 +2632,8 @@ void NO_INLINE joinBlockImplTypeCase(
                 }
             }
 
+            metric.probe_hash_tmp_map += watch2.elapsedFromLastTime();
+
             bool max_block_break = false;
             for (pos = start; pos < i; ++pos)
             {
@@ -2625,12 +2644,15 @@ void NO_INLINE joinBlockImplTypeCase(
                 }
                 if (std::get<0>(key_holders[pos - start]))
                 {
+                    watch2.restart();
                     const auto & key = keyHolderGetKey(std::get<1>(key_holders[pos - start]));
                     size_t hash_value = std::get<2>(key_holders[pos - start]);
                     size_t segment_index = hash_value & (segment_size - 1);
 
                     auto & internal_map = map.getSegmentTable(segment_index);
                     auto it = internal_map.find(key, hash_value);
+                    metric.probe_hash_tmp_2 += watch2.elapsedFromLastTime();
+
                     if (it != internal_map.end())
                     {
                         it->getMapped().setUsed();
@@ -2674,7 +2696,7 @@ void NO_INLINE joinBlockImplTypeCase(
                             }
                         }
                     }
-
+                    metric.probe_hash_tmp_3 += watch2.elapsedFromLastTime();
                     keyHolderDiscardKey(key_holders[pos - start]);
                 }
                 (*offsets_to_replicate_ptr)[pos] = current_offset;
@@ -3695,7 +3717,7 @@ void Join::checkTypesOfKeys(const Block & block_left, const Block & block_right)
 void Join::finishOneProbe(size_t stream_index)
 {
     auto & metrics = probe_metrics[stream_index];
-    LOG_INFO(log, "{} finish one probe, phase1 {}(probe {}, probe_remain {}, column_ptr {}, tuple {}), phase2 {}, phase3 {}", stream_index, metrics.probe_phase_1, metrics.probe_hash, metrics.probe_hash_remain, metrics.probe_column_ptr, metrics.probe_tuple, metrics.probe_phase_2, metrics.probe_phase_3);
+    LOG_INFO(log, "{} finish one probe, phase1 {}(probe {}(tmp1 {}, tmp2 {}, tmp3 {}, tmp_map {}), probe_remain {}, column_ptr {}, tuple {}), phase2 {}, phase3 {}", stream_index, metrics.probe_phase_1, metrics.probe_hash, metrics.probe_hash_tmp_1, metrics.probe_hash_tmp_2, metrics.probe_hash_tmp_3, metrics.probe_hash_tmp_map, metrics.probe_hash_remain, metrics.probe_column_ptr, metrics.probe_tuple, metrics.probe_phase_2, metrics.probe_phase_3);
     std::unique_lock lock(build_probe_mutex);
     if (active_probe_concurrency == 1)
     {

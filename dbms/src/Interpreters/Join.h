@@ -385,6 +385,10 @@ public:
         size_t pos = 0;
         UInt64 probe_phase_1 = 0;
         UInt64 probe_hash = 0;
+        UInt64 probe_hash_tmp_1 = 0;
+        UInt64 probe_hash_tmp_2 = 0;
+        UInt64 probe_hash_tmp_3 = 0;
+        UInt64 probe_hash_tmp_map = 0;
         UInt64 probe_hash_remain = 0;
         UInt64 probe_column_ptr = 0;
         UInt64 probe_tuple = 0;
