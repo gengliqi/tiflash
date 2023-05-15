@@ -3720,7 +3720,42 @@ void Join::finishOneProbe(size_t stream_index)
     }
     --active_probe_concurrency;
     if (active_probe_concurrency == 0)
+    {
+        std::vector<size_t> collision;
+        std::vector<size_t> buffer_size;
+        std::vector<UInt64> resize_time;
+        if (!getFullness(kind))
+        {
+            if (strictness == ASTTableJoin::Strictness::Any)
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_any, type);
+            else
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_all, type);
+        }
+        else
+        {
+            if (strictness == ASTTableJoin::Strictness::Any)
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_any_full, type);
+            else
+                std::tie(collision, buffer_size, resize_time) = getHashMapTotalImpl(maps_all_full, type);
+        }
+        for (size_t i = 0; i < collision.size(); ++i)
+            collision[i] -= hash_map_collision[i];
+        size_t sum = 0;
+        for (auto i : collision)
+            sum += i;
+        std::stringstream result;
+        std::copy(collision.begin(), collision.end(), std::ostream_iterator<size_t>(result, " "));
+        LOG_INFO(log, "join probe collision sum {}, {}", sum, result.str());
+
+        sum = 0;
+        for (auto i : buffer_size)
+            sum += i;
+        std::stringstream result2;
+        std::copy(buffer_size.begin(), buffer_size.end(), std::ostream_iterator<size_t>(result2, " "));
+        LOG_INFO(log, "join probe buffer size sum {}, {}", sum, result2.str());
+
         probe_cv.notify_all();
+    }
 }
 void Join::finishOneBuild()
 {
@@ -3757,6 +3792,8 @@ void Join::finishOneBuild()
         std::stringstream result;
         std::copy(collision.begin(), collision.end(), std::ostream_iterator<size_t>(result, " "));
         LOG_INFO(log, "join build collision sum {}, {}", sum, result.str());
+
+        hash_map_collision = std::move(collision);
 
         sum = 0;
         for (auto i : buffer_size)

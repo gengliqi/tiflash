@@ -33,7 +33,7 @@
 #include <new>
 #include <utility>
 
-//#define DBMS_HASH_MAP_COUNT_COLLISIONS
+#define DBMS_HASH_MAP_COUNT_COLLISIONS
 #include <Common/Stopwatch.h>
 
 #ifdef DBMS_HASH_MAP_DEBUG_RESIZES

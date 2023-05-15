@@ -402,6 +402,8 @@ public:
 
     mutable std::vector<ProbeMetric> probe_metrics;
 
+    std::vector<size_t> hash_map_collision;
+
 public:
     friend class NonJoinedBlockInputStream;
 
