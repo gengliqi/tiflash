@@ -95,6 +95,8 @@ try
     const size_t probe_size = state.range(1);
     const size_t match_possibility = state.range(2);
 
+    std::string head = std::to_string(build_size) + "/" + std::to_string(probe_size) + "/" + std::to_string(match_possibility);
+
     const size_t build_payload = 8;
     const size_t probe_payload = 8;
 
@@ -124,7 +126,7 @@ try
 
     auto build_hash_time = watch.elapsedFromLastTime();
 
-    printf("build hash table time %llu\n", build_hash_time);
+    printf("%s build hash table time %llu\n", head.c_str(), build_hash_time);
 
     std::vector<size_t> output_build;
     std::vector<size_t> probe_offset;
@@ -132,7 +134,7 @@ try
     size_t offset = 0;
     for (size_t i = 0; i < probe_size; ++i)
     {
-        auto it = hash_table.find(probe_kv[i].key);
+        auto * it = hash_table.find(probe_kv[i].key);
         if (it != hash_table.end())
         {
             for (auto * current = &it->getMapped(); current != nullptr; current = current->next)
@@ -146,7 +148,7 @@ try
 
     auto probe_hash_time = watch.elapsedFromLastTime();
 
-    printf("probe hash table time %llu\n", probe_hash_time);
+    printf("%s probe hash table time %llu\n", head.c_str(), probe_hash_time);
 }
 CATCH
 
@@ -170,7 +172,9 @@ BENCHMARK_REGISTER_F(BenchHashTable, NoPartitionLinear)
     ->Args({100000, 1000000, 50})
     ->Args({100000, 1000000, 100})
     ->Args({1000000, 10000000, 50})
-    ->Args({1000000, 10000000, 100})->Iterations(1);
+    ->Args({1000000, 10000000, 100})
+    ->Args({10000000, 100000000, 50})
+    ->Args({10000000, 100000000, 100})->Iterations(2);
 
 
 
