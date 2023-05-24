@@ -124,7 +124,7 @@ try
         }
     }
 
-    auto build_hash_time = watch.elapsedFromLastTime();
+    uint64_t build_hash_time = watch.elapsedFromLastTime();
 
     printf("%s build hash table time %llu\n", head.c_str(), build_hash_time);
 
@@ -146,7 +146,7 @@ try
         probe_offset.push_back(offset);
     }
 
-    auto probe_hash_time = watch.elapsedFromLastTime();
+    uint64_t probe_hash_time = watch.elapsedFromLastTime();
 
     printf("%s probe hash table time %llu\n", head.c_str(), probe_hash_time);
 }
@@ -174,7 +174,7 @@ BENCHMARK_REGISTER_F(BenchHashTable, NoPartitionLinear)
     ->Args({1000000, 10000000, 50})
     ->Args({1000000, 10000000, 100})
     ->Args({10000000, 100000000, 50})
-    ->Args({10000000, 100000000, 100})->Iterations(2);
+    ->Args({10000000, 100000000, 100})->Iterations(1);
 
 
 
