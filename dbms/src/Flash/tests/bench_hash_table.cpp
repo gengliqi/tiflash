@@ -124,7 +124,7 @@ try
         }
     }
 
-    uint64_t build_hash_time = watch.elapsedFromLastTime();
+    unsigned long long build_hash_time = watch.elapsedFromLastTime();
 
     printf("%s build hash table time %llu\n", head.c_str(), build_hash_time);
 
@@ -146,7 +146,7 @@ try
         probe_offset.push_back(offset);
     }
 
-    uint64_t probe_hash_time = watch.elapsedFromLastTime();
+    unsigned long long probe_hash_time = watch.elapsedFromLastTime();
 
     printf("%s probe hash table time %llu\n", head.c_str(), probe_hash_time);
 }
