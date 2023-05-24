@@ -202,6 +202,7 @@ target_link_libraries (dbms
     kv_client
     tipb
     dtpb
+    RemoteTaskProto
     PSCheckpointProto
 )
 
@@ -349,7 +350,7 @@ if (ENABLE_TESTS)
         )
     target_include_directories(bench_dbms BEFORE PRIVATE ${SPARCEHASH_INCLUDE_DIR} ${benchmark_SOURCE_DIR}/include)
     target_compile_definitions(bench_dbms PUBLIC DBMS_PUBLIC_GTEST)
-    target_link_libraries(bench_dbms gtest dbms test_util_bench_main benchmark tiflash_functions server_for_test)
+    target_link_libraries(bench_dbms gtest dbms test_util_bench_main benchmark tiflash_functions server_for_test delta_merge)
 
     add_check(bench_dbms)
 endif ()
