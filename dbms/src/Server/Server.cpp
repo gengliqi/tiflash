@@ -1825,3 +1825,27 @@ int mainEntryClickHouseServer(int argc, char ** argv)
         return code ? code : 1;
     }
 }
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "compute-engine.h"
+
+void runComputeEngineDaemon()
+{
+    DB::Server app;
+    try
+    {
+        app.run();
+    }
+    catch (...)
+    {
+        std::cerr << DB::getCurrentExceptionMessage(true) << "\n";
+        abort();
+    }
+}
+
+#ifdef __cplusplus
+}
+#endif

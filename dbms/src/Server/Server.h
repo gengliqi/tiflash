@@ -47,9 +47,9 @@ public:
 
     void defineOptions(Poco::Util::OptionSet & _options) override;
 
-protected:
     int run() override;
 
+protected:
     void initialize(Application & self) override;
 
     void uninitialize() override;

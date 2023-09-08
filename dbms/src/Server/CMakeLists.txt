@@ -176,3 +176,10 @@ install (TARGETS tiflash RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT t
 
 set (GLIBC_MAX_REQUIRED 2.4)
 add_test(NAME GLIBC_required_version COMMAND bash -c "readelf -s ${CMAKE_CURRENT_BINARY_DIR}/tiflash | grep '@GLIBC' | grep -oP 'GLIBC_[\\d\\.]+' | sort | uniq | sort -r | perl -lnE 'exit 1 if $_ gt q{GLIBC_${GLIBC_MAX_REQUIRED}}'")
+
+add_library (compute-engine-lib Server.cpp)
+target_link_libraries(compute-engine-lib PRIVATE ${TIFLASH_PROXY_LIBRARY})
+
+target_link_libraries (compute-engine-lib PUBLIC dbms daemon tiflash_storages_system tiflash_functions tiflash_aggregate_functions tiflash_table_functions)
+target_include_directories (compute-engine-lib PUBLIC ${TiFlash_SOURCE_DIR}/libs/libdaemon/include)
+

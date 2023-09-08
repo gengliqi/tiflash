@@ -1166,3 +1166,23 @@ void FlashService::setMockMPPServerInfo(MockMPPServerInfo & mpp_test_info_)
     mpp_test_info = mpp_test_info_;
 }
 } // namespace DB
+
+#include <Server/compute-engine.h>
+#include <google/protobuf/message.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+CRawString dispatchMPPTask(const char * request_data, size_t request_size)
+{
+    mpp::DispatchTaskRequest request;
+    bool parse_res = request.ParseFromArray(request_data, request_size);
+    assert(parse_res);
+    CRawString ret;
+    return ret;
+}
+
+#ifdef __cplusplus
+}
+#endif
