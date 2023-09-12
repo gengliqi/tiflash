@@ -8,20 +8,27 @@ extern "C" {
 
 void runComputeEngineDaemon();
 
-typedef struct CRawString {
-    char * data;
+typedef struct RawString
+{
+    void * data;
     size_t size;
-} CRawString;
+} RawString;
 
-CRawString dispatchMPPTask(const char *, size_t);
+RawString newRawString(void * data, size_t size);
+void deleteRawString(RawString s);
 
-typedef struct MPPResultStream MPPResultStream;
+// FlashService
+extern void * global_flash_context;
 
-MPPResultStream * establishMPPConnection(char *, size_t);
+int dispatchMPPTask(void * ctx, RawString raw_request, RawString * raw_response);
 
-CRawString next(MPPResultStream *);
+typedef struct MPPStreamResponse MPPStreamResponse;
 
-CRawString cancelMPPTask(char *, size_t);
+int establishMPPConnection(void * ctx, RawString raw_request, MPPStreamResponse ** stream_response);
+bool nextResponse(MPPStreamResponse * stream_response, RawString * raw_response);
+void deleteMPPStreamResponse(MPPStreamResponse * stream_response);
+
+int cancelMPPTask(void * ctx, RawString raw_request, RawString * raw_response);
 
 #ifdef __cplusplus
 }

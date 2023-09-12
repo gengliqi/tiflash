@@ -138,7 +138,6 @@ public:
     void setMockMPPServerInfo(MockMPPServerInfo & mpp_test_info_);
     Context * getContext() { return context; }
 
-protected:
     std::tuple<ContextPtr, grpc::Status> createDBContextForTest() const;
     std::tuple<ContextPtr, grpc::Status> createDBContext(const grpc::ServerContext * grpc_context) const;
     grpc::Status checkGrpcContext(const grpc::ServerContext * grpc_context) const;

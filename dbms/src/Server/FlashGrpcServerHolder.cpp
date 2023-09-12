@@ -16,6 +16,7 @@
 #include <Flash/EstablishCall.h>
 #include <Interpreters/Context.h>
 #include <Server/FlashGrpcServerHolder.h>
+#include <Server/compute-engine.h>
 
 // In order to include grpc::SecureServerCredentials which used in
 // sslServerCredentialsWithFetcher()
@@ -143,6 +144,7 @@ FlashGrpcServerHolder::FlashGrpcServerHolder(
     else
         flash_service = std::make_unique<FlashService>();
     flash_service->init(context);
+    global_flash_context = static_cast<void *>(flash_service.get());
 
     diagnostics_service = std::make_unique<DiagnosticsService>(context, config_);
     builder.SetOption(grpc::MakeChannelArgumentOption(GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 5 * 1000));
