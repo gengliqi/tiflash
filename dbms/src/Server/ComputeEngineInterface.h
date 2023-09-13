@@ -4,20 +4,20 @@
 extern "C" {
 #endif
 
-#include <stddef.h>
+#include <stdint.h>
 
-void runComputeEngineDaemon();
+void runComputeEngine(char * config);
 
 typedef struct RawString
 {
     void * data;
-    size_t size;
+    uint32_t size;
 } RawString;
 
-RawString newRawString(void * data, size_t size);
+RawString newRawString(void * data, uint32_t size);
 void deleteRawString(RawString s);
 
-// FlashService
+// TODO: use local context instead of global context
 extern void * global_flash_context;
 
 int dispatchMPPTask(void * ctx, RawString raw_request, RawString * raw_response);
@@ -25,7 +25,7 @@ int dispatchMPPTask(void * ctx, RawString raw_request, RawString * raw_response)
 typedef struct MPPStreamResponse MPPStreamResponse;
 
 int establishMPPConnection(void * ctx, RawString raw_request, MPPStreamResponse ** stream_response);
-bool nextResponse(MPPStreamResponse * stream_response, RawString * raw_response);
+int nextResponse(MPPStreamResponse * stream_response, RawString * raw_response);
 void deleteMPPStreamResponse(MPPStreamResponse * stream_response);
 
 int cancelMPPTask(void * ctx, RawString raw_request, RawString * raw_response);

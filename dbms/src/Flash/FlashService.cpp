@@ -763,14 +763,14 @@ std::tuple<ContextPtr, grpc::Status> FlashService::createDBContext(const grpc::S
         std::string user = getClientMetaVarWithDefault(grpc_context, "user", "default");
         std::string password = getClientMetaVarWithDefault(grpc_context, "password", "");
         std::string quota_key = getClientMetaVarWithDefault(grpc_context, "quota_key", "");
-        std::string peer = grpc_context->peer();
-        Int64 pos = peer.find(':');
-        std::string client_ip = peer.substr(pos + 1);
-        Poco::Net::SocketAddress client_address(client_ip);
+        //std::string peer = grpc_context->peer();
+        //Int64 pos = peer.find(':');
+        //std::string client_ip = peer.substr(pos + 1);
+        //Poco::Net::SocketAddress client_address(client_ip);
 
         // For MPP or Cop test, we don't care about security config.
-        if (likely(!context->isTest()))
-            tmp_context->setUser(user, password, client_address, quota_key);
+        //if (likely(!context->isTest()))
+        //    tmp_context->setUser(user, password, client_address, quota_key);
 
         String query_id = getClientMetaVarWithDefault(grpc_context, "query_id", "");
         tmp_context->setCurrentQueryId(query_id);
@@ -1166,133 +1166,3 @@ void FlashService::setMockMPPServerInfo(MockMPPServerInfo & mpp_test_info_)
     mpp_test_info = mpp_test_info_;
 }
 } // namespace DB
-
-#include <Server/compute-engine.h>
-#include <google/protobuf/message.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void * global_flash_context = nullptr;
-
-RawString newRawString(void * data, size_t size)
-{
-    RawString s;
-    s.data = data;
-    s.size = size;
-    return s;
-}
-
-void deleteRawString(RawString s)
-{
-    free(s.data);
-}
-
-int dispatchMPPTask(void * ctx, RawString raw_request, RawString * raw_response)
-{
-    auto * flash_ctx = static_cast<DB::FlashService *>(ctx);
-    mpp::DispatchTaskRequest request;
-    bool parse_res = request.ParseFromArray(raw_request.data, raw_request.size);
-    assert(parse_res);
-
-    grpc::ServerContext grpc_context;
-    auto [db_context, status] = flash_ctx->createDBContext(&grpc_context);
-    if (!status.ok())
-    {
-        return status.error_code();
-    }
-    DB::MPPHandler mpp_handler(request);
-    mpp::DispatchTaskResponse response;
-    mpp_handler.execute(db_context, &response);
-
-    raw_response->size = response.ByteSizeLong();
-    raw_response->data = malloc(raw_response->size);
-    response.SerializeToArray(raw_response->data, raw_response->size);
-    return 0;
-}
-
-struct MPPStreamResponse
-{
-    DB::MPPTunnelPtr tunnel;
-};
-
-int establishMPPConnection(void * ctx, RawString raw_request, MPPStreamResponse ** stream_response)
-{
-    *stream_response = new MPPStreamResponse;
-
-    auto * flash_ctx = static_cast<DB::FlashService *>(ctx);
-    mpp::EstablishMPPConnectionRequest request;
-    bool parse_res = request.ParseFromArray(raw_request.data, raw_request.size);
-    assert(parse_res);
-
-    auto & tmt_context = flash_ctx->context->getTMTContext();
-    auto task_manager = tmt_context.getMPPTaskManager();
-    std::chrono::seconds timeout(10);
-    Stopwatch watch;
-    auto [tunnel, err_msg] = task_manager->findTunnelWithTimeout(&request, timeout);
-    auto waiting_task_time = watch.elapsedMilliseconds();
-    LOG_INFO(tunnel->getLogger(), "connection for {} wait task for {} ms.", tunnel->id(), waiting_task_time);
-    if (tunnel == nullptr)
-    {
-        //TODO
-        return -1;
-    }
-    else
-    {
-        (*stream_response)->tunnel = tunnel;
-        tunnel->connectLocalV1(nullptr);
-    }
-
-    return 0;
-}
-
-bool nextResponse(MPPStreamResponse * stream_response, RawString * raw_response)
-{
-    DB::TrackedMppDataPacketPtr tmp_packet = stream_response->tunnel->getLocalTunnelSenderV1()->readForLocal();
-    if (tmp_packet == nullptr)
-        return -1;
-    auto & packet = tmp_packet->getPacket();
-    raw_response->size = packet.ByteSizeLong();
-    raw_response->data = malloc(raw_response->size);
-    packet.SerializeToArray(raw_response->data, raw_response->size);
-    return 0;
-}
-
-void deleteMPPStreamResponse(MPPStreamResponse * stream_response)
-{
-    delete stream_response;
-}
-
-int cancelMPPTask(void * ctx, RawString raw_request, RawString * raw_response [[maybe_unused]])
-{
-    auto * flash_ctx = static_cast<DB::FlashService *>(ctx);
-    mpp::CancelTaskRequest request;
-    bool parse_res = request.ParseFromArray(raw_request.data, raw_request.size);
-    assert(parse_res);
-
-    LOG_INFO(flash_ctx->log, "cancel mpp task request: {}", request.DebugString());
-
-    if (auto mpp_version = request.meta().mpp_version(); !DB::CheckMppVersion(mpp_version))
-    {
-        auto && err_msg
-            = fmt::format("Failed to cancel mpp task, reason=`{}`", DB::GenMppVersionErrorMessage(mpp_version));
-        LOG_WARNING(flash_ctx->log, err_msg);
-        return -1;
-    }
-
-    auto & tmt_context = flash_ctx->context->getTMTContext();
-    auto task_manager = tmt_context.getMPPTaskManager();
-    /// `CancelMPPTask` cancels the current mpp gather. In TiDB side, each gather has its own mpp coordinator, when TiDB cancel
-    /// a query, it will cancel all the coordinators
-    task_manager->abortMPPGather(
-        DB::MPPGatherId(request.meta()),
-        "Receive cancel request from TiDB",
-        DB::AbortType::ONCANCELLATION);
-
-    return 0;
-}
-
-#ifdef __cplusplus
-}
-#endif

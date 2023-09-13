@@ -1826,24 +1826,172 @@ int mainEntryClickHouseServer(int argc, char ** argv)
     }
 }
 
+#include <Server/ComputeEngineInterface.h>
+#include <Server/Server.h>
+#include <google/protobuf/message.h>
+#include <Flash/FlashService.h>
+#include <Flash/Mpp/MPPHandler.h>
+#include <Flash/Mpp/MPPTaskManager.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "compute-engine.h"
-
-void runComputeEngineDaemon()
+void runComputeEngine(char * config)
 {
-    DB::Server app;
-    try
+    char config_name[] = "--config-file";
+    char *s[2] = {config_name, config};
+    mainEntryClickHouseServer(2, s);
+}
+
+void * global_flash_context = nullptr;
+
+RawString newRawString(void * data, uint32_t size)
+{
+    RawString s;
+    s.data = data;
+    s.size = size;
+    return s;
+}
+
+void deleteRawString(RawString s)
+{
+    if (s.data != nullptr)
+        free(s.data);
+}
+
+int dispatchMPPTask(void *, RawString raw_request, RawString * raw_response)
+{
+    auto * flash_ctx = static_cast<DB::FlashService *>(global_flash_context);
+    LOG_INFO(flash_ctx->log, "DispatchTaskRequest!");
+    mpp::DispatchTaskRequest request;
+    bool parse_res = request.ParseFromArray(raw_request.data, raw_request.size);
+    if (!parse_res)
     {
-        app.run();
+        LOG_ERROR(flash_ctx->log, "parse mpp::DispatchTaskRequest error");
+        return -1;
     }
-    catch (...)
+
+    grpc::ServerContext grpc_context;
+    auto [db_context, status] = flash_ctx->createDBContext(&grpc_context);
+    if (!status.ok())
     {
-        std::cerr << DB::getCurrentExceptionMessage(true) << "\n";
-        abort();
+        LOG_ERROR(flash_ctx->log, "create db context error {}", status.error_code());
+        return status.error_code();
     }
+    DB::MPPHandler mpp_handler(request);
+    mpp::DispatchTaskResponse response;
+    mpp_handler.execute(db_context, &response);
+
+    raw_response->size = response.ByteSizeLong();
+    raw_response->data = malloc(raw_response->size);
+    bool serial_res = response.SerializeToArray(raw_response->data, raw_response->size);
+    if (!serial_res)
+    {
+        LOG_ERROR(flash_ctx->log, "serialize mpp::DispatchTaskResponse error");
+        return -1;
+    }
+
+    return 0;
+}
+
+struct MPPStreamResponse
+{
+    DB::MPPTunnelPtr tunnel;
+};
+
+int establishMPPConnection(void *, RawString raw_request, MPPStreamResponse ** stream_response)
+{
+    *stream_response = new MPPStreamResponse;
+
+    auto * flash_ctx = static_cast<DB::FlashService *>(global_flash_context);
+    LOG_INFO(flash_ctx->log, "EstablishMPPConnection!");
+    mpp::EstablishMPPConnectionRequest request;
+    bool parse_res = request.ParseFromArray(raw_request.data, raw_request.size);
+    if (!parse_res)
+    {
+        LOG_ERROR(flash_ctx->log, "parse mpp::EstablishMPPConnectionRequest error");
+        return -1;
+    }
+
+    auto & tmt_context = flash_ctx->context->getTMTContext();
+    auto task_manager = tmt_context.getMPPTaskManager();
+    std::chrono::seconds timeout(10);
+    Stopwatch watch;
+    auto [tunnel, err_msg] = task_manager->findTunnelWithTimeout(&request, timeout);
+    auto waiting_task_time = watch.elapsedMilliseconds();
+    if (tunnel == nullptr)
+    {
+        //TODO
+        return -1;
+    }
+    else
+    {
+        (*stream_response)->tunnel = tunnel;
+        tunnel->connectLocalV1(nullptr);
+    }
+    LOG_INFO(flash_ctx->log, "EstablishMPPConnection for {} wait task for {} ms.", tunnel->id(), waiting_task_time);
+
+    return 0;
+}
+
+int nextResponse(MPPStreamResponse * stream_response, RawString * raw_response)
+{
+    auto * flash_ctx = static_cast<DB::FlashService *>(global_flash_context);
+    DB::TrackedMppDataPacketPtr tmp_packet = stream_response->tunnel->getLocalTunnelSenderV1()->readForLocal();
+    if (tmp_packet == nullptr)
+    {
+        // End
+        return 1;
+    }
+    auto & packet = tmp_packet->getPacket();
+    raw_response->size = packet.ByteSizeLong();
+    raw_response->data = malloc(raw_response->size);
+    bool serial_res = packet.SerializeToArray(raw_response->data, raw_response->size);
+    if (!serial_res)
+    {
+        LOG_ERROR(flash_ctx->log, "serialize mpp::MPPDataPacket error");
+        return -1;
+    }
+    return 0;
+}
+
+void deleteMPPStreamResponse(MPPStreamResponse * stream_response)
+{
+    delete stream_response;
+}
+
+int cancelMPPTask(void *, RawString raw_request, RawString * raw_response [[maybe_unused]])
+{
+    auto * flash_ctx = static_cast<DB::FlashService *>(global_flash_context);
+    mpp::CancelTaskRequest request;
+    bool parse_res = request.ParseFromArray(raw_request.data, raw_request.size);
+    if (!parse_res)
+    {
+        LOG_ERROR(flash_ctx->log, "parse mpp::CancelTaskRequest error");
+        return -1;
+    }
+
+    LOG_INFO(flash_ctx->log, "cancel mpp task request: {}", request.DebugString());
+
+    if (auto mpp_version = request.meta().mpp_version(); !DB::CheckMppVersion(mpp_version))
+    {
+        auto && err_msg
+            = fmt::format("Failed to cancel mpp task, reason=`{}`", DB::GenMppVersionErrorMessage(mpp_version));
+        LOG_WARNING(flash_ctx->log, err_msg);
+        return -1;
+    }
+
+    auto & tmt_context = flash_ctx->context->getTMTContext();
+    auto task_manager = tmt_context.getMPPTaskManager();
+    /// `CancelMPPTask` cancels the current mpp gather. In TiDB side, each gather has its own mpp coordinator, when TiDB cancel
+    /// a query, it will cancel all the coordinators
+    task_manager->abortMPPGather(
+        DB::MPPGatherId(request.meta()),
+        "Receive cancel request from TiDB",
+        DB::AbortType::ONCANCELLATION);
+
+    return 0;
 }
 
 #ifdef __cplusplus
