@@ -33,7 +33,10 @@ RemoteRequest RemoteRequest::build(
 
     DAGSchema schema;
     tipb::DAGRequest dag_req;
-    auto * executor = filter_conditions.constructSelectionForRemoteRead(dag_req.mutable_root_executor());
+
+    auto * executor = dag_req.add_executors();
+
+    filter_conditions.constructSelectionForRemoteRead(dag_req);
 
     {
         tipb::Executor * ts_exec = executor;
@@ -72,8 +75,10 @@ RemoteRequest RemoteRequest::build(
             }
             dag_req.add_output_offsets(i);
         }
-        dag_req.set_encode_type(tipb::EncodeType::TypeCHBlock);
-        dag_req.set_force_encode_type(true);
+        //dag_req.set_encode_type(tipb::EncodeType::TypeCHBlock);
+        //dag_req.set_force_encode_type(true);
+        dag_req.set_encode_type(tipb::EncodeType::TypeChunk);
+        dag_req.set_force_encode_type(false);
     }
     /// do not collect execution summaries because in this case because the execution summaries
     /// will be collected by CoprocessorBlockInputStream.

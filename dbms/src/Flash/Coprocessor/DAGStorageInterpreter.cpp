@@ -123,6 +123,8 @@ std::tuple<std::optional<RegionRetryList>, RegionException::RegionReadStatus> Ma
             }
             ImutRegionRangePtr region_range{nullptr};
             auto status = GetRegionReadStatus(r, tmt.getKVStore()->getRegion(id), region_range);
+            if (batch_cop)
+                status = RegionException::RegionReadStatus::NOT_FOUND;
             fiu_do_on(FailPoints::force_remote_read_for_batch_cop, {
                 if (batch_cop)
                     status = RegionException::RegionReadStatus::NOT_FOUND;
@@ -697,7 +699,7 @@ std::vector<pingcap::coprocessor::CopTask> DAGStorageInterpreter::buildCopTasks(
         req->schema_version = context.getSettingsRef().schema_version;
 
         pingcap::kv::Backoffer bo(pingcap::kv::copBuildTaskMaxBackoff);
-        pingcap::kv::StoreType store_type = pingcap::kv::StoreType::TiFlash;
+        pingcap::kv::StoreType store_type = pingcap::kv::StoreType::TiKV;
         std::multimap<std::string, std::string> meta_data;
         meta_data.emplace("is_remote_read", "true");
 

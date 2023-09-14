@@ -32,20 +32,16 @@ FilterConditions::FilterConditions(
     }
 }
 
-tipb::Executor * FilterConditions::constructSelectionForRemoteRead(tipb::Executor * mutable_executor) const
+void FilterConditions::constructSelectionForRemoteRead(tipb::DAGRequest & dag_req) const
 {
     if (hasValue())
     {
+        auto * mutable_executor = dag_req.add_executors();
         mutable_executor->set_tp(tipb::ExecType::TypeSelection);
         mutable_executor->set_executor_id(executor_id);
         auto * new_selection = mutable_executor->mutable_selection();
         for (const auto & condition : conditions)
             *new_selection->add_conditions() = condition;
-        return new_selection->mutable_child();
-    }
-    else
-    {
-        return mutable_executor;
     }
 }
 

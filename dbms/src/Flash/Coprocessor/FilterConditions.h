@@ -16,6 +16,7 @@
 
 #include <common/types.h>
 #include <tipb/executor.pb.h>
+#include <tipb/select.pb.h>
 
 #include <vector>
 
@@ -38,7 +39,7 @@ struct FilterConditions
 
     bool hasValue() const { return !conditions.empty(); }
 
-    tipb::Executor * constructSelectionForRemoteRead(tipb::Executor * mutable_executor) const;
+    void constructSelectionForRemoteRead(tipb::DAGRequest & dag_req) const;
 
     String executor_id;
     google::protobuf::RepeatedPtrField<tipb::Expr> conditions;
