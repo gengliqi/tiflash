@@ -228,9 +228,7 @@ if (USE_STATIC_LIBRARIES AND HAVE_NO_PIE)
     set (CMAKE_C_FLAGS                   "${CMAKE_C_FLAGS} ${FLAG_NO_PIE}")
 endif ()
 
-if (NOT MAKE_STATIC_LIBRARIES)
-    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-endif ()
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include (cmake/sanitize.cmake)
 
