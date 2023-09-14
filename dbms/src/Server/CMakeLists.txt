@@ -195,7 +195,6 @@ target_link_libraries(compute-engine-lib PRIVATE ${TIFLASH_PROXY_LIBRARY})
 target_link_libraries (compute-engine-lib PUBLIC
         dbms
         server_for_test
-        test_util_gtest_main
         delta_merge
         daemon
         tiflash_common_io
@@ -203,4 +202,9 @@ target_link_libraries (compute-engine-lib PUBLIC
         tiflash_functions
         tiflash_aggregate_functions
         tiflash_table_functions)
+
+if (ENABLE_TESTS)
+    target_link_libraries (compute-engine-lib PUBLIC test_util_gtest_main)
+endif ()
+
 target_include_directories (compute-engine-lib PUBLIC ${TiFlash_SOURCE_DIR}/libs/libdaemon/include)
