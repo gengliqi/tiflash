@@ -176,7 +176,7 @@ struct HashTableCell
 
     using key_type = Key;
     using value_type = Key;
-    using mapped_type = VoidMapped;
+    using mapped_type = void;
 
     Key key;
 

@@ -469,8 +469,11 @@ struct Inserter<ASTTableJoin::Strictness::Any, Map, KeyGetter>
     {
         auto emplace_result = key_getter.emplaceKey(map, i, pool, sort_key_container);
 
-        if (emplace_result.isInserted())
-            new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
+        if constexpr (!std::is_same<typename Map::mapped_type, void>::value)
+        {
+            if (emplace_result.isInserted())
+                new (&emplace_result.getMapped()) typename Map::mapped_type(stored_block, i);
+        }
     }
 };
 

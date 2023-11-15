@@ -1581,7 +1581,7 @@ void Join::joinBlockNullAwareSemiImpl(
 
     if (!res_list.empty())
     {
-        NASemiJoinHelper<KIND, STRICTNESS, typename Maps::MappedType::Base_t>
+        NASemiJoinHelper<KIND, STRICTNESS, typename Maps::MappedType>
             helper(block, left_columns, right_columns, blocks, null_rows, max_block_size, non_equal_conditions);
 
         helper.joinResult(res_list);
@@ -1753,7 +1753,7 @@ void Join::joinBlockSemiImpl(
     {
         if (!res_list.empty())
         {
-            SemiJoinHelper<KIND, typename Maps::MappedType::Base_t>
+            SemiJoinHelper<KIND, typename Maps::MappedType>
                 helper(block, left_columns, right_columns, max_block_size, non_equal_conditions);
 
             helper.joinResult(res_list);
