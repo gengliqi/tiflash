@@ -1433,8 +1433,75 @@ void NO_INLINE probeBlockImplTypeCase(
 
     probe_process_info.resetColumnBuffer(num_columns_to_add);
 
+    using KeyGetterType
+        = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
+    using KeyType = std::remove_reference_t<decltype(keyHolderGetKey(std::declval<KeyGetterType &>()))>;
+    PaddedPODArray<std::tuple<KeyType, size_t, size_t>> key_hashes;
+    const size_t PREFETCH_SIZE = 8;
+    key_hashes.resize(PREFETCH_SIZE);
+
+    auto prefetch_func = [&](size_t row_pos) {
+        if (has_null_map && (*null_map)[row_pos])
+            return;
+        auto key_holder = key_getter.getKeyHolder(row_pos, &pool, sort_key_containers);
+        size_t key_pos = (row_pos - probe_process_info.start_row) & (PREFETCH_SIZE - 1);
+        std::get<0>(key_hashes[key_pos]) = std::move(keyHolderGetKey(key_holder));
+        bool zero_flag = ZeroTraits::check(std::get<0>(key_hashes[key_pos]));
+        if (zero_flag)
+            std::get<1>(key_hashes[key_pos]) = 0;
+        else
+            std::get<1>(key_hashes[key_pos])
+                = all_maps[probe_process_info.partition_index]->hash(std::get<0>(key_hashes[key_pos]));
+
+        size_t segment_index = 0;
+        if (join_build_info.is_spilled)
+        {
+            segment_index = probe_process_info.partition_index;
+        }
+        else if (need_virtual_dispatch_for_probe_block)
+        {
+            /// Need to calculate the correct segment_index so that rows with same key will map to the same segment_index both in Build and Prob
+            /// The "reproduce" of segment_index generated in Build phase relies on the facts that:
+            /// Possible pipelines(FineGrainedShuffleWriter => ExchangeReceiver => HashBuild)
+            /// 1. In FineGrainedShuffleWriter, selector value finally maps to packet_stream_id by '% fine_grained_shuffle_count'
+            /// 2. In ExchangeReceiver, build_stream_id = packet_stream_id % build_stream_count;
+            /// 3. In HashBuild, build_concurrency decides map's segment size, and build_steam_id decides the segment index
+            if (join_build_info.enable_fine_grained_shuffle)
+            {
+                auto packet_stream_id = build_hash_data[row_pos] % join_build_info.fine_grained_shuffle_count;
+                if likely (join_build_info.fine_grained_shuffle_count == segment_size)
+                    segment_index = packet_stream_id;
+                else
+                    segment_index = packet_stream_id % segment_size;
+            }
+            else
+            {
+                segment_index = build_hash_data[row_pos] % join_build_info.build_concurrency;
+            }
+        }
+        else
+        {
+            segment_index = std::get<1>(key_hashes[key_pos]) % segment_size;
+        }
+
+        std::get<2>(key_hashes[key_pos]) = segment_index;
+
+        all_maps[segment_index]->prefetchRead(std::get<1>(key_hashes[key_pos]));
+    };
+
+    for (size_t j = 0; j < PREFETCH_SIZE; ++j)
+    {
+        size_t row_pos = j + probe_process_info.start_row;
+        if (row_pos >= rows)
+            break;
+        prefetch_func(row_pos);
+    }
+
     for (i = probe_process_info.start_row; i < rows; ++i)
     {
+        if (i + PREFETCH_SIZE < rows)
+            prefetch_func(i + PREFETCH_SIZE);
+
         if (has_null_map && (*null_map)[i])
         {
             if constexpr (row_flagged_map)
@@ -1454,7 +1521,7 @@ void NO_INLINE probeBlockImplTypeCase(
         }
         else
         {
-            auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+            /*auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
             SCOPE_EXIT(keyHolderDiscardKey(key_holder));
             auto key = keyHolderGetKey(key_holder);
 
@@ -1463,38 +1530,12 @@ void NO_INLINE probeBlockImplTypeCase(
             if (!zero_flag)
             {
                 hash_value = all_maps[probe_process_info.partition_index]->hash(key);
-            }
+            }*/
 
-            size_t segment_index = 0;
-            if (join_build_info.is_spilled)
-            {
-                segment_index = probe_process_info.partition_index;
-            }
-            else if (need_virtual_dispatch_for_probe_block)
-            {
-                /// Need to calculate the correct segment_index so that rows with same key will map to the same segment_index both in Build and Prob
-                /// The "reproduce" of segment_index generated in Build phase relies on the facts that:
-                /// Possible pipelines(FineGrainedShuffleWriter => ExchangeReceiver => HashBuild)
-                /// 1. In FineGrainedShuffleWriter, selector value finally maps to packet_stream_id by '% fine_grained_shuffle_count'
-                /// 2. In ExchangeReceiver, build_stream_id = packet_stream_id % build_stream_count;
-                /// 3. In HashBuild, build_concurrency decides map's segment size, and build_steam_id decides the segment index
-                if (join_build_info.enable_fine_grained_shuffle)
-                {
-                    auto packet_stream_id = build_hash_data[i] % join_build_info.fine_grained_shuffle_count;
-                    if likely (join_build_info.fine_grained_shuffle_count == segment_size)
-                        segment_index = packet_stream_id;
-                    else
-                        segment_index = packet_stream_id % segment_size;
-                }
-                else
-                {
-                    segment_index = build_hash_data[i] % join_build_info.build_concurrency;
-                }
-            }
-            else
-            {
-                segment_index = hash_value % segment_size;
-            }
+            size_t key_pos = (i - probe_process_info.start_row) & (PREFETCH_SIZE - 1);
+            auto key = std::move(std::get<0>(key_hashes[key_pos]));
+            size_t hash_value = std::get<1>(key_hashes[key_pos]);
+            size_t segment_index = std::get<2>(key_hashes[key_pos]);
 
             auto & internal_map = *all_maps[segment_index];
             /// do not require segment lock because in join, the hash table can not be changed in probe stage.
