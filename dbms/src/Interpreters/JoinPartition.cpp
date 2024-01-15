@@ -1443,15 +1443,15 @@ void NO_INLINE probeBlockImplTypeCase(
     auto prefetch_func = [&](size_t row_pos) {
         if (has_null_map && (*null_map)[row_pos])
             return;
+
         auto key_holder = key_getter.getKeyHolder(row_pos, &pool, sort_key_containers);
         size_t key_pos = (row_pos - probe_process_info.start_row) & (PREFETCH_SIZE - 1);
-        std::get<0>(key_hashes[key_pos]) = std::move(keyHolderGetKey(key_holder));
-        bool zero_flag = ZeroTraits::check(std::get<0>(key_hashes[key_pos]));
-        if (zero_flag)
-            std::get<1>(key_hashes[key_pos]) = 0;
-        else
-            std::get<1>(key_hashes[key_pos])
-                = all_maps[probe_process_info.partition_index]->hash(std::get<0>(key_hashes[key_pos]));
+        auto key = keyHolderGetKey(key_holder);
+
+        size_t hash_value = 0;
+        bool zero_flag = ZeroTraits::check(key);
+        if (!zero_flag)
+            hash_value = all_maps[probe_process_info.partition_index]->hash(key);
 
         size_t segment_index = 0;
         if (join_build_info.is_spilled)
@@ -1481,12 +1481,12 @@ void NO_INLINE probeBlockImplTypeCase(
         }
         else
         {
-            segment_index = std::get<1>(key_hashes[key_pos]) % segment_size;
+            segment_index = hash_value % segment_size;
         }
 
-        std::get<2>(key_hashes[key_pos]) = segment_index;
+        all_maps[segment_index]->prefetchRead(hash_value);
 
-        all_maps[segment_index]->prefetchRead(std::get<1>(key_hashes[key_pos]));
+        key_hashes[key_pos] = {std::move(key), hash_value, segment_index};
     };
 
     for (size_t j = 0; j < PREFETCH_SIZE; ++j)
@@ -1499,11 +1499,11 @@ void NO_INLINE probeBlockImplTypeCase(
 
     for (i = probe_process_info.start_row; i < rows; ++i)
     {
-        if (i + PREFETCH_SIZE < rows)
-            prefetch_func(i + PREFETCH_SIZE);
-
         if (has_null_map && (*null_map)[i])
         {
+            if (i + PREFETCH_SIZE < rows)
+                prefetch_func(i + PREFETCH_SIZE);
+
             if constexpr (row_flagged_map)
             {
                 block_full = RowFlaggedHashMapAdder<Map>::addNotFound(i, current_offset, offsets_to_replicate.get());
@@ -1536,6 +1536,9 @@ void NO_INLINE probeBlockImplTypeCase(
             auto key = std::move(std::get<0>(key_hashes[key_pos]));
             size_t hash_value = std::get<1>(key_hashes[key_pos]);
             size_t segment_index = std::get<2>(key_hashes[key_pos]);
+
+            if (i + PREFETCH_SIZE < rows)
+                prefetch_func(i + PREFETCH_SIZE);
 
             auto & internal_map = *all_maps[segment_index];
             /// do not require segment lock because in join, the hash table can not be changed in probe stage.
