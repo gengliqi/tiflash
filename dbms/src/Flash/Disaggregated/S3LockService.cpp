@@ -18,9 +18,9 @@
 #include <Flash/ServiceUtils.h>
 #include <Interpreters/Context.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <Storages/S3/S3Common.h>
 #include <Storages/S3/S3Filename.h>
-#include <Storages/Transaction/TMTContext.h>
 #include <TiDB/OwnerInfo.h>
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/ListObjectsRequest.h>
@@ -176,7 +176,7 @@ bool S3LockService::tryAddLockImpl(
     const String & data_file_key,
     UInt64 lock_store_id,
     UInt64 lock_seq,
-    disaggregated::TryAddLockResponse * response)
+    disaggregated::TryAddLockResponse * response) NO_THREAD_SAFETY_ANALYSIS
 {
     GET_METRIC(tiflash_disaggregated_object_lock_request_count, type_lock).Increment();
     const S3FilenameView key_view = S3FilenameView::fromKey(data_file_key);

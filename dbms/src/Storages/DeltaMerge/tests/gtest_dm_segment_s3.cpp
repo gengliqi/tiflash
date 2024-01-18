@@ -21,12 +21,12 @@
 #include <Storages/DeltaMerge/StoragePool.h>
 #include <Storages/DeltaMerge/WriteBatchesImpl.h>
 #include <Storages/DeltaMerge/tests/DMTestEnv.h>
+#include <Storages/KVStore/KVStore.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <Storages/Page/PageConstants.h>
 #include <Storages/Page/V3/Universal/UniversalPageStorage.h>
 #include <Storages/PathPool.h>
 #include <Storages/S3/S3Common.h>
-#include <Storages/Transaction/KVStore.h>
-#include <Storages/Transaction/TMTContext.h>
 #include <TestUtils/FunctionTestUtils.h>
 #include <TestUtils/InputStreamTestUtils.h>
 #include <TestUtils/TiFlashStorageTestBasic.h>
@@ -35,7 +35,6 @@
 #include <gtest/gtest.h>
 
 #include <ctime>
-#include <future>
 #include <memory>
 
 namespace DB
@@ -142,7 +141,7 @@ protected:
     {
         *table_columns = *columns;
 
-        dm_context = std::make_unique<DMContext>(
+        dm_context = DMContext::createUnique(
             *db_context,
             storage_path_pool,
             storage_pool,
@@ -210,7 +209,7 @@ try
     std::vector<SegmentPtr> ordered_segments = {left, right};
     segment = Segment::merge(dmContext(), tableColumns(), ordered_segments);
 
-    auto wn_ps = dmContext().db_context.getWriteNodePageStorage();
+    auto wn_ps = dmContext().global_context.getWriteNodePageStorage();
     wn_ps->gc(/*not_skip*/ true);
     {
         auto valid_external_ids = wn_ps->page_directory->getAliveExternalIds(

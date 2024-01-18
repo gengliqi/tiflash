@@ -31,7 +31,6 @@
 
 namespace DB
 {
-class Context;
 
 /** Every two seconds checks configuration files for update.
   * If configuration is changed, then config will be reloaded by ConfigProcessor
@@ -93,6 +92,8 @@ private:
 
     std::atomic_bool quit{false};
     std::thread thread;
+
+    std::condition_variable cv;
 };
 
 } // namespace DB

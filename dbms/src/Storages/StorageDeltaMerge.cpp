@@ -43,25 +43,23 @@
 #include <Storages/AlterCommands.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileSchema.h>
 #include <Storages/DeltaMerge/DeltaMergeHelpers.h>
-#include <Storages/DeltaMerge/DeltaMergeStore.h>
 #include <Storages/DeltaMerge/Filter/PushDownFilter.h>
 #include <Storages/DeltaMerge/Filter/RSOperator.h>
 #include <Storages/DeltaMerge/FilterParser/FilterParser.h>
 #include <Storages/DeltaMerge/Remote/DisaggSnapshot.h>
+#include <Storages/KVStore/Region.h>
+#include <Storages/KVStore/TMTContext.h>
+#include <Storages/KVStore/TiKVHelpers/TiKVRecordFormat.h>
 #include <Storages/MutableSupport.h>
 #include <Storages/PathPool.h>
 #include <Storages/PrimaryKeyNotMatchException.h>
 #include <Storages/StorageDeltaMerge.h>
 #include <Storages/StorageDeltaMergeHelpers.h>
-#include <Storages/Transaction/Region.h>
-#include <Storages/Transaction/TMTContext.h>
-#include <Storages/Transaction/TiKVRecordFormat.h>
-#include <Storages/Transaction/TypeMapping.h>
+#include <TiDB/Decode/TypeMapping.h>
 #include <TiDB/Schema/SchemaNameMapper.h>
 #include <common/config_common.h>
 #include <common/logger_useful.h>
 
-#include <random>
 
 namespace DB
 {
@@ -1180,9 +1178,17 @@ UInt64 StorageDeltaMerge::ingestFiles(
     return getAndMaybeInitStore()->ingestFiles(global_context, settings, range, external_files, clear_data_in_range);
 }
 
-void StorageDeltaMerge::ingestSegmentsFromCheckpointInfo(
+DM::Segments StorageDeltaMerge::buildSegmentsFromCheckpointInfo(
     const DM::RowKeyRange & range,
     CheckpointInfoPtr checkpoint_info,
+    const Settings & settings)
+{
+    return getAndMaybeInitStore()->buildSegmentsFromCheckpointInfo(global_context, settings, range, checkpoint_info);
+}
+
+void StorageDeltaMerge::ingestSegmentsFromCheckpointInfo(
+    const DM::RowKeyRange & range,
+    const CheckpointIngestInfoPtr & checkpoint_info,
     const Settings & settings)
 {
     GET_METRIC(tiflash_storage_command_count, type_ingest_checkpoint).Increment();

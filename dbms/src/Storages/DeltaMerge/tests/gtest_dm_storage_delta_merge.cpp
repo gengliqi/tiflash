@@ -36,14 +36,14 @@
 #include <Storages/DeltaMerge/ScanContext.h>
 #include <Storages/DeltaMerge/StoragePool.h>
 #include <Storages/DeltaMerge/tests/DMTestEnv.h>
+#include <Storages/KVStore/Decode/TiKVRange.h>
+#include <Storages/KVStore/MultiRaft/RegionRangeKeys.h>
+#include <Storages/KVStore/TiKVHelpers/TiKVRecordFormat.h>
 #include <Storages/StorageDeltaMerge.h>
 #include <Storages/StorageDeltaMergeHelpers.h>
-#include <Storages/Transaction/RegionRangeKeys.h>
-#include <Storages/Transaction/TiDB.h>
-#include <Storages/Transaction/TiKVRange.h>
-#include <Storages/Transaction/TiKVRecordFormat.h>
 #include <TestUtils/FunctionTestUtils.h>
 #include <TestUtils/InputStreamTestUtils.h>
+#include <TiDB/Schema/TiDB.h>
 
 #include <ext/scope_guard.h>
 #include <limits>
@@ -124,12 +124,17 @@ try
         ctx->getSettingsRef().resolve_locks,
         std::numeric_limits<UInt64>::max(),
         scan_context);
+    // these field should live long enough because `DAGQueryInfo` only
+    // keep a ref on them
+    const google::protobuf::RepeatedPtrField<tipb::Expr> filters{};
     const google::protobuf::RepeatedPtrField<tipb::Expr> pushed_down_filters{};
+    ColumnInfos source_columns{};
+    const std::vector<int> runtime_filter_ids;
     query_info.dag_query = std::make_unique<DAGQueryInfo>(
-        google::protobuf::RepeatedPtrField<tipb::Expr>(),
+        filters,
         pushed_down_filters, // Not care now
-        std::vector<TiDB::ColumnInfo>{}, // Not care now
-        std::vector<int>{},
+        source_columns, // Not care now
+        runtime_filter_ids,
         0,
         ctx->getTimezoneInfo());
     BlockInputStreams ins = storage->read(column_names, query_info, *ctx, stage2, 8192, 1);
@@ -674,12 +679,17 @@ try
         ctx->getSettingsRef().resolve_locks,
         std::numeric_limits<UInt64>::max(),
         scan_context);
+    // these field should live long enough because `DAGQueryInfo` only
+    // keep a ref on them
+    const google::protobuf::RepeatedPtrField<tipb::Expr> filters{};
     const google::protobuf::RepeatedPtrField<tipb::Expr> pushed_down_filters{};
+    ColumnInfos source_columns{};
+    const std::vector<int> runtime_filter_ids;
     query_info.dag_query = std::make_unique<DAGQueryInfo>(
-        google::protobuf::RepeatedPtrField<tipb::Expr>(),
+        filters,
         pushed_down_filters, // Not care now
-        std::vector<TiDB::ColumnInfo>{}, // Not care now
-        std::vector<int>{},
+        source_columns, // Not care now
+        runtime_filter_ids,
         0,
         ctx->getTimezoneInfo());
     Names read_columns = {"col1", EXTRA_TABLE_ID_COLUMN_NAME, "col2"};
@@ -786,12 +796,17 @@ try
             ctx->getSettingsRef().resolve_locks,
             std::numeric_limits<UInt64>::max(),
             scan_context);
+        // these field should live long enough because `DAGQueryInfo` only
+        // keep a ref on them
+        const google::protobuf::RepeatedPtrField<tipb::Expr> filters{};
         const google::protobuf::RepeatedPtrField<tipb::Expr> pushed_down_filters{};
+        ColumnInfos source_columns{};
+        const std::vector<int> runtime_filter_ids;
         query_info.dag_query = std::make_unique<DAGQueryInfo>(
-            google::protobuf::RepeatedPtrField<tipb::Expr>(),
+            filters,
             pushed_down_filters, // Not care now
-            std::vector<TiDB::ColumnInfo>{}, // Not care now
-            std::vector<int>{},
+            source_columns, // Not care now
+            runtime_filter_ids,
             0,
             ctx->getTimezoneInfo());
         Names read_columns = {"col1", EXTRA_TABLE_ID_COLUMN_NAME, "col2"};

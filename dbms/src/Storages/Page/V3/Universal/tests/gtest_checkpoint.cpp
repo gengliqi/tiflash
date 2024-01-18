@@ -39,11 +39,6 @@
 #include <limits>
 using namespace DB::S3::tests;
 
-namespace DB::FailPoints
-{
-extern const char force_ps_wal_compact[];
-} // namespace DB::FailPoints
-
 namespace DB::PS::universal::tests
 {
 
@@ -1020,7 +1015,7 @@ protected:
     UInt64 tag = 0;
     UInt64 store_id = 2;
 
-    bool old_remote_checkpoint_only_upload_manifest;
+    bool old_remote_checkpoint_only_upload_manifest = false;
 
     LoggerPtr log;
 };

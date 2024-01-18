@@ -27,6 +27,8 @@ namespace CurrentMetrics
 {
 extern const Metric MemoryTrackingQueryStorageTask;
 extern const Metric MemoryTrackingFetchPages;
+extern const Metric MemoryTrackingSharedColumnData;
+extern const Metric MemoryTrackingKVStore;
 } // namespace CurrentMetrics
 
 std::atomic<Int64> real_rss{0}, proc_num_threads{1}, baseline_of_query_mem_tracker{0};
@@ -38,7 +40,7 @@ MemoryTracker::~MemoryTracker()
     if (is_global_root)
         return;
 
-    if (peak)
+    if (peak && log_peak_memory_usage_in_destructor)
     {
         try
         {
@@ -75,12 +77,17 @@ static String storageMemoryUsageDetail()
 {
     return fmt::format(
         "non-query: peak={}, amount={}; "
+        "kvstore: peak={}, amount={}; "
         "query-storage-task: peak={}, amount={}; "
-        "fetch-pages: peak={}, amount={}.",
+        "fetch-pages: peak={}, amount={}; "
+        "shared-column-data: peak={}, amount={}.",
         root_of_non_query_mem_trackers ? formatReadableSizeWithBinarySuffix(root_of_non_query_mem_trackers->getPeak())
                                        : "0",
         root_of_non_query_mem_trackers ? formatReadableSizeWithBinarySuffix(root_of_non_query_mem_trackers->get())
                                        : "0",
+        root_of_kvstore_mem_trackers ? formatReadableSizeWithBinarySuffix(root_of_kvstore_mem_trackers->getPeak())
+                                     : "0",
+        root_of_kvstore_mem_trackers ? formatReadableSizeWithBinarySuffix(root_of_kvstore_mem_trackers->get()) : "0",
         sub_root_of_query_storage_task_mem_trackers
             ? formatReadableSizeWithBinarySuffix(sub_root_of_query_storage_task_mem_trackers->getPeak())
             : "0",
@@ -88,7 +95,11 @@ static String storageMemoryUsageDetail()
             ? formatReadableSizeWithBinarySuffix(sub_root_of_query_storage_task_mem_trackers->get())
             : "0",
         fetch_pages_mem_tracker ? formatReadableSizeWithBinarySuffix(fetch_pages_mem_tracker->getPeak()) : "0",
-        fetch_pages_mem_tracker ? formatReadableSizeWithBinarySuffix(fetch_pages_mem_tracker->get()) : "0");
+        fetch_pages_mem_tracker ? formatReadableSizeWithBinarySuffix(fetch_pages_mem_tracker->get()) : "0",
+        shared_column_data_mem_tracker ? formatReadableSizeWithBinarySuffix(shared_column_data_mem_tracker->getPeak())
+                                       : "0",
+        shared_column_data_mem_tracker ? formatReadableSizeWithBinarySuffix(shared_column_data_mem_tracker->get())
+                                       : "0");
 }
 
 void MemoryTracker::logPeakMemoryUsage() const
@@ -111,7 +122,12 @@ void MemoryTracker::alloc(Int64 size, bool check_memory_limit)
     reportAmount();
 
     if (!next.load(std::memory_order_relaxed))
+    {
         CurrentMetrics::add(metric, size);
+        // Only add shared column data size to root_of_query_mem_trackers.
+        if (shared_column_data_mem_tracker && root_of_query_mem_trackers.get() == this)
+            will_be += shared_column_data_mem_tracker->get();
+    }
 
     if (check_memory_limit)
     {
@@ -282,9 +298,11 @@ thread_local MemoryTracker * current_memory_tracker = nullptr;
 
 std::shared_ptr<MemoryTracker> root_of_non_query_mem_trackers = MemoryTracker::createGlobalRoot();
 std::shared_ptr<MemoryTracker> root_of_query_mem_trackers = MemoryTracker::createGlobalRoot();
+std::shared_ptr<MemoryTracker> root_of_kvstore_mem_trackers = MemoryTracker::createGlobalRoot();
 
 std::shared_ptr<MemoryTracker> sub_root_of_query_storage_task_mem_trackers;
 std::shared_ptr<MemoryTracker> fetch_pages_mem_tracker;
+std::shared_ptr<MemoryTracker> shared_column_data_mem_tracker;
 
 void initStorageMemoryTracker(Int64 limit, Int64 larger_than_limit)
 {
@@ -293,15 +311,26 @@ void initStorageMemoryTracker(Int64 limit, Int64 larger_than_limit)
         "Storage task memory limit={}, larger_than_limit={}",
         formatReadableSizeWithBinarySuffix(limit),
         formatReadableSizeWithBinarySuffix(larger_than_limit));
+
+    // When these (static) mem tracker are reset, it means the process is shutdown and the logging system is stopped.
+    // Do not log down the usage info in dctor of them.
+    bool log_in_destructor = false;
     RUNTIME_CHECK(sub_root_of_query_storage_task_mem_trackers == nullptr);
-    sub_root_of_query_storage_task_mem_trackers = MemoryTracker::create(limit);
+    sub_root_of_query_storage_task_mem_trackers = MemoryTracker::create(limit, nullptr, log_in_destructor);
     sub_root_of_query_storage_task_mem_trackers->setBytesThatRssLargerThanLimit(larger_than_limit);
     sub_root_of_query_storage_task_mem_trackers->setAmountMetric(CurrentMetrics::MemoryTrackingQueryStorageTask);
 
     RUNTIME_CHECK(fetch_pages_mem_tracker == nullptr);
-    fetch_pages_mem_tracker = MemoryTracker::create();
-    fetch_pages_mem_tracker->setNext(sub_root_of_query_storage_task_mem_trackers.get());
+    fetch_pages_mem_tracker
+        = MemoryTracker::create(0, sub_root_of_query_storage_task_mem_trackers.get(), log_in_destructor);
     fetch_pages_mem_tracker->setAmountMetric(CurrentMetrics::MemoryTrackingFetchPages);
+
+    RUNTIME_CHECK(shared_column_data_mem_tracker == nullptr);
+    shared_column_data_mem_tracker
+        = MemoryTracker::create(0, sub_root_of_query_storage_task_mem_trackers.get(), log_in_destructor);
+    shared_column_data_mem_tracker->setAmountMetric(CurrentMetrics::MemoryTrackingSharedColumnData);
+
+    root_of_kvstore_mem_trackers->setAmountMetric(CurrentMetrics::MemoryTrackingKVStore);
 }
 
 namespace CurrentMemoryTracker

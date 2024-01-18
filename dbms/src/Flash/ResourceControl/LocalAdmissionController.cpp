@@ -22,6 +22,9 @@ namespace DB
 {
 void LocalAdmissionController::warmupResourceGroupInfoCache(const std::string & name)
 {
+    if (unlikely(stopped))
+        return;
+
     if (name.empty())
         return;
 
@@ -52,24 +55,35 @@ void LocalAdmissionController::warmupResourceGroupInfoCache(const std::string & 
 
 void LocalAdmissionController::startBackgroudJob()
 {
-    try
+    while (!stopped.load())
     {
-        unique_client_id = etcd_client->acquireServerIDFromPD();
+        try
+        {
+            // If the unique_client_id cannot be successfully obtained from GAC for a long time, then the behavior of resource control is:
+            // when the resource group has consumed RU, all queries cannot be scheduled anymore.
+            unique_client_id = etcd_client->acquireServerIDFromGAC();
+            need_reset_unique_client_id.store(true);
+        }
+        catch (...)
+        {
+            // Needs to catch in case we got context timeout error.
+            LOG_ERROR(
+                log,
+                "get unique_client_id from PD error: {}, resource control may not work properly, try again later",
+                getCurrentExceptionMessage(false));
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            continue;
+        }
+        break;
     }
-    catch (...)
-    {
-        LOG_FATAL(log, getCurrentExceptionMessage(false));
-        std::terminate();
-    }
+    LOG_INFO(log, "get unique_client_id succeed: {}", unique_client_id);
 
     while (!stopped.load())
     {
-        std::function<void()> local_refill_token_callback = nullptr;
         bool fetch_token_periodically = false;
 
         {
             std::unique_lock<std::mutex> lock(mu);
-            local_refill_token_callback = refill_token_callback;
 
             if (low_token_resource_groups.empty())
             {
@@ -86,14 +100,18 @@ void LocalAdmissionController::startBackgroudJob()
             else
                 fetchTokensForLowTokenResourceGroups();
 
-            if (local_refill_token_callback)
-                local_refill_token_callback();
+            {
+                // Need lock here to avoid RCQ has already been destroied.
+                std::lock_guard lock(mu);
+                if (refill_token_callback)
+                    refill_token_callback();
+            }
 
             checkDegradeMode();
         }
         catch (...)
         {
-            handleBackgroundError(getCurrentExceptionMessage(true));
+            LOG_ERROR(log, getCurrentExceptionMessage(true));
         }
     }
 }
@@ -141,23 +159,40 @@ std::optional<LocalAdmissionController::AcquireTokenInfo> LocalAdmissionControll
     const ResourceGroupPtr & resource_group,
     bool is_periodically_fetch)
 {
-    double token_consumption = resource_group->getAndCleanConsumptionDelta();
+    double token_consumption = 0.0;
     double acquire_tokens = 0.0;
+    const auto now = SteadyClock::now();
+
+    const auto consumption_update_info
+        = resource_group->updateConsumptionSpeedInfoIfNecessary(now, DEFAULT_FETCH_GAC_INTERVAL);
+    if (consumption_update_info.updated)
+        token_consumption = consumption_update_info.delta;
 
     auto get_acquire_tokens = [&]() {
         if (resource_group->burstable)
             return;
 
         // To avoid periodically_token_fetch after low_token_fetch immediately
-        const auto now = std::chrono::steady_clock::now();
-        if (is_periodically_fetch && !resource_group->needFetchTokenPeridically(now, DEFAULT_FETCH_GAC_INTERVAL))
+        if (is_periodically_fetch && !resource_group->needFetchToken(now, DEFAULT_FETCH_GAC_INTERVAL))
             return;
 
         // During trickle mode, no need to fetch tokens from GAC.
         if (resource_group->inTrickleModeLease(now))
             return;
 
-        acquire_tokens = resource_group->getAcquireRUNum(DEFAULT_FETCH_GAC_INTERVAL.count(), ACQUIRE_RU_AMPLIFICATION);
+        if (resource_group->trickleModeLeaseExpire(now))
+        {
+            acquire_tokens
+                = consumption_update_info.speed * DEFAULT_FETCH_GAC_INTERVAL.count() * ACQUIRE_RU_AMPLIFICATION;
+        }
+        else
+        {
+            acquire_tokens = resource_group->getAcquireRUNum(
+                consumption_update_info.speed,
+                DEFAULT_FETCH_GAC_INTERVAL.count(),
+                ACQUIRE_RU_AMPLIFICATION);
+        }
+
         assert(acquire_tokens >= 0.0);
     };
 
@@ -174,13 +209,14 @@ std::optional<LocalAdmissionController::AcquireTokenInfo> LocalAdmissionControll
 
 void LocalAdmissionController::fetchTokensFromGAC(
     const std::vector<AcquireTokenInfo> & acquire_infos,
-    const std::string & desc_str)
+    const std::string & desc_str,
+    bool is_final_report)
 {
     if (acquire_infos.empty())
     {
         // In theory last_fetch_tokens_from_gac_timepoint should only be updated when network to GAC is ok,
         // but we still update here to avoid resource groups that has enough RU goto degrade mode.
-        last_fetch_tokens_from_gac_timepoint = std::chrono::steady_clock::now();
+        last_fetch_tokens_from_gac_timepoint = SteadyClock::now();
         return;
     }
 
@@ -195,19 +231,26 @@ void LocalAdmissionController::fetchTokensFromGAC(
 
         auto * single_group_req = gac_req.add_requests();
         single_group_req->set_resource_group_name(info.resource_group_name);
-        assert(info.acquire_tokens > 0.0 || info.ru_consumption_delta > 0.0);
-        if (info.acquire_tokens > 0.0)
+        assert(info.acquire_tokens > 0.0 || info.ru_consumption_delta > 0.0 || is_final_report);
+        if (info.acquire_tokens > 0.0 || is_final_report)
         {
             auto * ru_items = single_group_req->mutable_ru_items();
             auto * req_ru = ru_items->add_request_r_u();
             req_ru->set_type(resource_manager::RequestUnitType::RU);
             req_ru->set_value(info.acquire_tokens);
+            GET_RESOURCE_GROUP_METRIC(tiflash_resource_group, type_gac_req_acquire_tokens, info.resource_group_name)
+                .Set(info.acquire_tokens);
         }
-        if (info.ru_consumption_delta > 0.0)
+        if (info.ru_consumption_delta > 0.0 || is_final_report)
         {
             single_group_req->set_is_tiflash(true);
             auto * tiflash_consumption = single_group_req->mutable_consumption_since_last_request();
             tiflash_consumption->set_r_r_u(info.ru_consumption_delta);
+            GET_RESOURCE_GROUP_METRIC(
+                tiflash_resource_group,
+                type_gac_req_ru_consumption_delta,
+                info.resource_group_name)
+                .Set(info.ru_consumption_delta);
         }
     }
 
@@ -248,7 +291,7 @@ void LocalAdmissionController::fetchTokensFromGAC(
 
 void LocalAdmissionController::checkDegradeMode()
 {
-    auto now = std::chrono::steady_clock::now();
+    auto now = SteadyClock::now();
     std::lock_guard lock(mu);
     if ((now - last_fetch_tokens_from_gac_timepoint) >= DEGRADE_MODE_DURATION)
     {
@@ -265,48 +308,57 @@ std::vector<std::string> LocalAdmissionController::handleTokenBucketsResp(
 {
     if unlikely (resp.has_error())
     {
-        handleBackgroundError(resp.error().message());
+        LOG_ERROR(log, resp.error().message());
         return {};
     }
 
     std::vector<std::string> handled_resource_group_names;
     handled_resource_group_names.reserve(resp.responses_size());
     // Network to GAC is ok, update timepoint.
-    last_fetch_tokens_from_gac_timepoint = std::chrono::steady_clock::now();
+    const auto now = SteadyClock::now();
+    last_fetch_tokens_from_gac_timepoint = now;
 
     if (resp.responses().empty())
     {
-        handleBackgroundError("got empty TokenBuckets resp from GAC");
+        LOG_ERROR(log, "got empty TokenBuckets resp from GAC");
         return {};
     }
 
-    const auto now = std::chrono::steady_clock::now();
     for (const resource_manager::TokenBucketResponse & one_resp : resp.responses())
     {
         // For each resource group.
         if unlikely (!one_resp.granted_resource_tokens().empty())
         {
-            handleBackgroundError("GAC return RAW granted tokens, but LAC expect RU tokens");
+            LOG_ERROR(log, "GAC return RAW granted tokens, but LAC expect RU tokens");
             continue;
         }
 
         handled_resource_group_names.emplace_back(one_resp.resource_group_name());
 
+        // It's possible for one_resp.granted_r_u_tokens() to be empty
+        // when the acquire_token_req is only for report RU consumption.
+        if (one_resp.granted_r_u_tokens().empty())
+            continue;
+
         if unlikely (one_resp.granted_r_u_tokens().size() != 1)
         {
-            handleBackgroundError(fmt::format(
-                "expect resp.granted_r_u_tokens().size() is 1, but got {}",
-                one_resp.granted_r_u_tokens().size()));
+            LOG_ERROR(
+                log,
+                "expect resp.granted_r_u_tokens().size() is 1 or 0, but got {} for rg {}",
+                one_resp.granted_r_u_tokens().size(),
+                one_resp.resource_group_name());
             continue;
         }
-        auto resource_group = findResourceGroup(one_resp.resource_group_name());
+
+        const auto & name = one_resp.resource_group_name();
+        auto resource_group = findResourceGroup(name);
         if (resource_group == nullptr)
             continue;
 
         const resource_manager::GrantedRUTokenBucket & granted_token_bucket = one_resp.granted_r_u_tokens()[0];
         if unlikely (granted_token_bucket.type() != resource_manager::RequestUnitType::RU)
         {
-            handleBackgroundError("unexpected request type");
+            LOG_ERROR(log, "unexpected request type");
             continue;
         }
 
@@ -317,6 +369,11 @@ std::vector<std::string> LocalAdmissionController::handleTokenBucketsResp(
         RUNTIME_CHECK(added_tokens >= 0);
 
         int64_t capacity = granted_token_bucket.granted_tokens().settings().burst_limit();
+
+        if (added_tokens > 0)
+            GET_RESOURCE_GROUP_METRIC(tiflash_resource_group, type_gac_resp_tokens, name).Set(added_tokens);
+        if (capacity > 0)
+            GET_RESOURCE_GROUP_METRIC(tiflash_resource_group, type_gac_resp_capacity, name).Set(capacity);
 
         // fill_rate should never be setted.
         RUNTIME_CHECK(granted_token_bucket.granted_tokens().settings().fill_rate() == 0);
@@ -354,22 +411,27 @@ void LocalAdmissionController::watchGAC()
         // 2. grpc stream read error.
         // 3. watch is cancel.
         // Will sleep and try again.
-        std::unique_lock lock(mu);
-        if (cv.wait_for(lock, std::chrono::seconds(10), [this]() { return stopped.load(); }))
-            return;
+        {
+            std::unique_lock lock(mu);
+            if (cv.wait_for(lock, std::chrono::seconds(10), [this]() { return stopped.load(); }))
+                return;
+
+            // Create new grpc_context for each reader/writer.
+            watch_gac_grpc_context = std::make_unique<grpc::ClientContext>();
+        }
     }
 }
 
 void LocalAdmissionController::doWatch()
 {
-    auto stream = etcd_client->watch(&watch_gac_grpc_context);
+    auto stream = etcd_client->watch(watch_gac_grpc_context.get());
     auto watch_req = setupWatchReq();
-    LOG_DEBUG(log, "watch req: {}", watch_req.DebugString());
+    LOG_DEBUG(log, "watchGAC req: {}", watch_req.DebugString());
     const bool write_ok = stream->Write(watch_req);
     if (!write_ok)
     {
         auto status = stream->Finish();
-        handleBackgroundError(WATCH_GAC_ERR_PREFIX + status.error_message());
+        LOG_ERROR(log, WATCH_GAC_ERR_PREFIX + status.error_message());
         return;
     }
 
@@ -380,13 +442,13 @@ void LocalAdmissionController::doWatch()
         if (!read_ok)
         {
             auto status = stream->Finish();
-            handleBackgroundError(WATCH_GAC_ERR_PREFIX + "read watch stream failed, " + status.error_message());
+            LOG_ERROR(log, WATCH_GAC_ERR_PREFIX + "read watch stream failed, " + status.error_message());
             break;
         }
         LOG_DEBUG(log, "watchGAC got resp: {}", resp.DebugString());
         if (resp.canceled())
         {
-            handleBackgroundError(WATCH_GAC_ERR_PREFIX + "watch is canceled");
+            LOG_ERROR(log, WATCH_GAC_ERR_PREFIX + "watch is canceled");
             break;
         }
         for (const auto & event : resp.events())
@@ -397,11 +459,11 @@ void LocalAdmissionController::doWatch()
             {
             case mvccpb::Event_EventType_DELETE:
                 if (!handleDeleteEvent(kv, err_msg))
-                    handleBackgroundError(WATCH_GAC_ERR_PREFIX + err_msg);
+                    LOG_ERROR(log, WATCH_GAC_ERR_PREFIX + err_msg);
                 break;
             case mvccpb::Event_EventType_PUT:
                 if (!handlePutEvent(kv, err_msg))
-                    handleBackgroundError(WATCH_GAC_ERR_PREFIX + err_msg);
+                    LOG_ERROR(log, WATCH_GAC_ERR_PREFIX + err_msg);
                 break;
             default:
                 RUNTIME_ASSERT(false, log, "unexpect event type {}", magic_enum::enum_name(event.type()));
@@ -487,13 +549,6 @@ bool LocalAdmissionController::parseResourceGroupNameFromWatchKey(
     }
     parsed_rg_name = std::string(etcd_key.begin() + key_prefix.length() + 1, etcd_key.end());
     return true;
-}
-
-void LocalAdmissionController::handleBackgroundError(const std::string & err_msg) const
-{
-    // Basically, errors are all from GAC, cannot handle in tiflash.
-    // So only print log.
-    LOG_ERROR(log, err_msg);
 }
 
 void LocalAdmissionController::checkGACRespValid(const resource_manager::ResourceGroup & new_group_pb)

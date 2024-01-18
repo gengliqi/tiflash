@@ -15,10 +15,10 @@
 #pragma once
 
 #include <Storages/ColumnsDescription.h>
-#include <Storages/Transaction/TiDB.h>
-#include <Storages/Transaction/Types.h>
+#include <Storages/KVStore/Types.h>
 #include <TiDB/Schema/SchemaGetter.h>
 #include <TiDB/Schema/SchemaSyncer.h>
+#include <TiDB/Schema/TiDB.h>
 
 #include <atomic>
 
@@ -137,6 +137,10 @@ public:
     void renameTables(const std::vector<std::tuple<std::string, std::string, std::string>> & table_name_map);
 
     void truncateTable(const String & database_name, const String & table_name);
+
+    // Mock that concurrent DDL meets conflict, it will retry with a new schema version
+    // Return the schema_version with empty SchemaDiff
+    Int64 skipSchemaVersion() { return ++version; }
 
     TablePtr getTableByName(const String & database_name, const String & table_name);
 

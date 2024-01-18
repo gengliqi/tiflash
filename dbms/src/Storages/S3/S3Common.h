@@ -17,6 +17,7 @@
 #include <Common/Exception.h>
 #include <Common/Logger.h>
 #include <Common/nocopyable.h>
+#include <Encryption/FileProvider.h>
 #include <Interpreters/Context_fwd.h>
 #include <Server/StorageConfigParser.h>
 #include <Storages/S3/S3RandomAccessFile.h>
@@ -44,8 +45,9 @@ namespace DB::S3
 inline String S3ErrorMessage(const Aws::S3::S3Error & e)
 {
     return fmt::format(
-        " s3error={} s3msg={} request_id={}",
+        " s3error={} s3exception_name={} s3msg={} request_id={}",
         magic_enum::enum_name(e.GetErrorType()),
+        e.GetExceptionName(),
         e.GetMessage(),
         e.GetRequestId());
 }
@@ -166,6 +168,8 @@ void uploadFile(
     const TiFlashS3Client & client,
     const String & local_fname,
     const String & remote_fname,
+    const EncryptionPath & encryption_path,
+    const FileProviderPtr & file_provider,
     int max_retry_times = 3);
 
 constexpr std::string_view TaggingObjectIsDeleted = "tiflash_deleted=true";

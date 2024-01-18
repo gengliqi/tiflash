@@ -71,7 +71,11 @@ public:
 
     void enablePipeline(bool is_enable) const;
 
-    static void dagRequestEqual(const String & expected_string, const std::shared_ptr<tipb::DAGRequest> & actual);
+    static ::testing::AssertionResult dagRequestEqual(
+        const char * lhs_expr,
+        const char * rhs_expr,
+        const String & expected_string,
+        const std::shared_ptr<tipb::DAGRequest> & actual);
 
     void executeInterpreter(
         const String & expected_string,
@@ -115,13 +119,17 @@ public:
         case ExchangeReceiver:
             return "exchange_receiver_0";
         default:
-            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unknown Executor Source type {}", type);
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unknown Executor Source type {}", fmt::underlying(type));
         }
     }
 
-    ColumnsWithTypeAndName executeStreams(DAGContext * dag_context);
+    ColumnsWithTypeAndName executeStreams(DAGContext * dag_context, bool is_internal = true);
 
     ColumnsWithTypeAndName executeStreams(const std::shared_ptr<tipb::DAGRequest> & request, size_t concurrency = 1);
+
+    ColumnsWithTypeAndName executeStreamsWithMemoryTracker(
+        const std::shared_ptr<tipb::DAGRequest> & request,
+        size_t concurrency = 1);
 
     Blocks getExecuteStreamsReturnBlocks(const std::shared_ptr<tipb::DAGRequest> & request, size_t concurrency = 1);
 
@@ -154,7 +162,7 @@ protected:
     std::unique_ptr<DAGContext> dag_context_ptr;
 };
 
-#define ASSERT_DAGREQUEST_EQAUL(str, request) dagRequestEqual((str), (request));
+#define ASSERT_DAGREQUEST_EQAUL(str, request) ASSERT_PRED_FORMAT2(ExecutorTest::dagRequestEqual, (str), (request));
 #define ASSERT_BLOCKINPUTSTREAM_EQAUL(str, request, concurrency) executeInterpreter((str), (request), (concurrency))
 
 // nullable type

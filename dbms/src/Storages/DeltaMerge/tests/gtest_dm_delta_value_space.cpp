@@ -22,8 +22,8 @@
 #include <Storages/DeltaMerge/Segment.h>
 #include <Storages/DeltaMerge/WriteBatchesImpl.h>
 #include <Storages/DeltaMerge/tests/DMTestEnv.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <Storages/PathPool.h>
-#include <Storages/Transaction/TMTContext.h>
 #include <TestUtils/TiFlashStorageTestBasic.h>
 #include <TestUtils/TiFlashTestBasic.h>
 #include <gtest/gtest.h>
@@ -103,7 +103,7 @@ protected:
     {
         *table_columns = *columns;
 
-        dm_context = std::make_unique<DMContext>(
+        dm_context = DMContext::createUnique(
             *db_context,
             storage_path_pool,
             storage_pool,

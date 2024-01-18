@@ -29,13 +29,13 @@
 #include <Server/StorageConfigParser.h>
 #include <Storages/DeltaMerge/DeltaMergeStore.h>
 #include <Storages/DeltaMerge/StoragePool.h>
+#include <Storages/KVStore/MultiRaft/RegionManager.h>
+#include <Storages/KVStore/MultiRaft/RegionPersister.h>
+#include <Storages/KVStore/Region.h>
 #include <Storages/Page/PageStorage.h>
 #include <Storages/Page/V2/PageStorage.h>
 #include <Storages/PathCapacityMetrics.h>
 #include <Storages/PathPool.h>
-#include <Storages/Transaction/Region.h>
-#include <Storages/Transaction/RegionManager.h>
-#include <Storages/Transaction/RegionPersister.h>
 #include <TestUtils/ConfigTestUtils.h>
 #include <TestUtils/TiFlashTestBasic.h>
 
@@ -378,8 +378,7 @@ dt_page_gc_low_write_prob = 0.2
         return;
     }
     auto & global_path_pool = global_ctx.getPathPool();
-    RegionManager region_manager;
-    RegionPersister persister(global_ctx, region_manager);
+    RegionPersister persister(global_ctx);
     persister.restore(global_path_pool, nullptr, PageStorageConfig{});
 
     auto verify_persister_reload_config = [&global_ctx](RegionPersister & persister) {

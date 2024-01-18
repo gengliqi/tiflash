@@ -22,7 +22,7 @@
 #include <Flash/Mpp/MPPTunnel.h>
 #include <Flash/Mpp/Utils.h>
 #include <Interpreters/Context.h>
-#include <Storages/Transaction/TMTContext.h>
+#include <Storages/KVStore/TMTContext.h>
 
 namespace DB
 {
@@ -49,6 +49,15 @@ EstablishCallData::EstablishCallData(
     // the tag uniquely identifying the request.
     service->RequestEstablishMPPConnection(&ctx, &request, &responder, cq, notify_cq, asGRPCKickTag());
 }
+
+EstablishCallData::EstablishCallData()
+    : service(nullptr)
+    , cq(nullptr)
+    , notify_cq(nullptr)
+    , is_shutdown(std::make_shared<std::atomic<bool>>(false))
+    , responder(&ctx)
+    , state(NEW_REQUEST)
+{}
 
 EstablishCallData::~EstablishCallData()
 {
@@ -233,11 +242,14 @@ void EstablishCallData::writeDone(String msg, const grpc::Status & status)
 
     if (async_tunnel_sender)
     {
-        LOG_INFO(
+        auto time = stopwatch->elapsedMilliseconds();
+        LOG_IMPL(
             async_tunnel_sender->getLogger(),
+            /// if time cost is less than 1s and there is no error, use debug log level
+            msg.empty() && time < 1000 ? Poco::Message::PRIO_DEBUG : Poco::Message::PRIO_INFORMATION,
             "async connection for {} cost {} ms, including {} ms to wait task.",
             async_tunnel_sender->getTunnelId(),
-            stopwatch->elapsedMilliseconds(),
+            time,
             waiting_task_time_ms);
 
         RUNTIME_ASSERT(

@@ -14,14 +14,13 @@
 
 #pragma once
 
-#include <Columns/Collator.h>
 #include <Common/COWPtr.h>
 #include <Common/Exception.h>
 #include <Common/PODArray.h>
 #include <Common/SipHash.h>
 #include <Common/WeakHash.h>
 #include <Core/Field.h>
-#include <Storages/Transaction/Collator.h>
+#include <TiDB/Collation/Collator.h>
 #include <common/StringRef.h>
 #include <fmt/core.h>
 
@@ -192,7 +191,8 @@ public:
         Arena & arena,
         char const *& begin,
         const TiDB::TiDBCollatorPtr & collator,
-        String & sort_key_container) const = 0;
+        String & sort_key_container) const
+        = 0;
     StringRef serializeValueIntoArena(size_t n, Arena & arena, char const *& begin) const
     {
         return serializeValueIntoArena(n, arena, begin, nullptr, TiDB::dummy_sort_key_contaner);
@@ -223,7 +223,8 @@ public:
         size_t n,
         SipHash & hash,
         const TiDB::TiDBCollatorPtr & collator,
-        String & sort_key_container) const = 0;
+        String & sort_key_container) const
+        = 0;
     void updateHashWithValue(size_t n, SipHash & hash) const
     {
         updateHashWithValue(n, hash, nullptr, TiDB::dummy_sort_key_contaner);
@@ -233,7 +234,8 @@ public:
     virtual void updateHashWithValues(
         HashValues & hash_values,
         const TiDB::TiDBCollatorPtr & collator,
-        String & sort_key_container) const = 0;
+        String & sort_key_container) const
+        = 0;
     void updateHashWithValues(HashValues & hash_values) const
     {
         updateHashWithValues(hash_values, nullptr, TiDB::dummy_sort_key_contaner);
@@ -245,7 +247,8 @@ public:
     virtual void updateWeakHash32(
         WeakHash32 & hash,
         const TiDB::TiDBCollatorPtr & collator,
-        String & sort_key_container) const = 0;
+        String & sort_key_container) const
+        = 0;
     void updateWeakHash32(WeakHash32 & hash) const { updateWeakHash32(hash, nullptr, TiDB::dummy_sort_key_contaner); }
 
     /** Removes elements that don't match the filter.
@@ -275,7 +278,7 @@ public:
       */
     virtual int compareAt(size_t n, size_t m, const IColumn & rhs, int nan_direction_hint) const = 0;
 
-    virtual int compareAt(size_t, size_t, const IColumn &, int, const ICollator &) const
+    virtual int compareAt(size_t, size_t, const IColumn &, int, const TiDB::ITiDBCollator &) const
     {
         throw Exception(
             fmt::format("Method compareAt with collation is not supported for {}", getName()),
@@ -290,7 +293,7 @@ public:
       */
     virtual void getPermutation(bool reverse, size_t limit, int nan_direction_hint, Permutation & res) const = 0;
 
-    virtual void getPermutation(const ICollator &, bool, size_t, int, Permutation &) const
+    virtual void getPermutation(const TiDB::ITiDBCollator &, bool, size_t, int, Permutation &) const
     {
         throw Exception(
             fmt::format("Method getPermutation with collation is not supported for {}", getName()),
@@ -387,6 +390,12 @@ public:
         return res;
     }
 
+    MutablePtr cloneFullColumn() const
+    {
+        MutablePtr res = clone();
+        res->forEachSubcolumn([](Ptr & subcolumn) { subcolumn = subcolumn->clone(); });
+        return res;
+    }
 
     /** Some columns can contain another columns inside.
       * So, we have a tree of columns. But not all combinations are possible.

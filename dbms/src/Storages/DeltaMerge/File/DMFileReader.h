@@ -16,7 +16,6 @@
 
 #include <DataStreams/MarkInCompressedFile.h>
 #include <Encryption/CompressedReadBufferFromFileProvider.h>
-#include <Storages/DeltaMerge/DMContext.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/DeltaMergeHelpers.h>
 #include <Storages/DeltaMerge/File/ColumnCache.h>
@@ -24,7 +23,7 @@
 #include <Storages/DeltaMerge/File/DMFilePackFilter.h>
 #include <Storages/DeltaMerge/ReadThread/ColumnSharingCache.h>
 #include <Storages/DeltaMerge/RowKeyRange.h>
-#include <Storages/DeltaMerge/ScanContext.h>
+#include <Storages/DeltaMerge/ScanContext_fwd.h>
 #include <Storages/MarkCache.h>
 
 namespace DB
@@ -39,6 +38,7 @@ inline static const size_t DMFILE_READ_ROWS_THRESHOLD = DEFAULT_MERGE_BLOCK_SIZE
 class DMFileReader
 {
 public:
+    static bool isCacheableColumn(const ColumnDefine & cd);
     // Read stream for single column
     struct Stream
     {
@@ -89,7 +89,7 @@ public:
         size_t rows_threshold_per_read_,
         bool read_one_pack_every_time_,
         const String & tracing_id_,
-        bool enable_col_sharing_cache,
+        size_t max_sharing_column_count,
         const ScanContextPtr & scan_context_);
 
     Block getHeader() const { return toEmptyBlock(read_columns); }
@@ -97,6 +97,8 @@ public:
     /// Skipped rows before next call of #read().
     /// Return false if it is the end of stream.
     bool getSkippedRows(size_t & skip_rows);
+
+    /// NOTE: skipNextBlock and readWithFilter are only used by late materialization.
 
     /// Skip the packs to read next
     /// Return the number of rows skipped.
@@ -119,14 +121,14 @@ private:
     bool shouldSeek(size_t pack_id) const;
 
     void readFromDisk(
-        ColumnDefine & column_define,
+        const ColumnDefine & column_define,
         MutableColumnPtr & column,
         size_t start_pack_id,
         size_t read_rows,
         size_t skip_packs,
         bool force_seek);
     void readColumn(
-        ColumnDefine & column_define,
+        const ColumnDefine & column_define,
         ColumnPtr & column,
         size_t start_pack_id,
         size_t pack_count,

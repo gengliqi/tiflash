@@ -24,7 +24,7 @@
 #include <Flash/Planner/Plans/PhysicalExchangeReceiver.h>
 #include <Interpreters/Context.h>
 #include <Operators/ExchangeReceiverSourceOp.h>
-#include <Storages/Transaction/TypeMapping.h>
+#include <TiDB/Decode/TypeMapping.h>
 #include <fmt/format.h>
 
 namespace DB
@@ -113,7 +113,7 @@ void PhysicalExchangeReceiver::buildPipelineExecGroupImpl(
     context.getDAGContext()->addInboundIOProfileInfos(executor_id, group_builder.getCurIOProfileInfos());
 }
 
-void PhysicalExchangeReceiver::finalize(const Names & parent_require)
+void PhysicalExchangeReceiver::finalizeImpl(const Names & parent_require)
 {
     FinalizeHelper::checkSchemaContainsParentRequire(schema, parent_require);
 }

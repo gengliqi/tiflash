@@ -18,12 +18,11 @@
 #include <Flash/Mpp/MPPTunnelSetHelper.h>
 #include <Interpreters/Context.h>
 #include <Storages/DeltaMerge/ScanContext.h>
-#include <Storages/StorageDisaggregated.h>
-#include <Storages/Transaction/TiDB.h>
 #include <TestUtils/ColumnGenerator.h>
 #include <TestUtils/FunctionTestUtils.h>
 #include <TestUtils/TiFlashTestBasic.h>
 #include <TestUtils/TiFlashTestEnv.h>
+#include <TiDB/Schema/TiDB.h>
 #include <grpcpp/support/status.h>
 #include <gtest/gtest.h>
 
@@ -79,7 +78,7 @@ struct MockWriter
         summary.scan_context->total_dmfile_skipped_rows = 15000;
         summary.scan_context->total_dmfile_rough_set_index_check_time_ns = 10;
         summary.scan_context->total_dmfile_read_time_ns = 200;
-        summary.scan_context->total_create_snapshot_time_ns = 5;
+        summary.scan_context->create_snapshot_time_ns = 5;
         summary.scan_context->total_local_region_num = 10;
         summary.scan_context->total_remote_region_num = 5;
         return summary;
@@ -231,16 +230,6 @@ struct MockReceiverContext
     static Request makeRequest(int index) { return {index, index, -1}; }
 
     std::unique_ptr<Reader> makeSyncReader(const Request &) { return std::make_unique<Reader>(queue); }
-
-    static void cancelMPPTaskOnTiFlashStorageNode(LoggerPtr)
-    {
-        throw Exception("cancelMPPTaskOnTiFlashStorageNode not implemented for MockReceiverContext");
-    }
-
-    static void sendMPPTaskToTiFlashStorageNode(LoggerPtr, const std::vector<RequestAndRegionIDs> &)
-    {
-        throw Exception("sendMPPTaskToTiFlashStorageNode not implemented for MockReceiverContext");
-    }
 
     static Status getStatusOK() { return ::grpc::Status(); }
 

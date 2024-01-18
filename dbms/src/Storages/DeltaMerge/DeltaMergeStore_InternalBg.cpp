@@ -22,9 +22,9 @@
 #include <Storages/DeltaMerge/GCOptions.h>
 #include <Storages/DeltaMerge/Segment.h>
 #include <Storages/DeltaMerge/StoragePool.h>
+#include <Storages/KVStore/KVStore.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <Storages/PathPool.h>
-#include <Storages/Transaction/KVStore.h>
-#include <Storages/Transaction/TMTContext.h>
 
 #include <magic_enum.hpp>
 #include <memory>
@@ -129,7 +129,13 @@ public:
                     continue;
 
                 // Note that page_id is useless here.
-                auto dmfile = DMFile::restore(file_provider, id, /* page_id= */ 0, path, DMFile::ReadMetaMode::none());
+                auto dmfile = DMFile::restore(
+                    file_provider,
+                    id,
+                    /* page_id= */ 0,
+                    path,
+                    DMFile::ReadMetaMode::none(),
+                    path_pool->getKeyspaceID());
                 if (unlikely(!dmfile))
                 {
                     // If the dtfile directory is not exist, it means `StoragePathPool::drop` have been
@@ -267,7 +273,7 @@ void DeltaMergeStore::setUpBackgroundTask(const DMContextPtr & dm_context)
     // we must make the callbacks safe.
     ExternalPageCallbacks callbacks;
     callbacks.prefix = storage_pool->getNamespaceID();
-    if (auto data_store = dm_context->db_context.getSharedContextDisagg()->remote_data_store; !data_store)
+    if (auto data_store = dm_context->global_context.getSharedContextDisagg()->remote_data_store; !data_store)
     {
         callbacks.scanner
             = LocalDMFileGcScanner(std::weak_ptr<StoragePathPool>(path_pool), global_context.getFileProvider());

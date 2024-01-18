@@ -29,11 +29,13 @@
 #include <Storages/DeltaMerge/Filter/PushDownFilter.h>
 #include <Storages/DeltaMerge/Remote/DisaggSnapshot_fwd.h>
 #include <Storages/DeltaMerge/RowKeyRange.h>
-#include <Storages/DeltaMerge/ScanContext.h>
+#include <Storages/DeltaMerge/ScanContext_fwd.h>
 #include <Storages/DeltaMerge/SegmentReadTaskPool.h>
+#include <Storages/DeltaMerge/Segment_fwd.h>
+#include <Storages/KVStore/Decode/DecodingStorageSchemaSnapshot.h>
+#include <Storages/KVStore/MultiRaft/Disagg/CheckpointIngestInfo.h>
 #include <Storages/Page/PageStorage_fwd.h>
-#include <Storages/Transaction/DecodingStorageSchemaSnapshot.h>
-#include <Storages/Transaction/TiDB.h>
+#include <TiDB/Schema/TiDB.h>
 
 #include <queue>
 
@@ -49,6 +51,8 @@ class StoragePathPool;
 
 class PipelineExecutorContext;
 class PipelineExecGroupBuilder;
+
+struct CheckpointIngestInfo;
 
 namespace DM
 {
@@ -72,8 +76,6 @@ namespace tests
 {
 class DeltaMergeStoreTest;
 }
-
-inline static const PageIdU64 DELTA_MERGE_FIRST_SEGMENT_ID = 1;
 
 struct SegmentStats
 {
@@ -177,6 +179,7 @@ class DeltaMergeStore : private boost::noncopyable
 {
 public:
     friend class ::DB::DM::tests::DeltaMergeStoreTest;
+    friend struct DB::CheckpointIngestInfo;
     struct Settings
     {
         NotCompress not_compress_columns{};
@@ -331,7 +334,7 @@ public:
     std::vector<SegmentPtr> ingestSegmentsUsingSplit(
         const DMContextPtr & dm_context,
         const RowKeyRange & ingest_range,
-        const std::vector<SegmentPtr> & target_segments);
+        const std::vector<SegmentPtr> & segments_to_ingest);
 
     bool ingestSegmentDataIntoSegmentUsingSplit(
         DMContext & dm_context,
@@ -339,16 +342,31 @@ public:
         const RowKeyRange & ingest_range,
         const SegmentPtr & segment_to_ingest);
 
+    Segments buildSegmentsFromCheckpointInfo(
+        const DMContextPtr & dm_context,
+        const DM::RowKeyRange & range,
+        const CheckpointInfoPtr & checkpoint_info) const;
+
+    Segments buildSegmentsFromCheckpointInfo(
+        const Context & db_context,
+        const DB::Settings & db_settings,
+        const DM::RowKeyRange & range,
+        const CheckpointInfoPtr & checkpoint_info)
+    {
+        auto dm_context = newDMContext(db_context, db_settings);
+        return buildSegmentsFromCheckpointInfo(dm_context, range, checkpoint_info);
+    }
+
     void ingestSegmentsFromCheckpointInfo(
         const DMContextPtr & dm_context,
         const DM::RowKeyRange & range,
-        CheckpointInfoPtr checkpoint_info);
+        const CheckpointIngestInfoPtr & checkpoint_info);
 
     void ingestSegmentsFromCheckpointInfo(
         const Context & db_context,
         const DB::Settings & db_settings,
         const DM::RowKeyRange & range,
-        CheckpointInfoPtr checkpoint_info)
+        const CheckpointIngestInfoPtr & checkpoint_info)
     {
         auto dm_context = newDMContext(db_context, db_settings);
         return ingestSegmentsFromCheckpointInfo(dm_context, range, checkpoint_info);
@@ -389,7 +407,7 @@ public:
         UInt64 max_version,
         const PushDownFilterPtr & filter,
         const RuntimeFilteList & runtime_filter_list,
-        const int rf_max_wait_time_ms,
+        int rf_max_wait_time_ms,
         const String & tracing_id,
         bool keep_order,
         bool is_fast_scan = false,
@@ -414,7 +432,7 @@ public:
         UInt64 max_version,
         const PushDownFilterPtr & filter,
         const RuntimeFilteList & runtime_filter_list,
-        const int rf_max_wait_time_ms,
+        int rf_max_wait_time_ms,
         const String & tracing_id,
         bool keep_order,
         bool is_fast_scan = false,
@@ -497,6 +515,7 @@ public:
     const Settings & getSettings() const { return settings; }
     DataTypePtr getPKDataType() const { return original_table_handle_define.type; }
     SortDescription getPrimarySortDescription() const;
+    KeyspaceID getKeyspaceID() const { return keyspace_id; }
 
     void check(const Context & db_context);
 
@@ -733,7 +752,7 @@ private:
     void removeLocalStableFilesIfDisagg() const;
 
     SegmentReadTasks getReadTasksByRanges(
-        DMContext & dm_context,
+        const DMContextPtr & dm_context,
         const RowKeyRanges & sorted_ranges,
         size_t expected_tasks_count = 1,
         const SegmentIdSet & read_segments = {},

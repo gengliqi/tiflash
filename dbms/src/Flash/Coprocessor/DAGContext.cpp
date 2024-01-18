@@ -20,7 +20,8 @@
 #include <Flash/Mpp/ExchangeReceiver.h>
 #include <Flash/Statistics/transformProfiles.h>
 #include <Flash/Statistics/traverseExecutors.h>
-#include <Storages/Transaction/TMTContext.h>
+#include <Storages/DeltaMerge/ScanContext.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <kvproto/disaggregated.pb.h>
 #include <tipb/executor.pb.h>
 
@@ -36,10 +37,13 @@ extern const int DIVIDED_BY_ZERO;
 extern const int INVALID_TIME;
 } // namespace ErrorCodes
 
+namespace
+{
 bool strictSqlMode(UInt64 sql_mode)
 {
     return sql_mode & TiDBSQLMode::STRICT_ALL_TABLES || sql_mode & TiDBSQLMode::STRICT_TRANS_TABLES;
 }
+} // namespace
 
 // for non-mpp(Cop/CopStream/BatchCop)
 DAGContext::DAGContext(
@@ -49,9 +53,11 @@ DAGContext::DAGContext(
     const String & tidb_host_,
     DAGRequestKind kind_,
     const String & resource_group_name_,
+    UInt64 connection_id_,
+    const String & connection_alias_,
     LoggerPtr log_)
     : dag_request(&dag_request_)
-    , dummy_query_string(dag_request->DebugString())
+    , dummy_query_string(dag_request->ShortDebugString())
     , dummy_ast(makeDummyQuery())
     , tidb_host(tidb_host_)
     , collect_execution_summaries(
@@ -68,6 +74,8 @@ DAGContext::DAGContext(
     , warning_count(0)
     , keyspace_id(keyspace_id_)
     , resource_group_name(resource_group_name_)
+    , connection_id(connection_id_)
+    , connection_alias(connection_alias_)
 {
     RUNTIME_ASSERT(kind != DAGRequestKind::MPP, log, "DAGContext non-mpp constructor get a mpp kind");
     initOutputInfo();
@@ -76,7 +84,7 @@ DAGContext::DAGContext(
 // for mpp
 DAGContext::DAGContext(tipb::DAGRequest & dag_request_, const mpp::TaskMeta & meta_, bool is_root_mpp_task_)
     : dag_request(&dag_request_)
-    , dummy_query_string(dag_request->DebugString())
+    , dummy_query_string(dag_request->ShortDebugString())
     , dummy_ast(makeDummyQuery())
     , collect_execution_summaries(
           dag_request->has_collect_execution_summaries() && dag_request->collect_execution_summaries())
@@ -92,6 +100,8 @@ DAGContext::DAGContext(tipb::DAGRequest & dag_request_, const mpp::TaskMeta & me
     , warning_count(0)
     , keyspace_id(RequestUtils::deriveKeyspaceID(meta_))
     , resource_group_name(meta_.resource_group_name())
+    , connection_id(meta_.connection_id())
+    , connection_alias(meta_.connection_alias())
 {
     // only mpp task has join executor.
     initExecutorIdToJoinIdMap();
@@ -106,7 +116,7 @@ DAGContext::DAGContext(
     const String & compute_node_host_,
     LoggerPtr log_)
     : dag_request(&dag_request_)
-    , dummy_query_string(dag_request->DebugString())
+    , dummy_query_string(dag_request->ShortDebugString())
     , dummy_ast(makeDummyQuery())
     , tidb_host(compute_node_host_)
     , collect_execution_summaries(
@@ -124,6 +134,8 @@ DAGContext::DAGContext(
     , warnings(max_recorded_error_count)
     , warning_count(0)
     , keyspace_id(RequestUtils::deriveKeyspaceID(task_meta_))
+    , connection_id(task_meta_.connection_id())
+    , connection_alias(task_meta_.connection_alias())
 {
     initOutputInfo();
 }
@@ -141,12 +153,13 @@ DAGContext::DAGContext(UInt64 max_error_count_)
     , max_recorded_error_count(max_error_count_)
     , warnings(max_recorded_error_count)
     , warning_count(0)
+    , connection_id(0)
 {}
 
 // for tests need to run query tasks.
 DAGContext::DAGContext(tipb::DAGRequest & dag_request_, String log_identifier, size_t concurrency)
     : dag_request(&dag_request_)
-    , dummy_query_string(dag_request->DebugString())
+    , dummy_query_string(dag_request->ShortDebugString())
     , dummy_ast(makeDummyQuery())
     , initialize_concurrency(concurrency)
     , collect_execution_summaries(
@@ -160,7 +173,10 @@ DAGContext::DAGContext(tipb::DAGRequest & dag_request_, String log_identifier, s
     , max_recorded_error_count(getMaxErrorCount(*dag_request))
     , warnings(max_recorded_error_count)
     , warning_count(0)
+    , connection_id(0)
 {
+    query_operator_spill_contexts
+        = std::make_shared<QueryOperatorSpillContexts>(MPPQueryId(0, 0, 0, 0, "", 0, ""), 100);
     initOutputInfo();
 }
 
@@ -187,9 +203,32 @@ void DAGContext::initOutputInfo()
                 Errors::Coprocessor::BadRequest);
         result_field_types.push_back(output_field_types[i]);
     }
-    encode_type = analyzeDAGEncodeType(*this);
+    encode_type = analyzeDAGEncodeType();
     keep_session_timezone_info
         = encode_type == tipb::EncodeType::TypeChunk || encode_type == tipb::EncodeType::TypeCHBlock;
+}
+
+tipb::EncodeType DAGContext::analyzeDAGEncodeType() const
+{
+    const tipb::EncodeType request_encode_type = dag_request->encode_type();
+    if (isMPPTask() && !isRootMPPTask())
+    {
+        /// always use CHBlock encode type for data exchange between TiFlash nodes
+        return tipb::EncodeType::TypeCHBlock;
+    }
+    if (dag_request->has_force_encode_type() && dag_request->force_encode_type())
+    {
+        assert(request_encode_type == tipb::EncodeType::TypeCHBlock);
+        return request_encode_type;
+    }
+    if (isUnsupportedEncodeType(result_field_types, request_encode_type))
+        return tipb::EncodeType::TypeDefault;
+    if (request_encode_type == tipb::EncodeType::TypeChunk && dag_request->has_chunk_memory_layout()
+        && dag_request->chunk_memory_layout().has_endian()
+        && dag_request->chunk_memory_layout().endian() == tipb::Endian::BigEndian)
+        // todo support BigEndian encode for chunk encode type
+        return tipb::EncodeType::TypeDefault;
+    return request_encode_type;
 }
 
 bool DAGContext::allowZeroInDate() const
@@ -431,13 +470,13 @@ const SingleTableRegions & DAGContext::getTableRegionsInfoByTableID(Int64 table_
 
 RU DAGContext::getReadRU() const
 {
-    double ru = 0.0;
+    UInt64 read_bytes = 0;
     for (const auto & [id, sc] : scan_context_map)
     {
         (void)id; // Disable unused variable warnning.
-        ru += sc->getReadRU();
+        read_bytes += sc->user_read_bytes;
     }
-    return ru;
+    return bytesToRU(read_bytes);
 }
 
 } // namespace DB

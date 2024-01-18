@@ -22,13 +22,13 @@
 #include <Poco/Path.h>
 #include <Storages/BackgroundProcessingPool.h>
 #include <Storages/DeltaMerge/Remote/DataStore/DataStore.h>
+#include <Storages/KVStore/KVStore.h>
+#include <Storages/KVStore/TMTContext.h>
+#include <Storages/KVStore/Types.h>
 #include <Storages/Page/V3/Universal/UniversalPageStorage.h>
 #include <Storages/Page/V3/Universal/UniversalPageStorageService.h>
 #include <Storages/S3/S3Common.h>
 #include <Storages/S3/S3Filename.h>
-#include <Storages/Transaction/KVStore.h>
-#include <Storages/Transaction/TMTContext.h>
-#include <Storages/Transaction/Types.h>
 #include <aws/s3/S3Client.h>
 
 #include <ext/scope_guard.h>
@@ -98,9 +98,9 @@ bool CheckpointUploadFunctor::operator()(const PS::V3::LocalCheckpointFiles & ch
     return remote_store->putCheckpointFiles(checkpoint, store_id, sequence);
 }
 
-void UniversalPageStorageService::setSyncAllData()
+void UniversalPageStorageService::setUploadAllData()
 {
-    sync_all_at_next_upload = true;
+    upload_all_at_next_upload = true;
     gc_handle->wake();
     LOG_INFO(log, "sync_all flag is set, next checkpoint will upload all existing data");
 }
@@ -131,7 +131,7 @@ bool UniversalPageStorageService::uploadCheckpoint()
 
     auto & tmt = global_context.getTMTContext();
 
-    auto store_info = tmt.getKVStore()->getStoreMeta();
+    auto store_info = tmt.getKVStore()->clonedStoreMeta();
     if (store_info.id() == InvalidStoreID)
     {
         LOG_INFO(log, "Skip checkpoint because store meta is not initialized");
@@ -144,10 +144,10 @@ bool UniversalPageStorageService::uploadCheckpoint()
         return false;
     }
     auto s3lock_client = tmt.getS3LockClient();
-    const bool force_sync = sync_all_at_next_upload.load();
-    bool upload_done = uploadCheckpointImpl(store_info, s3lock_client, remote_store, force_sync);
-    if (force_sync && upload_done)
-        sync_all_at_next_upload = false;
+    const bool force_upload = upload_all_at_next_upload.load();
+    bool upload_done = uploadCheckpointImpl(store_info, s3lock_client, remote_store, force_upload);
+    if (force_upload && upload_done)
+        upload_all_at_next_upload = false;
     // always return false to run at fixed rate
     return false;
 }

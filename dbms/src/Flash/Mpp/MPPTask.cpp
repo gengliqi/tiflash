@@ -32,8 +32,8 @@
 #include <Interpreters/Context.h>
 #include <Interpreters/ProcessList.h>
 #include <Interpreters/executeQuery.h>
-#include <Storages/Transaction/KVStore.h>
-#include <Storages/Transaction/TMTContext.h>
+#include <Storages/KVStore/KVStore.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <fmt/core.h>
 
 #include <chrono>
@@ -112,13 +112,12 @@ void MPPTaskMonitorHelper::initAndAddself(MPPTaskManager * manager_, const Strin
 {
     manager = manager_;
     task_unique_id = task_unique_id_;
-    manager->addMonitoredTask(task_unique_id);
-    initialized = true;
+    added_to_monitor = manager->addMonitoredTask(task_unique_id);
 }
 
 MPPTaskMonitorHelper::~MPPTaskMonitorHelper()
 {
-    if (initialized)
+    if (added_to_monitor)
     {
         manager->removeMonitoredTask(task_unique_id);
     }
@@ -136,6 +135,13 @@ MPPTask::MPPTask(const mpp::TaskMeta & meta_, const ContextPtr & context_)
     assert(manager != nullptr);
     current_memory_tracker = nullptr;
     mpp_task_monitor_helper.initAndAddself(manager, id.toString());
+}
+
+void MPPTask::initForTest()
+{
+    dag_context = std::make_unique<DAGContext>(100);
+    context->setDAGContext(dag_context.get());
+    schedule_entry.setNeededThreads(10);
 }
 
 MPPTask::~MPPTask()
@@ -354,11 +360,14 @@ MemoryTracker * MPPTask::getMemoryTracker() const
 
 void MPPTask::unregisterTask()
 {
-    auto [result, reason] = manager->unregisterTask(id);
-    if (result)
-        LOG_DEBUG(log, "task unregistered");
-    else
-        LOG_WARNING(log, "task failed to unregister, reason: {}", reason);
+    if (is_registered)
+    {
+        auto [result, reason] = manager->unregisterTask(id, getErrString());
+        if (result)
+            LOG_DEBUG(log, "task unregistered");
+        else
+            LOG_WARNING(log, "task failed to unregister, reason: {}", reason);
+    }
 }
 
 void MPPTask::initQueryOperatorSpillContexts(
@@ -478,9 +487,6 @@ void MPPTask::preprocess()
             throw Exception("task not in running state, may be cancelled");
         for (auto & r : dag_context->getCoprocessorReaders())
             receiver_set->addCoprocessorReader(r);
-        const auto & receiver_opt = dag_context->getDisaggregatedComputeExchangeReceiver();
-        if (receiver_opt.has_value())
-            receiver_set->addExchangeReceiver(receiver_opt->first, receiver_opt->second);
         new_thread_count_of_mpp_receiver += receiver_set->getExternalThreadCnt();
     }
     auto end_time = Clock::now();
@@ -556,7 +562,31 @@ void MPPTask::runImpl()
 #endif
 
         auto result = query_executor_holder->execute();
-        LOG_INFO(log, "mpp task finish execute, success: {}", result.is_success);
+        auto log_level = Poco::Message::PRIO_DEBUG;
+        if (!result.is_success || status != RUNNING)
+            log_level = Poco::Message::PRIO_INFORMATION;
+        LOG_IMPL(
+            log,
+            log_level,
+            "mpp task finish execute, is_success: {}, status: {}",
+            result.is_success,
+            magic_enum::enum_name(status.load()));
+        auto cpu_ru = query_executor_holder->collectRequestUnit();
+        auto read_ru = dag_context->getReadRU();
+        LOG_DEBUG(log, "mpp finish with request unit: cpu={} read={}", cpu_ru, read_ru);
+        GET_METRIC(tiflash_compute_request_unit, type_mpp).Increment(cpu_ru + read_ru);
+        mpp_task_statistics.setRU(cpu_ru, read_ru);
+
+        mpp_task_statistics.collectRuntimeStatistics();
+
+        auto runtime_statistics = query_executor_holder->getRuntimeStatistics();
+        LOG_DEBUG(
+            log,
+            "finish with {} seconds, {} rows, {} blocks, {} bytes",
+            runtime_statistics.execution_time_ns / static_cast<double>(1000000000),
+            runtime_statistics.rows,
+            runtime_statistics.blocks,
+            runtime_statistics.bytes);
         if (likely(result.is_success))
         {
             /// Need to finish writing before closing the receiver.
@@ -572,23 +602,6 @@ void MPPTask::runImpl()
             // finish receiver
             receiver_set->close();
         }
-        auto cpu_ru = query_executor_holder->collectRequestUnit();
-        auto read_ru = dag_context->getReadRU();
-        LOG_INFO(log, "mpp finish with request unit: cpu={} read={}", cpu_ru, read_ru);
-        GET_METRIC(tiflash_compute_request_unit, type_mpp).Increment(cpu_ru + read_ru);
-        mpp_task_statistics.setRU(cpu_ru, read_ru);
-
-        mpp_task_statistics.collectRuntimeStatistics();
-
-        auto runtime_statistics = query_executor_holder->getRuntimeStatistics();
-        LOG_DEBUG(
-            log,
-            "finish with {} seconds, {} rows, {} blocks, {} bytes",
-            runtime_statistics.execution_time_ns / static_cast<double>(1000000000),
-            runtime_statistics.rows,
-            runtime_statistics.blocks,
-            runtime_statistics.bytes);
-
         result.verify();
     }
     catch (...)

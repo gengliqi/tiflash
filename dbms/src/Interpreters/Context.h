@@ -34,7 +34,6 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <unordered_set>
 
 namespace pingcap
 {
@@ -432,8 +431,13 @@ public:
 
     void initializeTiFlashMetrics() const;
 
-    void initializeFileProvider(KeyManagerPtr key_manager, bool enable_encryption);
+    void initializeFileProvider(
+        KeyManagerPtr key_manager,
+        bool enable_encryption,
+        bool enable_keyspace_encryption = false);
     FileProviderPtr getFileProvider() const;
+    // For test only
+    void setFileProvider(FileProviderPtr file_provider);
 
     void initializeRateLimiter(
         Poco::Util::AbstractConfiguration & config,
@@ -452,7 +456,7 @@ public:
     void initializeWriteNodePageStorageIfNeed(const PathPool & path_pool);
     UniversalPageStoragePtr getWriteNodePageStorage() const;
     UniversalPageStoragePtr tryGetWriteNodePageStorage() const;
-    bool trySyncAllDataToRemoteStore() const;
+    bool tryUploadAllDataToRemoteStore() const;
     void tryReleaseWriteNodePageStorageForTest();
 
     SharedContextDisaggPtr getSharedContextDisagg() const;

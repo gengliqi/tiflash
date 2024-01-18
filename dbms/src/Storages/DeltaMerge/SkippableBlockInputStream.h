@@ -17,8 +17,10 @@
 #include <Columns/ColumnsNumber.h>
 #include <Core/Block.h>
 #include <DataStreams/IBlockInputStream.h>
+#include <Flash/ResourceControl/LocalAdmissionController.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/DeltaMergeHelpers.h>
+#include <Storages/DeltaMerge/ScanContext.h>
 
 namespace DB
 {
@@ -78,6 +80,7 @@ public:
         : rows(inputs_.size(), 0)
         , precede_stream_rows(0)
         , scan_context(scan_context_)
+        , lac_bytes_collector(scan_context_ ? scan_context_->resource_group_name : "")
     {
         children.insert(children.end(), inputs_.begin(), inputs_.end());
         current_stream = children.begin();
@@ -90,6 +93,7 @@ public:
         : rows(std::move(rows_))
         , precede_stream_rows(0)
         , scan_context(scan_context_)
+        , lac_bytes_collector(scan_context_ ? scan_context_->resource_group_name : "")
     {
         children.insert(children.end(), inputs_.begin(), inputs_.end());
         current_stream = children.begin();
@@ -217,13 +221,18 @@ private:
     {
         if (likely(scan_context != nullptr))
         {
-            scan_context->total_user_read_bytes += bytes;
+            scan_context->user_read_bytes += bytes;
+            if constexpr (!need_row_id)
+            {
+                lac_bytes_collector.collect(bytes);
+            }
         }
     }
     BlockInputStreams::iterator current_stream;
     std::vector<size_t> rows;
     size_t precede_stream_rows;
     const ScanContextPtr scan_context;
+    LACBytesCollector lac_bytes_collector;
 };
 
 } // namespace DM

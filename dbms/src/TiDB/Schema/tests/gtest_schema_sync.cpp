@@ -23,9 +23,9 @@
 #include <Parsers/IAST.h>
 #include <Storages/ColumnsDescription.h>
 #include <Storages/IManageableStorage.h>
-#include <Storages/Transaction/RegionBlockReader.h>
-#include <Storages/Transaction/TMTContext.h>
-#include <Storages/Transaction/Types.h>
+#include <Storages/KVStore/Decode/RegionBlockReader.h>
+#include <Storages/KVStore/TMTContext.h>
+#include <Storages/KVStore/Types.h>
 #include <Storages/registerStorages.h>
 #include <TestUtils/TiFlashTestBasic.h>
 #include <TestUtils/TiFlashTestEnv.h>
@@ -251,6 +251,60 @@ try
 
     ASSERT_EQ(mustGetSyncedTable(t1_id)->getTableInfo().name, "r1");
     ASSERT_EQ(mustGetSyncedTable(t2_id)->getTableInfo().name, "r2");
+}
+CATCH
+
+TEST_F(SchemaSyncTest, PhysicalDropTable)
+try
+{
+    auto pd_client = global_ctx.getTMTContext().getPDClient();
+
+    const String db_name = "mock_db";
+    MockTiDB::instance().newDataBase(db_name);
+
+    auto cols = ColumnsDescription({
+        {"col1", typeFromString("String")},
+        {"col2", typeFromString("Int64")},
+    });
+    // table_name, cols, pk_name
+    std::vector<std::tuple<String, ColumnsDescription, String>> tables{
+        {"t1", cols, ""},
+        {"t2", cols, ""},
+    };
+    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS(), "dt");
+
+    refreshSchema();
+    for (auto table_id : table_ids)
+    {
+        refreshTableSchema(table_id);
+    }
+
+    mustGetSyncedTableByName(db_name, "t1");
+    mustGetSyncedTableByName(db_name, "t2");
+
+    MockTiDB::instance().dropTable(global_ctx, db_name, "t1", true);
+
+    refreshSchema();
+    for (auto table_id : table_ids)
+    {
+        refreshTableSchema(table_id);
+    }
+
+    global_ctx.initializeSchemaSyncService();
+    auto sync_service = global_ctx.getSchemaSyncService();
+    // run gc with safepoint == 0, will be skip
+    ASSERT_FALSE(sync_service->gc(0, NullspaceID));
+    ASSERT_TRUE(sync_service->gc(10000000, NullspaceID));
+    // run gc with the same safepoint, will be skip
+    ASSERT_FALSE(sync_service->gc(10000000, NullspaceID));
+    // run gc for another keyspace with same safepoint, will be executed
+    ASSERT_TRUE(sync_service->gc(10000000, 1024));
+    // run gc with changed safepoint
+    ASSERT_TRUE(sync_service->gc(20000000, 1024));
+    // run gc with the same safepoint
+    ASSERT_FALSE(sync_service->gc(20000000, 1024));
+
+    sync_service->shutdown();
 }
 CATCH
 

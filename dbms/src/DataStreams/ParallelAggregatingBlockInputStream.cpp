@@ -147,9 +147,12 @@ void ParallelAggregatingBlockInputStream::Handler::onBlock(Block & block, size_t
     auto & data = *parent.many_data[thread_num];
     auto & agg_process_info = parent.threads_data[thread_num].agg_process_info;
     agg_process_info.resetBlock(block);
-    parent.aggregator.executeOnBlock(agg_process_info, data, thread_num);
-    if (data.need_spill)
-        parent.aggregator.spill(data, thread_num);
+    do
+    {
+        parent.aggregator.executeOnBlock(agg_process_info, data, thread_num);
+        if (data.need_spill)
+            parent.aggregator.spill(data, thread_num);
+    } while (!agg_process_info.allBlockDataHandled());
 
     parent.threads_data[thread_num].src_rows += block.rows();
     parent.threads_data[thread_num].src_bytes += block.bytes();
@@ -215,7 +218,7 @@ void ParallelAggregatingBlockInputStream::execute()
     exceptions.resize(max_threads);
 
     for (size_t i = 0; i < max_threads; ++i)
-        threads_data.emplace_back();
+        threads_data.emplace_back(&aggregator);
     aggregator.initThresholdByAggregatedDataVariantsSize(many_data.size());
 
     LOG_TRACE(log, "Aggregating");
@@ -273,6 +276,7 @@ void ParallelAggregatingBlockInputStream::execute()
         aggregator.executeOnBlock(agg_process_info, data, 0);
         if (data.need_spill)
             aggregator.spill(data, 0);
+        assert(agg_process_info.allBlockDataHandled());
     }
 }
 

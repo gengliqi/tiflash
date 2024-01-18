@@ -63,7 +63,7 @@ HashJoinProbeExec::HashJoinProbeExec(
     , need_scan_hash_map_after_probe(need_scan_hash_map_after_probe_)
     , scan_hash_map_after_probe_stream(scan_hash_map_after_probe_stream_)
     , max_block_size(max_block_size_)
-    , probe_process_info(max_block_size_)
+    , probe_process_info(max_block_size_, join->getProbeCacheColumnThreshold())
 {}
 
 void HashJoinProbeExec::waitUntilAllBuildFinished()
@@ -160,7 +160,7 @@ HashJoinProbeExecPtr HashJoinProbeExec::tryGetRestoreExec()
 HashJoinProbeExecPtr HashJoinProbeExec::doTryGetRestoreExec()
 {
     /// first check if current join has a partition to restore
-    if (join->isSpilled() && join->hasPartitionSpilledWithLock())
+    if (join->isSpilled() && join->hasPartitionToRestore())
     {
         /// get a restore join
         if (auto restore_info = join->getOneRestoreStream(max_block_size); restore_info)
@@ -183,7 +183,7 @@ HashJoinProbeExecPtr HashJoinProbeExec::doTryGetRestoreExec()
             restore_probe_exec->setCancellationHook(is_cancelled);
             return restore_probe_exec;
         }
-        assert(join->hasPartitionSpilledWithLock() == false);
+        assert(join->hasPartitionToRestore() == false);
     }
     return {};
 }

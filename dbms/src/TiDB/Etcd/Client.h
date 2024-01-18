@@ -74,6 +74,7 @@ public:
     grpc::Status leaseRevoke(LeaseID lease_id);
 
     std::tuple<v3electionpb::LeaderKey, grpc::Status> campaign(
+        grpc::ClientContext * grpc_context,
         const String & name,
         const String & value,
         LeaseID lease_id);
@@ -87,7 +88,8 @@ public:
 
     // Basically same with tidb's Domain::acquireServerID.
     // Only for tiflash resource control.
-    UInt64 acquireServerIDFromPD();
+    UInt64 acquireServerIDFromGAC();
+    void deleteServerIDFromGAC(UInt64 serverID);
 
 private:
     EtcdConnClientPtr getOrCreateGRPCConn(const String & addr);

@@ -59,13 +59,13 @@
 #include <Storages/DeltaMerge/Index/MinMaxIndex.h>
 #include <Storages/DeltaMerge/StoragePool.h>
 #include <Storages/IStorage.h>
+#include <Storages/KVStore/BackgroundService.h>
+#include <Storages/KVStore/TMTContext.h>
 #include <Storages/MarkCache.h>
 #include <Storages/Page/V3/PageStorageImpl.h>
 #include <Storages/Page/V3/Universal/UniversalPageStorageService.h>
 #include <Storages/PathCapacityMetrics.h>
 #include <Storages/PathPool.h>
-#include <Storages/Transaction/BackgroundService.h>
-#include <Storages/Transaction/TMTContext.h>
 #include <TableFunctions/TableFunctionFactory.h>
 #include <TiDB/Schema/SchemaSyncService.h>
 #include <common/logger_useful.h>
@@ -1548,18 +1548,24 @@ void Context::initializeTiFlashMetrics() const
     (void)TiFlashMetrics::instance();
 }
 
-void Context::initializeFileProvider(KeyManagerPtr key_manager, bool enable_encryption)
+void Context::initializeFileProvider(KeyManagerPtr key_manager, bool enable_encryption, bool enable_keyspace_encryption)
 {
     auto lock = getLock();
     if (shared->file_provider)
         throw Exception("File provider has already been initialized.", ErrorCodes::LOGICAL_ERROR);
-    shared->file_provider = std::make_shared<FileProvider>(key_manager, enable_encryption);
+    shared->file_provider = std::make_shared<FileProvider>(key_manager, enable_encryption, enable_keyspace_encryption);
 }
 
 FileProviderPtr Context::getFileProvider() const
 {
     auto lock = getLock();
     return shared->file_provider;
+}
+
+void Context::setFileProvider(FileProviderPtr file_provider)
+{
+    auto lock = getLock();
+    shared->file_provider = file_provider;
 }
 
 void Context::initializeRateLimiter(
@@ -1815,12 +1821,12 @@ UniversalPageStoragePtr Context::tryGetWriteNodePageStorage() const
     return nullptr;
 }
 
-bool Context::trySyncAllDataToRemoteStore() const
+bool Context::tryUploadAllDataToRemoteStore() const
 {
     auto lock = getLock();
     if (shared->ctx_disagg->isDisaggregatedStorageMode() && shared->ps_write)
     {
-        shared->ps_write->setSyncAllData();
+        shared->ps_write->setUploadAllData();
         return true;
     }
     return false;

@@ -18,10 +18,10 @@
 #include <Core/Field.h>
 #include <Core/NamesAndTypes.h>
 #include <Core/SortDescription.h>
-#include <Storages/Transaction/Collator.h>
-#include <Storages/Transaction/TiDB.h>
-#include <Storages/Transaction/TypeMapping.h>
-#include <Storages/Transaction/Types.h>
+#include <Storages/KVStore/Types.h>
+#include <TiDB/Collation/Collator.h>
+#include <TiDB/Decode/TypeMapping.h>
+#include <TiDB/Schema/TiDB.h>
 #include <grpcpp/impl/codegen/status_code_enum.h>
 #include <tipb/executor.pb.h>
 #include <tipb/select.pb.h>
@@ -65,7 +65,11 @@ DataTypePtr inferDataType4Literal(const tipb::Expr & expr);
 SortDescription getSortDescription(
     const std::vector<NameAndTypePair> & order_columns,
     const google::protobuf::RepeatedPtrField<tipb::ByItem> & by_items);
-String genFuncString(const String & func_name, const Names & argument_names, const TiDB::TiDBCollators & collators);
+String genFuncString(
+    const String & func_name,
+    const Names & argument_names,
+    const TiDB::TiDBCollators & collators,
+    const std::vector<const tipb::FieldType *> & field_types = {});
 
 extern const Int8 VAR_SIZE;
 
@@ -74,6 +78,8 @@ bool isUnsupportedEncodeType(const std::vector<tipb::FieldType> & types, tipb::E
 TiDB::TiDBCollatorPtr getCollatorFromExpr(const tipb::Expr & expr);
 TiDB::TiDBCollatorPtr getCollatorFromFieldType(const tipb::FieldType & field_type);
 bool hasUnsignedFlag(const tipb::FieldType & tp);
+bool hasIsBooleanFlag(const tipb::FieldType & tp);
+bool hasParseToJSONFlag(const tipb::FieldType & tp);
 
 void assertBlockSchema(const DataTypes & expected_types, const Block & block, const String & context_description);
 
@@ -101,6 +107,5 @@ public:
 };
 
 tipb::DAGRequest getDAGRequestFromStringWithRetry(const String & s);
-tipb::EncodeType analyzeDAGEncodeType(DAGContext & dag_context);
 tipb::ScalarFuncSig reverseGetFuncSigByFuncName(const String & name);
 } // namespace DB

@@ -23,6 +23,8 @@
 #include <etcd/v3election.pb.h>
 #include <fmt/chrono.h>
 
+#include <magic_enum.hpp>
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -160,7 +162,11 @@ SessionPtr Client::createSession(grpc::ClientContext * grpc_context, Int64 ttl)
     const auto & [lease_id, status] = leaseGrant(ttl);
     if (!status.ok())
     {
-        LOG_ERROR(log, "etcd lease grant failed, code={} msg={}", status.error_code(), status.error_message());
+        LOG_ERROR(
+            log,
+            "etcd lease grant failed, code={} msg={}",
+            magic_enum::enum_name(status.error_code()),
+            status.error_message());
         return {};
     }
 
@@ -186,6 +192,7 @@ grpc::Status Client::leaseRevoke(LeaseID lease_id)
 }
 
 std::tuple<v3electionpb::LeaderKey, grpc::Status> Client::campaign(
+    grpc::ClientContext * grpc_context,
     const String & name,
     const String & value,
     LeaseID lease_id)
@@ -195,12 +202,11 @@ std::tuple<v3electionpb::LeaderKey, grpc::Status> Client::campaign(
     req.set_value(value);
     req.set_lease(lease_id);
 
-    grpc::ClientContext context;
     // usually use `campaign` blocks until become leader or error happens,
     // don't set timeout.
 
     v3electionpb::CampaignResponse resp;
-    auto status = leaderClient()->election_stub->Campaign(&context, req, &resp);
+    auto status = leaderClient()->election_stub->Campaign(grpc_context, req, &resp);
     return {resp.leader(), status};
 }
 
@@ -239,7 +245,7 @@ grpc::Status Client::resign(const v3electionpb::LeaderKey & leader_key)
 
 // Using ectd Txn to check if /tidb/server_id/server_id exists.
 // If doesn't exists, put it to etcd and return. Otherwise retry(max retry 3 times).
-UInt64 Client::acquireServerIDFromPD()
+UInt64 Client::acquireServerIDFromGAC()
 {
     const Int32 retry_times = 3;
     UInt64 random_server_id = 0;
@@ -318,8 +324,6 @@ std::unordered_set<UInt64> Client::getExistsServerID()
         throw Exception("getExistsServerID failed, grpc error: {}", status.error_message());
 
     std::unordered_set<UInt64> exists_server_ids;
-    FmtBuffer fmt_buf;
-    fmt_buf.fmtAppend("all existing server ids: ");
     for (const auto & kv : range_resp.kvs())
     {
         String key = kv.key();
@@ -327,10 +331,29 @@ std::unordered_set<UInt64> Client::getExistsServerID()
         RUNTIME_CHECK(prefix == TIDB_SERVER_ID_ETCD_PATH);
         String server_id_str(key.begin() + TIDB_SERVER_ID_ETCD_PATH.size() + 1, key.end());
         exists_server_ids.insert(std::stoi(server_id_str));
-        fmt_buf.fmtAppend("{};", server_id_str);
     }
-    LOG_INFO(log, fmt_buf.toString());
+    LOG_INFO(log, "existing server ids: {}", exists_server_ids.size());
     return exists_server_ids;
+}
+
+void Client::deleteServerIDFromGAC(UInt64 serverID)
+{
+    etcdserverpb::DeleteRangeRequest del_range_req;
+    const String key = fmt::format("{}/{}", TIDB_SERVER_ID_ETCD_PATH, serverID);
+    del_range_req.set_key(key);
+
+    etcdserverpb::DeleteRangeResponse del_range_resp;
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + timeout);
+
+    auto status = leaderClient()->kv_stub->DeleteRange(&context, del_range_req, &del_range_resp);
+    if (!status.ok())
+        throw Exception("deleteServerIDFromGAC failed, grpc error: {}", status.error_message());
+
+    if (del_range_resp.deleted() != 1)
+        throw Exception(
+            "deleteServerIDFromGAC failed, unexpected deleted num, expect 1, got {}",
+            del_range_resp.deleted());
 }
 
 bool Session::isValid() const
@@ -353,7 +376,11 @@ bool Session::keepAliveOne()
     if (!ok)
     {
         auto status = writer->Finish();
-        LOG_INFO(log, "keep alive write fail, code={} msg={}", status.error_code(), status.error_message());
+        LOG_INFO(
+            log,
+            "keep alive write fail, code={} msg={}",
+            magic_enum::enum_name(status.error_code()),
+            status.error_message());
         finished = true;
         return false;
     }
@@ -363,7 +390,11 @@ bool Session::keepAliveOne()
     if (!ok)
     {
         auto status = writer->Finish();
-        LOG_INFO(log, "keep alive read fail, code={} msg={}", status.error_code(), status.error_message());
+        LOG_INFO(
+            log,
+            "keep alive read fail, code={} msg={}",
+            magic_enum::enum_name(status.error_code()),
+            status.error_message());
         finished = true;
         return false;
     }
@@ -371,7 +402,14 @@ bool Session::keepAliveOne()
     // the lease is not valid anymore
     if (resp.ttl() <= 0)
     {
-        LOG_DEBUG(log, "keep alive fail, ttl={}", resp.ttl());
+        auto status = writer->Finish();
+        LOG_INFO(
+            log,
+            "keep alive fail, ttl={}, code={} msg={}",
+            resp.ttl(),
+            magic_enum::enum_name(status.error_code()),
+            status.error_message());
+        finished = true;
         return false;
     }
     lease_deadline = next_timepoint + std::chrono::seconds(resp.ttl());

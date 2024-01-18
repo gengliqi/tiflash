@@ -23,7 +23,11 @@ namespace tests
 class SpillJoinTestRunner : public DB::tests::JoinTestRunner
 {
 public:
-    void initializeContext() override { JoinTestRunner::initializeContext(); }
+    void initializeContext() override
+    {
+        JoinTestRunner::initializeContext();
+        dag_context_ptr->log = Logger::get("JoinSpillTest");
+    }
 };
 
 #define WRAP_FOR_SPILL_TEST_BEGIN                  \
@@ -158,6 +162,10 @@ try
             auto request = context.scan("simple_test", l)
                                .join(context.scan("simple_test", r), join_type, {col(k)})
                                .build(context);
+            auto request_column_prune = context.scan("simple_test", l)
+                                            .join(context.scan("simple_test", r), join_type, {col(k)})
+                                            .aggregation({Count(lit(static_cast<UInt64>(1)))}, {})
+                                            .build(context);
 
             {
                 context.context->setSetting("max_bytes_before_external_join", Field(static_cast<UInt64>(10000)));
@@ -170,6 +178,9 @@ try
                         << "join_type = " << magic_enum::enum_name(join_type) << ", simple_test_index = " << j
                         << ", concurrency = " << concurrency;
                 }
+                ASSERT_COLUMNS_EQ_UR(
+                    genScalarCountResults(expected_cols[i * simple_test_num + j]),
+                    executeStreams(request_column_prune, 2));
             }
         }
     }
@@ -193,6 +204,10 @@ try
     auto request = context.scan("split_test", "t1")
                        .join(context.scan("split_test", "t2"), tipb::JoinType::TypeInnerJoin, {col("a")})
                        .build(context);
+    auto request_column_prune = context.scan("split_test", "t1")
+                                    .join(context.scan("split_test", "t2"), tipb::JoinType::TypeInnerJoin, {col("a")})
+                                    .aggregation({Count(lit(static_cast<UInt64>(1)))}, {})
+                                    .build(context);
 
     auto join_restore_concurrences = {-1, 0, 1, 5};
     auto concurrences = {2, 5, 10};
@@ -214,6 +229,7 @@ try
         {
             ASSERT_COLUMNS_EQ_UR(expect, executeStreams(request, concurrency));
         }
+        ASSERT_COLUMNS_EQ_UR(genScalarCountResults(expect), executeStreams(request_column_prune, 2));
     }
     WRAP_FOR_SPILL_TEST_END
 }
@@ -268,6 +284,7 @@ try
                               context.scan("outer_join_test", right_table_name),
                               tipb::JoinType::TypeRightOuterJoin,
                               {col("a")})
+                          .project({fmt::format("{}.a", left_table_name), fmt::format("{}.b", right_table_name)})
                           .build(context);
             if (right_table_name == "right_table_1_concurrency")
             {
@@ -276,7 +293,10 @@ try
             }
             else
             {
-                ASSERT_COLUMNS_EQ_UR(ref_columns, executeStreams(request, original_max_streams))
+                ColumnsWithTypeAndName ref;
+                ref.push_back(ref_columns[0]);
+                ref.push_back(ref_columns[3]);
+                ASSERT_COLUMNS_EQ_UR(ref, executeStreams(request, original_max_streams))
                     << "left_table_name = " << left_table_name << ", right_table_name = " << right_table_name;
             }
         }
@@ -286,11 +306,10 @@ try
     {
         for (size_t exchange_concurrency : right_exchange_receiver_concurrency)
         {
+            auto right_name = fmt::format("right_exchange_receiver_{}_concurrency", exchange_concurrency);
             request = context.scan("outer_join_test", left_table_name)
                           .join(
-                              context.receive(
-                                  fmt::format("right_exchange_receiver_{}_concurrency", exchange_concurrency),
-                                  exchange_concurrency),
+                              context.receive(right_name, exchange_concurrency),
                               tipb::JoinType::TypeRightOuterJoin,
                               {col("a")},
                               {},
@@ -298,6 +317,7 @@ try
                               {},
                               {},
                               exchange_concurrency)
+                          .project({fmt::format("{}.b", left_table_name), fmt::format("{}.a", right_name)})
                           .build(context);
             if (exchange_concurrency == 1)
             {
@@ -305,9 +325,12 @@ try
             }
             else
             {
-                ASSERT_COLUMNS_EQ_UR(ref_columns, executeStreams(request, original_max_streams));
+                ColumnsWithTypeAndName ref;
+                ref.push_back(ref_columns[1]);
+                ref.push_back(ref_columns[2]);
+                ASSERT_COLUMNS_EQ_UR(ref, executeStreams(request, original_max_streams));
                 if (original_max_streams_small < exchange_concurrency)
-                    ASSERT_COLUMNS_EQ_UR(ref_columns, executeStreams(request, original_max_streams_small));
+                    ASSERT_COLUMNS_EQ_UR(ref, executeStreams(request, original_max_streams_small));
             }
         }
     }
@@ -351,6 +374,7 @@ try
                               {},
                               {},
                               0)
+                          .project({fmt::format("{}.a", left_table_name), fmt::format("{}.b", right_table_name)})
                           .build(context);
             if (right_table_name == "right_table_1_concurrency")
             {
@@ -359,7 +383,10 @@ try
             }
             else
             {
-                ASSERT_COLUMNS_EQ_UR(ref_columns, executeStreams(request, original_max_streams))
+                ColumnsWithTypeAndName ref;
+                ref.push_back(ref_columns[0]);
+                ref.push_back(ref_columns[3]);
+                ASSERT_COLUMNS_EQ_UR(ref, executeStreams(request, original_max_streams))
                     << "left_table_name = " << left_table_name << ", right_table_name = " << right_table_name;
             }
         }
@@ -372,9 +399,7 @@ try
             String exchange_name = fmt::format("right_exchange_receiver_{}_concurrency", exchange_concurrency);
             request = context.scan("outer_join_test", left_table_name)
                           .join(
-                              context.receive(
-                                  fmt::format("right_exchange_receiver_{}_concurrency", exchange_concurrency),
-                                  exchange_concurrency),
+                              context.receive(exchange_name, exchange_concurrency),
                               tipb::JoinType::TypeRightOuterJoin,
                               {col("a")},
                               {},
@@ -382,6 +407,7 @@ try
                               {},
                               {},
                               exchange_concurrency)
+                          .project({fmt::format("{}.b", left_table_name), fmt::format("{}.a", exchange_name)})
                           .build(context);
             if (exchange_concurrency == 1)
             {
@@ -389,9 +415,12 @@ try
             }
             else
             {
-                ASSERT_COLUMNS_EQ_UR(ref_columns, executeStreams(request, original_max_streams));
+                ColumnsWithTypeAndName ref;
+                ref.push_back(ref_columns[1]);
+                ref.push_back(ref_columns[2]);
+                ASSERT_COLUMNS_EQ_UR(ref, executeStreams(request, original_max_streams));
                 if (original_max_streams_small < exchange_concurrency)
-                    ASSERT_COLUMNS_EQ_UR(ref_columns, executeStreams(request, original_max_streams_small));
+                    ASSERT_COLUMNS_EQ_UR(ref, executeStreams(request, original_max_streams_small));
             }
         }
     }

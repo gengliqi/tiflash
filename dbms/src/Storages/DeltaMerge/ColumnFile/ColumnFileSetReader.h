@@ -15,6 +15,8 @@
 #pragma once
 
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileSetSnapshot.h>
+#include <Storages/DeltaMerge/DMContext.h>
+#include <Storages/DeltaMerge/ScanContext.h>
 #include <Storages/DeltaMerge/SkippableBlockInputStream.h>
 
 namespace DB
@@ -40,9 +42,12 @@ private:
 
     std::vector<ColumnFileReaderPtr> column_file_readers;
 
+    LACBytesCollector lac_bytes_collector;
+
 private:
     explicit ColumnFileSetReader(const DMContext & context_)
         : context(context_)
+        , lac_bytes_collector(context_.scan_context ? context_.scan_context->resource_group_name : "")
     {}
 
     Block readPKVersion(size_t offset, size_t limit);

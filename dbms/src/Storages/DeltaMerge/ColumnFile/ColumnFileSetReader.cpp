@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <Flash/ResourceControl/LocalAdmissionController.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileBig.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileDeleteRange.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileInMemory.h>
@@ -88,6 +89,7 @@ ColumnFileSetReader::ColumnFileSetReader(
     , snapshot(snapshot_)
     , col_defs(col_defs_)
     , segment_range(segment_range_)
+    , lac_bytes_collector(context_.scan_context ? context_.scan_context->resource_group_name : "")
 {
     size_t total_rows = 0;
     for (auto & f : snapshot->getColumnFiles())
@@ -129,6 +131,14 @@ Block ColumnFileSetReader::readPKVersion(size_t offset, size_t limit)
     return block;
 }
 
+static Int64 columnsSize(MutableColumns & columns)
+{
+    Int64 bytes = 0;
+    for (const auto & col : columns)
+        bytes += col->byteSize();
+    return bytes;
+}
+
 size_t ColumnFileSetReader::readRows(
     MutableColumns & output_columns,
     size_t offset,
@@ -154,6 +164,7 @@ size_t ColumnFileSetReader::readRows(
     if (end == start)
         return 0;
 
+    auto bytes_before_read = columnsSize(output_columns);
     auto [start_file_index, rows_start_in_start_file] = locatePosByAccumulation(column_file_rows_end, start);
     auto [end_file_index, rows_end_in_end_file] = locatePosByAccumulation(column_file_rows_end, end);
 
@@ -184,10 +195,15 @@ size_t ColumnFileSetReader::readRows(
             }
         }
     }
-    for (const auto & col : output_columns)
+
+    if (auto delta_bytes = columnsSize(output_columns) - bytes_before_read; delta_bytes > 0)
     {
-        context.scan_context->total_user_read_bytes += col->byteSize();
+        if (row_ids == nullptr)
+            lac_bytes_collector.collect(delta_bytes);
+        if (likely(context.scan_context))
+            context.scan_context->user_read_bytes += delta_bytes;
     }
+
     return actual_read;
 }
 

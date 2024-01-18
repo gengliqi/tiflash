@@ -17,7 +17,7 @@
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileDataProvider.h>
 #include <Storages/DeltaMerge/Remote/RNDataProvider_fwd.h>
 #include <Storages/DeltaMerge/Remote/RNLocalPageCache_fwd.h>
-#include <Storages/Transaction/Types.h>
+#include <Storages/KVStore/Types.h>
 
 namespace DB::DM::Remote
 {
@@ -32,7 +32,7 @@ private:
     KeyspaceTableID ks_table_id;
 
 public:
-    explicit ColumnFileDataProviderRNLocalPageCache(
+    ColumnFileDataProviderRNLocalPageCache(
         RNLocalPageCachePtr page_cache_,
         RNLocalPageCacheGuardPtr pages_guard_,
         StoreID store_id_,

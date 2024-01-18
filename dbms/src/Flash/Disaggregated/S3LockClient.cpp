@@ -15,8 +15,8 @@
 #include <Common/Exception.h>
 #include <Common/Logger.h>
 #include <Flash/Disaggregated/S3LockClient.h>
-#include <Storages/Transaction/TMTContext.h>
-#include <Storages/Transaction/Types.h>
+#include <Storages/KVStore/TMTContext.h>
+#include <Storages/KVStore/Types.h>
 #include <TiDB/OwnerInfo.h>
 #include <common/defines.h>
 #include <common/types.h>
@@ -118,7 +118,11 @@ std::pair<bool, String> S3LockClient::makeCall(
                 throw Exception(ErrorCodes::TIMEOUT_EXCEEDED, "deadline exceed, " + tracing_log->identifier());
             }
             // retry
-            LOG_ERROR(tracing_log, "meets error, code={} msg={}", status.error_code(), status.error_message());
+            LOG_ERROR(
+                tracing_log,
+                "meets error, code={} msg={}",
+                magic_enum::enum_name(status.error_code()),
+                status.error_message());
             address = updateOwnerAddr(deadline, tracing_log);
         }
 

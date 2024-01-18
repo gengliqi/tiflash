@@ -35,10 +35,13 @@
 #include <Storages/Page/PageDefinesBase.h>
 
 
-namespace DB
+namespace DB::DM
 {
-namespace DM
+namespace tests
 {
+class SegmentReadTaskTest;
+}
+
 using GenPageId = std::function<PageIdU64()>;
 class DeltaValueSpace;
 class DeltaValueSnapshot;
@@ -94,13 +97,19 @@ private:
     std::atomic<size_t> last_try_place_delta_index_rows = 0;
 
     DeltaIndexPtr delta_index;
-    UInt64 delta_index_epoch = 0;
+    // `delta_index_epoch` is used in disaggregated mode by compute-nodes to identify if the delta_index has changed.
+    // To avoid persisting it, we use `std::chrono::steady_clock` to make it monotonic increase.
+    // Accuracy of `std::chrono::steady_clock` in Linux is nanosecond. This is much smaller than the interval between two flushes.
+    UInt64 delta_index_epoch = std::chrono::steady_clock::now().time_since_epoch().count();
 
     // Protects the operations in this instance.
     // It is a recursive_mutex because the lock may be also used by the parent segment as its update lock.
     mutable std::recursive_mutex mutex;
 
     LoggerPtr log;
+
+private:
+    void saveMeta(WriteBuffer & buf) const;
 
 public:
     explicit DeltaValueSpace(
@@ -113,8 +122,17 @@ public:
     /// Restore the metadata of this instance.
     /// Only called after reboot.
     static DeltaValueSpacePtr restore(DMContext & context, const RowKeyRange & segment_range, PageIdU64 id);
+    /// Restore from a checkpoint from other peer.
+    /// Only used in FAP.
+    static DeltaValueSpacePtr restore(
+        DMContext & context,
+        const RowKeyRange & segment_range,
+        ReadBuffer & buf,
+        PageIdU64 id);
+
 
     static DeltaValueSpacePtr createFromCheckpoint( //
+        const LoggerPtr & parent_log,
         DMContext & context,
         UniversalPageStoragePtr temp_ps,
         const RowKeyRange & segment_range,
@@ -133,9 +151,10 @@ public:
         persisted_file_set->resetLogger(segment_log);
     }
 
-    /// The following two methods are just for test purposes
+    /// The following 3 methods are just for test purposes
     MemTableSetPtr getMemTableSet() const { return mem_table_set; }
     ColumnFilePersistedSetPtr getPersistedFileSet() const { return persisted_file_set; }
+    UInt64 getDeltaIndexEpoch() const { return delta_index_epoch; }
 
     String simpleInfo() const { return "<delta_id=" + DB::toString(persisted_file_set->getId()) + ">"; }
     String info() const { return fmt::format("{}. {}", mem_table_set->info(), persisted_file_set->info()); }
@@ -154,6 +173,7 @@ public:
     bool hasAbandoned() const { return abandoned.load(std::memory_order_relaxed); }
 
     void saveMeta(WriteBatches & wbs) const;
+    std::string serializeMeta() const;
 
     void recordRemoveColumnFilesPages(WriteBatches & wbs) const;
 
@@ -392,10 +412,12 @@ public:
 
     RowKeyRange getSquashDeleteRange() const;
 
-    const auto & getSharedDeltaIndex() { return shared_delta_index; }
+    const auto & getSharedDeltaIndex() const { return shared_delta_index; }
     size_t getDeltaIndexEpoch() const { return delta_index_epoch; }
 
     bool isForUpdate() const { return is_update; }
+
+    void setMemTableSetSnapshot(const ColumnFileSetSnapshotPtr & mem_table_snap_) { mem_table_snap = mem_table_snap_; }
 };
 
 class DeltaValueReader
@@ -545,5 +567,4 @@ public:
     }
 };
 
-} // namespace DM
-} // namespace DB
+} // namespace DB::DM

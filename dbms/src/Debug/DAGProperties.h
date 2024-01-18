@@ -15,7 +15,7 @@
 #pragma once
 
 #include <Core/Defines.h>
-#include <Storages/Transaction/Types.h>
+#include <Storages/KVStore/Types.h>
 
 namespace DB
 {
@@ -35,6 +35,6 @@ struct DAGProperties
     UInt64 local_query_id = 1;
     Int64 task_id = 1;
 
-    Int32 mpp_timeout = 10;
+    Int32 mpp_timeout = 60;
 };
 } // namespace DB
