@@ -30,7 +30,7 @@ EXPORT int establishMPPConnection(void * ctx, RawString raw_request, MPPStreamRe
 EXPORT int nextResponse(MPPStreamResponse * stream_response, RawString * raw_response);
 EXPORT void deleteMPPStreamResponse(MPPStreamResponse * stream_response);
 
-MY_API int cancelMPPTask(void * ctx, RawString raw_request, RawString * raw_response);
+EXPORT int cancelMPPTask(void * ctx, RawString raw_request, RawString * raw_response);
 
 #ifdef __cplusplus
 }

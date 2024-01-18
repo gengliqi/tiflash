@@ -1895,7 +1895,7 @@ int dispatchMPPTask(void *, RawString raw_request, RawString * raw_response)
     auto [db_context, status] = flash_ctx->createDBContext(&grpc_context);
     if (!status.ok())
     {
-        LOG_ERROR(flash_ctx->log, "create db context error {}", status.error_code());
+        LOG_ERROR(flash_ctx->log, "create db context error {}", magic_enum::enum_name(status.error_code()));
         return status.error_code();
     }
     DB::MPPHandler mpp_handler(request);
