@@ -185,7 +185,25 @@ public:
             return;
         assert(src.size() == gather_ranges.size());
         offsets.reserve(offsets.size() + gather_ranges.back().length_offset);
-        insertGatherRangeFromImpl<ColumnString>(src, gather_ranges);
+        size_t sz = src.size(), prev_len = 0;
+        const size_t PREFETCH_SIZE = 4;
+        for (size_t i = 0; i < sz; ++i)
+        {
+            if (i + PREFETCH_SIZE < sz && src[i + PREFETCH_SIZE] != nullptr)
+            {
+                const auto & src_tmp = static_cast<const ColumnString &>(*src[i + PREFETCH_SIZE]);
+                __builtin_prefetch(src_tmp.chars.data() + src_tmp.offsetAt(gather_ranges[i + PREFETCH_SIZE].start_pos), 0, 1);
+            }
+            if (i + PREFETCH_SIZE * 2 < sz && src[i + PREFETCH_SIZE * 2] != nullptr && gather_ranges[i + PREFETCH_SIZE * 2].start_pos > 0)
+                __builtin_prefetch(static_cast<const ColumnString &>(*src[i + PREFETCH_SIZE * 2]).offsets.data() + gather_ranges[i + PREFETCH_SIZE * 2].start_pos - 1, 0, 1);
+
+            const auto & g = gather_ranges[i];
+            if (src[i] == nullptr)
+                insertManyDefaults(g.length_offset - prev_len);
+            else
+                insertRangeFrom(*src[i], g.start_pos, g.length_offset - prev_len);
+            prev_len = g.length_offset;
+        }
     }
 
     bool decodeTiDBRowV2Datum(size_t cursor, const String & raw_value, size_t length, bool /* force_decode */) override

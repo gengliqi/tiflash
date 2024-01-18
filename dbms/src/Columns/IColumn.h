@@ -556,8 +556,8 @@ protected:
         if (gather_ranges.empty())
             return;
         assert(src.size() == gather_ranges.size());
-        size_t size = src.size(), prev_len = 0;
-        for (size_t i = 0; i < size; ++i)
+        size_t sz = src.size(), prev_len = 0;
+        for (size_t i = 0; i < sz; ++i)
         {
             const auto & g = gather_ranges[i];
             if (src[i] == nullptr)

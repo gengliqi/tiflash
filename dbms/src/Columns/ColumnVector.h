@@ -240,8 +240,12 @@ public:
         size_t old_size = data.size();
         data.reserve(old_size + gather_ranges.back().length_offset);
         size_t sz = src.size(), prev_len = 0;
+        const size_t PREFETCH_SIZE = 8;
         for (size_t i = 0; i < sz; ++i)
         {
+            if (i + PREFETCH_SIZE < sz && src[i + PREFETCH_SIZE] != nullptr)
+                __builtin_prefetch(static_cast<const Self &>(*src[i + PREFETCH_SIZE]).data.data() + gather_ranges[i + PREFETCH_SIZE].start_pos, 0, 1);
+
             const auto & g = gather_ranges[i];
             if (src[i] == nullptr)
             {
