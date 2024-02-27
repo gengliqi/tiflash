@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <Common/ColumnsHashing.h>
 #include <Common/HashTable/HashMap.h>
 #include <Common/HashTable/HashSet.h>
 #include <Core/Block.h>
@@ -258,4 +259,87 @@ JoinMapMethod chooseJoinMapMethod(
     const ColumnRawPtrs & key_columns,
     Sizes & key_sizes,
     const TiDB::TiDBCollators & collators);
+
+/// code for hash map insertion
+template <JoinMapMethod method, typename Value, typename Mapped>
+struct KeyGetterForTypeImpl;
+
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key8, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodOneNumber<Value, Mapped, UInt8, false>;
+    using Hash = TrivialHash;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key16, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodOneNumber<Value, Mapped, UInt16, false>;
+    using Hash = TrivialHash;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key32, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodOneNumber<Value, Mapped, UInt32, false>;
+    using Hash = HashCRC32<UInt32>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key64, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodOneNumber<Value, Mapped, UInt64, false>;
+    using Hash = HashCRC32<UInt64>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key_string, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodString<Value, Mapped, true, false>;
+    using Hash = DefaultHash<StringRef>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key_strbinpadding, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodStringBin<Value, Mapped, true>;
+    using Hash = DefaultHash<StringRef>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key_strbin, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodStringBin<Value, Mapped, false>;
+    using Hash = DefaultHash<StringRef>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::key_fixed_string, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodFixedString<Value, Mapped, true, false>;
+    using Hash = DefaultHash<StringRef>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::keys128, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodKeysFixed<Value, UInt128, Mapped, false, false>;
+    using Hash = HashCRC32<UInt128>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::keys256, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodKeysFixed<Value, UInt256, Mapped, false, false>;
+    using Hash = HashCRC32<UInt256>;
+};
+template <typename Value, typename Mapped>
+struct KeyGetterForTypeImpl<JoinMapMethod::serialized, Value, Mapped>
+{
+    using Type = ColumnsHashing::HashMethodSerialized<Value, Mapped>;
+    using Hash = DefaultHash<StringRef>;
+};
+
+
+template <JoinMapMethod method, typename Data>
+struct KeyGetterForType
+{
+    using Value = typename Data::value_type;
+    using Mapped_t = typename Data::mapped_type;
+    using Mapped = std::conditional_t<std::is_const_v<Data>, const Mapped_t, Mapped_t>;
+    using Type = typename KeyGetterForTypeImpl<method, Value, Mapped>::Type;
+    using Hash = typename KeyGetterForTypeImpl<method, Value, Mapped>::Hash;
+};
+
 } // namespace DB

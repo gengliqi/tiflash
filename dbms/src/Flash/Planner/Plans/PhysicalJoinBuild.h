@@ -48,6 +48,8 @@ private:
         Context & context,
         size_t /*concurrency*/) override;
 
+    EventPtr doSinkComplete(PipelineExecutorContext & exec_context) override;
+
     DISABLE_USELESS_FUNCTION_FOR_BREAKER
 
 private:

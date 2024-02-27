@@ -276,6 +276,24 @@ void ColumnNullable::popBack(size_t n)
     getNullMapColumn().popBack(n);
 }
 
+void ColumnNullable::countSerializeLength(PaddedPODArray<size_t> & length) const
+{
+    getNullMapColumn().countSerializeLength(length);
+    getNestedColumn().countSerializeLength(length);
+}
+
+void ColumnNullable::serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t end) const
+{
+    getNullMapColumn().serializeToPos(pos, start, end);
+    getNestedColumn().serializeToPos(pos, start, end);
+}
+
+void ColumnNullable::deserializeAndInsertFromPos(PaddedPODArray<char *> & pos)
+{
+    getNullMapColumn().deserializeAndInsertFromPos(pos);
+    getNestedColumn().deserializeAndInsertFromPos(pos);
+}
+
 ColumnPtr ColumnNullable::filter(const Filter & filt, ssize_t result_size_hint) const
 {
     ColumnPtr filtered_data = getNestedColumn().filter(filt, result_size_hint);

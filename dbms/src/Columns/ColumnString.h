@@ -197,6 +197,55 @@ public:
         offsets.resize_assume_reserved(offsets.size() - n);
     }
 
+    void countSerializeLength(PaddedPODArray<size_t> & length) const override
+    {
+        if unlikely (length.size() != offsets.size())
+            length.resize(offsets.size());
+
+        size_t size = length.size();
+        for (size_t i = 0; i < size; ++i)
+            length[i] += sizeof(size_t) + sizeAt(i);
+    }
+
+    void serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t end) const override
+    {
+        if unlikely (pos.size() != offsets.size())
+            pos.resize(offsets.size());
+
+        for (size_t i = start; i < end; ++i)
+        {
+            if (pos[i] != nullptr)
+            {
+                size_t str_size = sizeAt(i);
+                std::memcpy(pos[i], &str_size, sizeof(size_t));
+                pos[i] += sizeof(size_t);
+                inline_memcpy(pos[i], &chars[offsetAt(i)], str_size);
+                pos[i] += str_size;
+            }
+        }
+    }
+
+    void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos) override
+    {
+        size_t prev_size = offsets.size();
+        offsets.resize(prev_size + pos.size());
+
+        size_t size = pos.size();
+        size_t char_size = chars.size();
+        for (size_t i = 0; i < size; ++i)
+        {
+            size_t str_size;
+            std::memcpy(&str_size, pos[i], sizeof(size_t));
+            pos[i] += sizeof(size_t);
+
+            char_size += str_size;
+            chars.resize(char_size);
+            inline_memcpy(&chars[char_size], pos[i], str_size);
+            offsets[prev_size + i] = char_size;
+            pos[i] += str_size;
+        }
+    }
+
     StringRef serializeValueIntoArena(
         size_t n,
         Arena & arena,

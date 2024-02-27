@@ -15,6 +15,7 @@
 #include <Flash/Coprocessor/DAGContext.h>
 #include <Flash/Coprocessor/InterpreterUtils.h>
 #include <Flash/Pipeline/Exec/PipelineExecBuilder.h>
+#include <Flash/Pipeline/Schedule/Events/HashJoinBuildFinalizeEvent.h>
 #include <Flash/Planner/Plans/PhysicalJoinBuild.h>
 #include <Interpreters/Context.h>
 #include <Operators/HashJoinBuildSink.h>
@@ -41,4 +42,11 @@ void PhysicalJoinBuild::buildPipelineExecGroupImpl(
     join_ptr->setInitActiveBuildThreads();
     join_ptr.reset();
 }
+
+EventPtr PhysicalJoinBuild::doSinkComplete(DB::PipelineExecutorContext & exec_context)
+{
+    auto finalize_event = std::make_shared<HashJoinBuildFinalizeEvent>(exec_context, log->identifier(), join_ptr);
+    return finalize_event;
+}
+
 } // namespace DB

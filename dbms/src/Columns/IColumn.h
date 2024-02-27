@@ -180,6 +180,15 @@ public:
       */
     virtual void popBack(size_t n) = 0;
 
+    virtual void countSerializeLength(PaddedPODArray<size_t> &) const { RUNTIME_ASSERT(false, "not implemented"); }
+
+    virtual void serializeToPos(PaddedPODArray<char *> &, size_t, size_t) const
+    {
+        RUNTIME_ASSERT(false, "not implemented");
+    }
+
+    virtual void deserializeAndInsertFromPos(PaddedPODArray<char *> &) { RUNTIME_ASSERT(false, "not implemented"); }
+
     /** Serializes n-th element. Serialized element should be placed continuously inside Arena's memory.
       * Serialized value can be deserialized to reconstruct original object. Is used in aggregation.
       * The method is similar to getDataAt(), but can work when element's value cannot be mapped to existing continuous memory chunk,

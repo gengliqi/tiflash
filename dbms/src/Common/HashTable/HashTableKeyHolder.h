@@ -16,6 +16,7 @@
 
 #include <Common/Arena.h>
 #include <common/StringRef.h>
+#include <common/memcpy.h>
 
 /**
   * In some aggregation scenarios, when adding a key to the hash table, we
@@ -169,4 +170,43 @@ inline void ALWAYS_INLINE keyHolderDiscardKey(DB::SerializedKeyHolder && holder)
     holder.pool.rollback(holder.key.size);
     holder.key.data = nullptr;
     holder.key.size = 0;
+}
+
+template <typename T>
+inline size_t ALWAYS_INLINE keyHolderGetKeySize(T &&)
+{
+    return sizeof(T);
+}
+
+inline size_t ALWAYS_INLINE keyHolderGetKeySize(const StringRef & s)
+{
+    return sizeof(size_t) + s.size;
+}
+
+template <typename T>
+inline void ALWAYS_INLINE keyHolderSerializeKey(T && t, char * pos)
+{
+    memcpy(pos, &t, sizeof(T));
+}
+
+inline void ALWAYS_INLINE keyHolderSerializeKey(const StringRef & s, char * pos)
+{
+    memcpy(pos, &s.size, sizeof(size_t));
+    inline_memcpy(pos + sizeof(size_t), s.data, s.size);
+}
+
+template <typename T>
+inline T ALWAYS_INLINE keyHolderDeserializeKey(char * pos)
+{
+    T res{};
+    memcpy(&res, pos, sizeof(T));
+    return res;
+}
+
+inline StringRef ALWAYS_INLINE keyHolderDeserializeKey(char * pos)
+{
+    StringRef res;
+    memcpy(&res.size, pos, sizeof(size_t));
+    res.data = pos + sizeof(size_t);
+    return res;
 }

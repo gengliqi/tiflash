@@ -129,6 +129,44 @@ public:
     void insertDisjunctFrom(const IColumn & src_, const std::vector<size_t> & position_vec) override;
     void popBack(size_t n) override { data.resize_assume_reserved(data.size() - n); }
 
+    void countSerializeLength(PaddedPODArray<size_t> & length) const override
+    {
+        if unlikely (length.size() != data.size())
+            length.resize(data.size());
+
+        size_t size = length.size();
+        for (size_t i = 0; i < size; ++i)
+            length[i] += sizeof(T);
+    }
+
+    void serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t end) const override
+    {
+        if unlikely (pos.size() != data.size())
+            pos.resize(data.size());
+
+        for (size_t i = start; i < end; ++i)
+        {
+            if (pos[i] != nullptr)
+            {
+                std::memcpy(pos[i], &data[i], sizeof(T));
+                pos[i] += sizeof(T);
+            }
+        }
+    }
+
+    void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos) override
+    {
+        size_t prev_size = data.size();
+        data.resize(prev_size + pos.size());
+
+        size_t size = pos.size();
+        for (size_t i = 0; i < size; ++i)
+        {
+            std::memcpy(&data[prev_size + i], pos[i], sizeof(T));
+            pos[i] += sizeof(T);
+        }
+    }
+
     StringRef getRawData() const override
     {
         if constexpr (is_Decimal256)

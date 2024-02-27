@@ -104,6 +104,42 @@ struct RestoreConfig
     size_t restore_partition_id;
 };
 
+const size_t PARTITION_SHIFT = 4;
+const size_t PARTITION_COUNT = 1 << PARTITION_SHIFT;
+const size_t PARTITION_MASK = PARTITION_COUNT - 1;
+
+using RowPtrs = PaddedPODArray<char *>;
+using MultipleRowPtrs = PaddedPODArray<RowPtrs>;
+
+class alignas(ABSL_CACHELINE_SIZE) BuildWorkerData
+{
+public:
+    BuildWorkerData()
+    {
+        partitioned_multi_row_ptrs.resize(PARTITION_COUNT);
+        partitioned_row_counts.resize_fill(PARTITION_COUNT);
+    }
+    ~BuildWorkerData()
+    {
+        for (auto & c : row_memory)
+            delete c;
+        row_memory.clear();
+    }
+
+    std::vector<char *> row_memory;
+    PaddedPODArray<MultipleRowPtrs> partitioned_multi_row_ptrs;
+    PaddedPODArray<size_t> partitioned_row_counts;
+    size_t row_count = 0;
+
+    char * null_rows_list_head = nullptr;
+
+    Arena pool;
+    PaddedPODArray<size_t> row_sizes;
+    PaddedPODArray<size_t> hashes;
+    PaddedPODArray<char *> row_ptrs;
+    size_t convert_time = 0;
+};
+
 /** Data structure for implementation of JOIN.
   * It is just a hash table: keys -> rows of joined ("right") table.
   * Additionally, CROSS JOIN is supported: instead of hash table, it use just set of blocks without keys.
@@ -328,6 +364,10 @@ public:
     const Names & getRequiredColumns() const { return required_columns; }
     void finalize(const Names & parent_require);
 
+    static size_t pointerTableCapacity(size_t count) { return std::max(roundUpToPowerOfTwoOrZero(count * 2), 1 << 10); }
+
+    void buildPointerTable(size_t stream_index);
+
 private:
     friend class ScanHashMapAfterProbeBlockInputStream;
 
@@ -446,6 +486,13 @@ private:
     // the index of vector is the stream_index.
     std::vector<MarkedSpillData> build_side_marked_spilled_data;
     std::vector<MarkedSpillData> probe_side_marked_spilled_data;
+
+    PaddedPODArray<BuildWorkerData> build_workers_data;
+
+    const size_t pointer_offset = sizeof(size_t);
+    size_t pointer_table_size = 0;
+    size_t pointer_table_size_mask = 0;
+    std::atomic<char *> * pointer_table = nullptr;
 
 private:
     /** Set information about structure of right hand of JOIN (joined data).

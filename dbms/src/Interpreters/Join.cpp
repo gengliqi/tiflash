@@ -31,6 +31,7 @@
 #include <common/logger_useful.h>
 
 #include <exception>
+#include <ext/scope_guard.h>
 #include <magic_enum.hpp>
 
 namespace DB
@@ -44,6 +45,7 @@ extern const char exception_mpp_hash_probe[];
 
 namespace ErrorCodes
 {
+extern const int UNKNOWN_SET_DATA_VARIANT;
 extern const int LOGICAL_ERROR;
 extern const int TYPE_MISMATCH;
 } // namespace ErrorCodes
@@ -424,6 +426,8 @@ void Join::initBuild(const Block & sample_block, size_t build_concurrency_)
         partition->setResizeCallbackIfNeeded();
     setSampleBlock(sample_block);
     build_side_marked_spilled_data.resize(build_concurrency);
+
+    build_workers_data.resize(build_concurrency);
 }
 
 void Join::initProbe(const Block & sample_block, size_t probe_concurrency_)
@@ -627,6 +631,208 @@ bool Join::isRestoreJoin() const
     return restore_config.restore_round > 0;
 }
 
+template <typename Maps>
+void convertBlockToRows(
+    JoinMapMethod join_map_method,
+    bool need_record_null_rows,
+    Block * stored_block,
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    const TiDB::TiDBCollators & collators,
+    ConstNullMapPtr null_map,
+    BuildWorkerData & worker_data)
+{
+    switch (join_map_method)
+    {
+    case JoinMapMethod::EMPTY:
+        break;
+    case JoinMapMethod::CROSS:
+        break; /// Do nothing. We have already saved block, and it is enough.
+
+#define M(METHOD)                                                                                           \
+    case JoinMapMethod::METHOD:                                                                             \
+        using KeyGetterType##METHOD = KeyGetterForType<JoinMapMethod::METHOD, typename Maps::METHOD##Type>; \
+        convertBlockToRowsType<typename KeyGetterType##METHOD::Type, typename KeyGetterType##METHOD::Hash>( \
+            need_record_null_rows,                                                                          \
+            stored_block,                                                                                   \
+            rows,                                                                                           \
+            key_columns,                                                                                    \
+            key_sizes,                                                                                      \
+            collators,                                                                                      \
+            null_map,                                                                                       \
+            worker_data);                                                                                   \
+        break;
+        APPLY_FOR_JOIN_VARIANTS(M)
+#undef M
+
+    default:
+        throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
+    }
+}
+
+template <typename KeyGetter, typename Hash>
+void convertBlockToRowsType(
+    bool need_record_null_rows,
+    Block * stored_block,
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    const TiDB::TiDBCollators & collators,
+    ConstNullMapPtr null_map,
+    BuildWorkerData & worker_data)
+{
+#define CALL(has_null_map, need_record_null_rows)                                     \
+    convertBlockToRowsTypeImpl<KeyGetter, Hash, has_null_map, need_record_null_rows>( \
+        stored_block,                                                                 \
+        rows,                                                                         \
+        key_columns,                                                                  \
+        key_sizes,                                                                    \
+        collators,                                                                    \
+        null_map,                                                                     \
+        worker_data);
+
+    if (null_map)
+    {
+        if (need_record_null_rows)
+        {
+            CALL(true, true);
+        }
+        else
+        {
+            CALL(true, false);
+        }
+    }
+    else
+    {
+        CALL(false, false);
+    }
+#undef CALL
+}
+
+template <typename KeyGetter, typename Hash, bool has_null_map, bool need_record_null_rows>
+void convertBlockToRowsTypeImpl(
+    Block * stored_block,
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    const TiDB::TiDBCollators & collators,
+    ConstNullMapPtr null_map,
+    BuildWorkerData & worker_data)
+{
+    Stopwatch watch;
+    KeyGetter key_getter(key_columns, key_sizes, collators);
+    std::vector<std::string> sort_key_containers;
+    sort_key_containers.resize(key_columns.size());
+
+    worker_data.row_sizes.clear();
+    worker_data.row_sizes.resize_fill(rows, 0);
+    worker_data.hashes.resize(rows);
+    worker_data.row_ptrs.clear();
+    worker_data.row_ptrs.resize_fill(rows, 0);
+
+    size_t columns = stored_block->columns();
+    for (size_t i = 0; i < columns; ++i)
+        stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
+
+    size_t part_count = need_record_null_rows ? PARTITION_COUNT + 1 : PARTITION_COUNT;
+    std::vector<size_t> partition_row_sizes(part_count);
+    std::vector<size_t> partition_row_count(PARTITION_COUNT);
+    for (size_t i = 0; i < rows; ++i)
+    {
+        if (has_null_map && (*null_map)[i])
+        {
+            if constexpr (need_record_null_rows)
+            {
+                worker_data.row_sizes[i] += sizeof(char *);
+                partition_row_sizes[PARTITION_COUNT] += worker_data.row_sizes[i];
+            }
+            continue;
+        }
+        auto key_holder = key_getter.getKeyHolder(i, &worker_data.pool, sort_key_containers);
+        SCOPE_EXIT(keyHolderDiscardKey(key_holder));
+
+        const auto & key = keyHolderGetKey(key_holder);
+
+        worker_data.row_sizes[i] += sizeof(size_t) + sizeof(char *) + keyHolderGetKeySize(key);
+        worker_data.hashes[i] = Hash()(key);
+        size_t part_num = worker_data.hashes[i] & PARTITION_MASK;
+        partition_row_sizes[part_num] += worker_data.row_sizes[i];
+        ++partition_row_count[part_num];
+    }
+
+    std::vector<char *> partition_first_ptr(part_count);
+    for (size_t i = 0; i < part_count; ++i)
+    {
+        if (partition_row_sizes[i] > 0)
+        {
+            partition_first_ptr[i] = new char[partition_row_sizes[i]];
+            worker_data.row_memory.emplace_back(partition_first_ptr[i]);
+        }
+    }
+
+    std::vector<RowPtrs> partitioned_row_ptrs(PARTITION_COUNT);
+    for (size_t i = 0; i < PARTITION_COUNT; ++i)
+        partitioned_row_ptrs[i].reserve(partition_row_count[i]);
+
+    for (size_t i = 0; i < rows; ++i)
+    {
+        if (has_null_map && (*null_map)[i])
+        {
+            if constexpr (need_record_null_rows)
+            {
+                worker_data.row_ptrs[i] = partition_first_ptr[PARTITION_COUNT];
+                partition_first_ptr[PARTITION_COUNT] += worker_data.row_sizes[i];
+
+                /// Append to null rows list
+                unalignedStore<char *>(worker_data.row_ptrs[i], worker_data.null_rows_list_head);
+                worker_data.null_rows_list_head = worker_data.row_ptrs[i];
+
+                worker_data.row_ptrs[i] += sizeof(size_t);
+            }
+            else
+            {
+                worker_data.row_ptrs[i] = nullptr;
+            }
+            continue;
+        }
+
+        size_t part_num = worker_data.hashes[i] & PARTITION_MASK;
+        worker_data.row_ptrs[i] = partition_first_ptr[part_num];
+        partition_first_ptr[part_num] += worker_data.row_sizes[i];
+
+        partitioned_row_ptrs[part_num].push_back(worker_data.row_ptrs[i]);
+        unalignedStore<size_t>(worker_data.row_ptrs[i], worker_data.hashes[i]);
+        unalignedStore<char *>(worker_data.row_ptrs[i] + sizeof(size_t), nullptr);
+        worker_data.row_ptrs[i] += sizeof(size_t) + sizeof(char *);
+
+        auto key_holder = key_getter.getKeyHolder(i, &worker_data.pool, sort_key_containers);
+        SCOPE_EXIT(keyHolderDiscardKey(key_holder));
+
+        const auto & key = keyHolderGetKey(key_holder);
+        keyHolderSerializeKey(key, worker_data.row_ptrs[i]);
+        worker_data.row_ptrs[i] += keyHolderGetKeySize(key);
+    }
+
+    const size_t step = 256;
+    for (size_t i = 0; i < rows; i += step)
+    {
+        size_t start = i;
+        size_t end = i + step > rows ? rows : i + step;
+        for (size_t j = 0; j < columns; ++j)
+            stored_block->getByPosition(j).column->serializeToPos(worker_data.row_ptrs, start, end);
+    }
+
+    for (size_t i = 0; i < PARTITION_COUNT; ++i)
+    {
+        worker_data.partitioned_row_counts[i] += partition_row_count[i];
+        worker_data.row_count += partition_row_count[i];
+        worker_data.partitioned_multi_row_ptrs[i].emplace_back(std::move(partitioned_row_ptrs[i]));
+    }
+
+    worker_data.convert_time += watch.elapsedMilliseconds();
+}
+
 void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
 {
     size_t keys_size = key_names_right.size();
@@ -732,6 +938,17 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
     {
         if (enable_join_spill)
             assert(partitions[stream_index]->getPartitionPool() != nullptr);
+
+        convertBlockToRows<MapsAll>(
+            join_map_method,
+            needRecordNotInsertRows(kind),
+            stored_block,
+            rows,
+            key_columns,
+            key_sizes,
+            collators,
+            null_map,
+            build_workers_data[stream_index]);
         /// Fill the hash table.
         JoinPartition::insertBlockIntoMaps(
             partitions,
@@ -1949,6 +2166,7 @@ bool Join::finishOneBuild(size_t stream_index)
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_mpp_hash_build);
     }
     --active_build_threads;
+    LOG_INFO(log, "{} convert block to rows cost {}ms", stream_index, build_workers_data[stream_index].convert_time);
     if (active_build_threads == 0)
     {
         workAfterBuildFinish(stream_index);
@@ -1972,6 +2190,20 @@ void Join::finalizeBuild()
 
 void Join::workAfterBuildFinish(size_t stream_index)
 {
+    size_t row_count = 0;
+    for (size_t i = 0; i < build_concurrency; ++i)
+        row_count += build_workers_data[i].row_count;
+
+    pointer_table_size = pointerTableCapacity(row_count);
+    RUNTIME_ASSERT(isPowerOfTwo(pointer_table_size));
+
+    pointer_table_size_mask = pointer_table_size - 1;
+    Stopwatch watch;
+    Allocator<true> alloc;
+    pointer_table
+        = reinterpret_cast<std::atomic<char *> *>(alloc.alloc(pointer_table_size * sizeof(char *), sizeof(char *)));
+    LOG_INFO(log, "allocate pointer table cost {}ms", watch.elapsedMilliseconds());
+
     if (isNullAwareSemiFamily(kind))
         finalizeNullAwareSemiFamilyBuild();
 
@@ -2650,6 +2882,27 @@ void Join::finalize(const Names & parent_require)
     for (const auto & name : required_names_set)
         required_columns.push_back(name);
     finalized = true;
+}
+
+void Join::buildPointerTable(size_t stream_index)
+{
+    assert(stream_index < build_workers_data.size());
+    Stopwatch watch;
+    auto & worker_data = build_workers_data[stream_index];
+    for (auto & multi_row_ptrs : worker_data.partitioned_multi_row_ptrs)
+        for (auto & row_ptrs : multi_row_ptrs)
+            for (char * row_ptr : row_ptrs)
+            {
+                auto hash = unalignedLoad<size_t>(row_ptr);
+                size_t bucket = hash & pointer_table_size_mask;
+                char * head;
+                do
+                {
+                    head = pointer_table[bucket].load(std::memory_order_relaxed);
+                    unalignedStore<char *>(row_ptr + pointer_offset, head);
+                } while (!std::atomic_compare_exchange_weak(&pointer_table[bucket], &head, row_ptr));
+            }
+    LOG_INFO(log, "{} build pointer table finish cost {}ms", stream_index, watch.elapsedMilliseconds());
 }
 
 } // namespace DB
