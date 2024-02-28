@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <Flash/Pipeline/Schedule/Events/HashJoinBuildFinalizeEvent.h>
+#include <Flash/Pipeline/Schedule/Tasks/HashJoinBuildFinalizeTask.h>
 
 namespace DB
 {
@@ -20,9 +21,7 @@ void HashJoinBuildFinalizeEvent::scheduleImpl()
 {
     size_t concurrency = join_ptr->getBuildConcurrency();
     for (size_t i = 0; i < concurrency; ++i)
-    {
-
-    }
+        addTask(std::make_unique<HashJoinBuildFinalizeTask>(exec_context, log->identifier(), shared_from_this(), join_ptr, i));
 }
 
 } // namespace DB

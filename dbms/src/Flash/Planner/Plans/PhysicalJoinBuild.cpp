@@ -40,12 +40,12 @@ void PhysicalJoinBuild::buildPipelineExecGroupImpl(
     join_execute_info.join_build_profile_infos = group_builder.getCurProfileInfos();
     join_ptr->initBuild(group_builder.getCurrentHeader(), group_builder.concurrency());
     join_ptr->setInitActiveBuildThreads();
-    join_ptr.reset();
 }
 
 EventPtr PhysicalJoinBuild::doSinkComplete(DB::PipelineExecutorContext & exec_context)
 {
     auto finalize_event = std::make_shared<HashJoinBuildFinalizeEvent>(exec_context, log->identifier(), join_ptr);
+    join_ptr.reset();
     return finalize_event;
 }
 
