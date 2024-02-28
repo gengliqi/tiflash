@@ -109,7 +109,7 @@ const size_t PARTITION_COUNT = 1 << PARTITION_SHIFT;
 const size_t PARTITION_MASK = PARTITION_COUNT - 1;
 
 using RowPtrs = PaddedPODArray<char *>;
-using MultipleRowPtrs = PaddedPODArray<RowPtrs>;
+using MultipleRowPtrs = std::vector<RowPtrs>;
 
 class alignas(ABSL_CACHELINE_SIZE) BuildWorkerData
 {
@@ -117,7 +117,7 @@ public:
     BuildWorkerData()
     {
         partitioned_multi_row_ptrs.resize(PARTITION_COUNT);
-        partitioned_row_counts.resize_fill(PARTITION_COUNT);
+        partitioned_row_counts.resize(PARTITION_COUNT);
     }
     ~BuildWorkerData()
     {
@@ -127,7 +127,7 @@ public:
     }
 
     std::vector<char *> row_memory;
-    PaddedPODArray<MultipleRowPtrs> partitioned_multi_row_ptrs;
+    std::vector<MultipleRowPtrs> partitioned_multi_row_ptrs;
     PaddedPODArray<size_t> partitioned_row_counts;
     size_t row_count = 0;
 
@@ -136,7 +136,7 @@ public:
     Arena pool;
     PaddedPODArray<size_t> row_sizes;
     PaddedPODArray<size_t> hashes;
-    PaddedPODArray<char *> row_ptrs;
+    RowPtrs row_ptrs;
     size_t convert_time = 0;
 };
 
@@ -487,7 +487,7 @@ private:
     std::vector<MarkedSpillData> build_side_marked_spilled_data;
     std::vector<MarkedSpillData> probe_side_marked_spilled_data;
 
-    PaddedPODArray<BuildWorkerData> build_workers_data;
+    std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
 
     const size_t pointer_offset = sizeof(size_t);
     size_t pointer_table_size = 0;

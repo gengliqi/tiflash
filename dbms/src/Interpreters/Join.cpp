@@ -427,7 +427,8 @@ void Join::initBuild(const Block & sample_block, size_t build_concurrency_)
     setSampleBlock(sample_block);
     build_side_marked_spilled_data.resize(build_concurrency);
 
-    build_workers_data.resize(build_concurrency);
+    for (size_t i = 0; i < build_concurrency; ++i)
+        build_workers_data.emplace_back(std::make_unique<BuildWorkerData>());
 }
 
 void Join::initProbe(const Block & sample_block, size_t probe_concurrency_)
@@ -948,7 +949,7 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
             key_sizes,
             collators,
             null_map,
-            build_workers_data[stream_index]);
+            *build_workers_data[stream_index]);
         /// Fill the hash table.
         JoinPartition::insertBlockIntoMaps(
             partitions,
@@ -2166,7 +2167,7 @@ bool Join::finishOneBuild(size_t stream_index)
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_mpp_hash_build);
     }
     --active_build_threads;
-    LOG_INFO(log, "{} convert block to rows cost {}ms", stream_index, build_workers_data[stream_index].convert_time);
+    LOG_INFO(log, "{} convert block to rows cost {}ms", stream_index, build_workers_data[stream_index]->convert_time);
     if (active_build_threads == 0)
     {
         workAfterBuildFinish(stream_index);
@@ -2192,7 +2193,7 @@ void Join::workAfterBuildFinish(size_t stream_index)
 {
     size_t row_count = 0;
     for (size_t i = 0; i < build_concurrency; ++i)
-        row_count += build_workers_data[i].row_count;
+        row_count += build_workers_data[i]->row_count;
 
     pointer_table_size = pointerTableCapacity(row_count);
     RUNTIME_ASSERT(isPowerOfTwo(pointer_table_size));
@@ -2889,7 +2890,7 @@ void Join::buildPointerTable(size_t stream_index)
     assert(stream_index < build_workers_data.size());
     Stopwatch watch;
     auto & worker_data = build_workers_data[stream_index];
-    for (auto & multi_row_ptrs : worker_data.partitioned_multi_row_ptrs)
+    for (auto & multi_row_ptrs : worker_data->partitioned_multi_row_ptrs)
         for (auto & row_ptrs : multi_row_ptrs)
             for (char * row_ptr : row_ptrs)
             {
