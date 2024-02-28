@@ -2903,7 +2903,7 @@ void Join::buildPointerTable(size_t stream_index)
                     unalignedStore<char *>(row_ptr + pointer_offset, head);
                 } while (!std::atomic_compare_exchange_weak(&pointer_table[bucket], &head, row_ptr));
             }
-    LOG_INFO(log, "{} build pointer table finish cost {}ms", stream_index, watch.elapsedMilliseconds());
+    LOG_INFO(log, "{} build pointer table finish cost {}ms, rows {}", stream_index, watch.elapsedMilliseconds(), worker_data->row_count);
 }
 
 } // namespace DB
