@@ -2167,7 +2167,7 @@ bool Join::finishOneBuild(size_t stream_index)
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_mpp_hash_build);
     }
     --active_build_threads;
-    LOG_INFO(log, "{} convert block to rows cost {}ms", stream_index, build_workers_data[stream_index]->convert_time);
+    LOG_INFO(log, "{} convert block to rows cost {}ms, {} rows", stream_index, build_workers_data[stream_index]->convert_time, build_workers_data[stream_index]->row_count);
     if (active_build_threads == 0)
     {
         workAfterBuildFinish(stream_index);
@@ -2203,7 +2203,7 @@ void Join::workAfterBuildFinish(size_t stream_index)
     Allocator<true> alloc;
     pointer_table
         = reinterpret_cast<std::atomic<char *> *>(alloc.alloc(pointer_table_size * sizeof(char *), sizeof(char *)));
-    LOG_INFO(log, "allocate pointer table cost {}ms", watch.elapsedMilliseconds());
+    LOG_INFO(log, "allocate pointer table cost {}ms, rows {}, pointer table size {}", watch.elapsedMilliseconds(), row_count, pointer_table_size);
 
     if (isNullAwareSemiFamily(kind))
         finalizeNullAwareSemiFamilyBuild();
