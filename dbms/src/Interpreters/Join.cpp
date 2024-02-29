@@ -738,13 +738,17 @@ void convertBlockToRowsTypeImpl(
     worker_data.row_sizes.resize_fill(rows, 0);
     worker_data.hashes.resize(rows);
     worker_data.row_ptrs.clear();
-    worker_data.row_ptrs.resize_fill(rows, 0);
+    worker_data.row_ptrs.resize_fill(rows, nullptr);
 
     size_t columns = stored_block->columns();
+    std::vector<size_t> added_indexes;
     for (size_t i = 0; i < columns; ++i)
     {
         if (probe_output_name_set.find(stored_block->getByPosition(i).name) != probe_output_name_set.end())
+        {
             stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
+            added_indexes.push_back(i);
+        }
     }
 
     size_t part_count = need_record_null_rows ? PARTITION_COUNT + 1 : PARTITION_COUNT;
@@ -831,11 +835,8 @@ void convertBlockToRowsTypeImpl(
     {
         size_t start = i;
         size_t end = i + step > rows ? rows : i + step;
-        for (size_t j = 0; j < columns; ++j)
-        {
-            if (probe_output_name_set.find(stored_block->getByPosition(j).name) != probe_output_name_set.end())
-                stored_block->getByPosition(j).column->serializeToPos(worker_data.row_ptrs, start, end);
-        }
+        for (auto & index : added_indexes)
+            stored_block->getByPosition(index).column->serializeToPos(worker_data.row_ptrs, start, end);
     }
 
     for (size_t i = 0; i < PARTITION_COUNT; ++i)

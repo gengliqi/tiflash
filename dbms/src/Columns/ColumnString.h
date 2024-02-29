@@ -209,6 +209,7 @@ public:
 
     void serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t end) const override
     {
+        RUNTIME_ASSERT(start <= end && end <= offsets.size());
         if unlikely (pos.size() != offsets.size())
             pos.resize(offsets.size());
 
@@ -238,9 +239,9 @@ public:
             std::memcpy(&str_size, pos[i], sizeof(size_t));
             pos[i] += sizeof(size_t);
 
-            char_size += str_size;
-            chars.resize(char_size);
+            chars.resize(char_size + str_size);
             inline_memcpy(&chars[char_size], pos[i], str_size);
+            char_size += str_size;
             offsets[prev_size + i] = char_size;
             pos[i] += str_size;
         }

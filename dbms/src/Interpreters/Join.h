@@ -159,8 +159,8 @@ struct JoinHashPointerTable
         pointer_table_size_mask = pointer_table_size - 1;
 
         Allocator<true> alloc;
-        pointer_table
-            = reinterpret_cast<std::atomic<char *> *>(alloc.alloc(pointer_table_size * sizeof(char *), sizeof(char *)));
+        pointer_table = reinterpret_cast<std::atomic<char *> *>(
+            alloc.alloc(pointer_table_size * sizeof(std::atomic<char *>), sizeof(std::atomic<char *>)));
     }
 };
 
