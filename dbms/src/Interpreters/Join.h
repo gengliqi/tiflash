@@ -111,6 +111,9 @@ const size_t PARTITION_MASK = PARTITION_COUNT - 1;
 using RowPtrs = PaddedPODArray<char *>;
 using MultipleRowPtrs = std::vector<RowPtrs>;
 
+const size_t pointer_offset = sizeof(size_t);
+const size_t key_offset = sizeof(size_t) + sizeof(char *);
+
 class alignas(ABSL_CACHELINE_SIZE) BuildWorkerData
 {
 public:
@@ -138,6 +141,27 @@ public:
     PaddedPODArray<size_t> hashes;
     RowPtrs row_ptrs;
     size_t convert_time = 0;
+};
+
+struct JoinHashPointerTable
+{
+    size_t pointer_table_size = 0;
+    size_t pointer_table_size_mask = 0;
+    std::atomic<char *> * pointer_table = nullptr;
+
+    static size_t pointerTableCapacity(size_t count) { return std::max(roundUpToPowerOfTwoOrZero(count * 2), 1 << 10); }
+
+    void init(size_t row_count)
+    {
+        pointer_table_size = pointerTableCapacity(row_count);
+        RUNTIME_ASSERT(isPowerOfTwo(pointer_table_size));
+
+        pointer_table_size_mask = pointer_table_size - 1;
+
+        Allocator<true> alloc;
+        pointer_table
+            = reinterpret_cast<std::atomic<char *> *>(alloc.alloc(pointer_table_size * sizeof(char *), sizeof(char *)));
+    }
 };
 
 /** Data structure for implementation of JOIN.
@@ -364,8 +388,6 @@ public:
     const Names & getRequiredColumns() const { return required_columns; }
     void finalize(const Names & parent_require);
 
-    static size_t pointerTableCapacity(size_t count) { return std::max(roundUpToPowerOfTwoOrZero(count * 2), 1 << 10); }
-
     void buildPointerTable(size_t stream_index);
 
 private:
@@ -489,10 +511,7 @@ private:
 
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
 
-    const size_t pointer_offset = sizeof(size_t);
-    size_t pointer_table_size = 0;
-    size_t pointer_table_size_mask = 0;
-    std::atomic<char *> * pointer_table = nullptr;
+    JoinHashPointerTable table;
 
 private:
     /** Set information about structure of right hand of JOIN (joined data).
@@ -514,7 +533,9 @@ private:
     void insertFromBlockInternal(Block * stored_block, size_t stream_index);
 
     Block joinBlockHash(ProbeProcessInfo & probe_process_info) const;
+
     Block doJoinBlockHash(ProbeProcessInfo & probe_process_info, const JoinBuildInfo & join_build_info) const;
+    Block doJoinBlockHashNew(ProbeProcessInfo & probe_process_info, const JoinBuildInfo & join_build_info) const;
 
     Block joinBlockNullAwareSemi(ProbeProcessInfo & probe_process_info) const;
 

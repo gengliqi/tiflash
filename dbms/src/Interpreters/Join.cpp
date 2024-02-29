@@ -1603,6 +1603,338 @@ Block Join::doJoinBlockHash(ProbeProcessInfo & probe_process_info, const JoinBui
     return block;
 }
 
+template <typename Maps>
+void probeBlockImpl(
+    JoinMapMethod join_map_method,
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    MutableColumns & added_columns,
+    size_t num_columns_to_add,
+    ConstNullMapPtr null_map,
+    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
+    const TiDB::TiDBCollators & collators,
+    ProbeProcessInfo & probe_process_info,
+    const JoinHashPointerTable & table)
+{
+    switch (join_map_method)
+    {
+    case JoinMapMethod::EMPTY:
+        break;
+    case JoinMapMethod::CROSS:
+        break; /// Do nothing. We have already saved block, and it is enough.
+
+#define M(METHOD)                                                                                           \
+    case JoinMapMethod::METHOD:                                                                             \
+        using KeyGetterType##METHOD = KeyGetterForType<JoinMapMethod::METHOD, typename Maps::METHOD##Type>; \
+        probeBlockImplType<typename KeyGetterType##METHOD::Type, typename KeyGetterType##METHOD::Hash>( \
+            rows,                                                                          \
+            key_columns,                                                                                   \
+            key_sizes,                                                                                           \
+            added_columns,                                                                                    \
+            num_columns_to_add,                                                                                      \
+            null_map,                                                                                      \
+            offsets_to_replicate,                                                                                       \
+            collators,                                                                                                \
+            probe_process_info,                                                                                                \
+            table);                                                                                   \
+        break;
+        APPLY_FOR_JOIN_VARIANTS(M)
+#undef M
+
+    default:
+        throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
+    }
+}
+
+template <typename KeyGetter, typename Hash>
+void probeBlockImplType(
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    MutableColumns & added_columns,
+    size_t num_columns_to_add,
+    ConstNullMapPtr null_map,
+    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
+    const TiDB::TiDBCollators & collators,
+    ProbeProcessInfo & probe_process_info,
+    const JoinHashPointerTable & table)
+{
+#define CALL(has_null_map) \
+         probeBlockImplTypeCase<KeyGetter, Hash, true>( \
+        rows, \
+   key_columns,\
+   key_sizes,\
+   added_columns,\
+   num_columns_to_add,\
+   null_map,\
+   offsets_to_replicate,\
+   collators,\
+   probe_process_info,\
+   table);
+
+    if (null_map)
+    {
+        CALL(true);
+    }
+    else
+    {
+        CALL(false);
+    }
+
+#undef CALL
+}
+
+template <
+    typename KeyGetter,
+    typename Hash,
+    bool has_null_map>
+void NO_INLINE probeBlockImplTypeCase(
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    MutableColumns & added_columns,
+    size_t num_columns_to_add,
+    ConstNullMapPtr null_map,
+    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
+    const TiDB::TiDBCollators & collators,
+    ProbeProcessInfo & probe_process_info,
+    const JoinHashPointerTable & table)
+{
+    RUNTIME_ASSERT(probe_process_info.start_row < rows);
+
+    KeyGetter key_getter(key_columns, key_sizes, collators);
+    std::vector<std::string> sort_key_containers;
+    sort_key_containers.resize(key_columns.size());
+    Arena pool;
+
+    size_t i;
+    const size_t buffer_size = 256;
+    RowPtrs row_ptrs_buffer;
+    row_ptrs_buffer.reserve(buffer_size);
+    size_t current_offset = 0;
+    for (i = probe_process_info.start_row; i < rows; ++i)
+    {
+        if (has_null_map && (*null_map)[i])
+        {
+            // TODO: support outer/right-semi join
+            continue;
+        }
+        auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+        SCOPE_EXIT(keyHolderDiscardKey(key_holder));
+        auto key = keyHolderGetKey(key_holder);
+        size_t hash_value = Hash()(key);
+        size_t bucket = hash_value & table.pointer_table_size_mask;
+        char * head = table.pointer_table[bucket].load(std::memory_order_relaxed);
+        while (head)
+        {
+            decltype(key) key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
+            if (key == key2)
+            {
+                size_t offset = keyHolderGetKeySize(key2);
+                row_ptrs_buffer.push_back(head + key_offset + offset);
+                ++current_offset;
+            }
+            head = unalignedLoad<char *>(head + pointer_offset);
+        }
+        (*offsets_to_replicate)[i] = current_offset;
+        if (row_ptrs_buffer.size() >= buffer_size)
+        {
+            for (size_t j = 0; j < num_columns_to_add; ++j)
+                added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+            row_ptrs_buffer.clear();
+            if (current_offset >= probe_process_info.max_block_size)
+                break;
+        }
+    }
+    if (!row_ptrs_buffer.empty())
+    {
+        for (size_t j = 0; j < num_columns_to_add; ++j)
+            added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+    }
+
+    probe_process_info.updateEndRow<false>(i);
+}
+
+Block Join::doJoinBlockHashNew(ProbeProcessInfo & probe_process_info, const JoinBuildInfo & join_build_info [[maybe_unused]]) const
+{
+    assert(probe_process_info.prepare_for_probe_done);
+    probe_process_info.updateStartRow<false>();
+    /// this makes a copy of `probe_process_info.block`
+    Block block = probe_process_info.block;
+    const NameSet & probe_output_name_set = has_other_condition
+        ? output_columns_names_set_for_other_condition_after_finalize
+        : output_column_names_set_after_finalize;
+    for (size_t pos = 0; pos < block.columns();)
+    {
+        if (probe_output_name_set.find(block.getByPosition(pos).name) == probe_output_name_set.end())
+            block.erase(pos);
+        else
+            ++pos;
+    }
+
+    size_t keys_size = key_names_left.size();
+    size_t existing_columns = block.columns();
+
+    /** For LEFT/INNER JOIN, the saved blocks do not contain keys.
+      * For FULL/RIGHT/RIGHT_SEMI/RIGHT_ANTI_SEMI JOIN, the saved blocks contain keys;
+      *  but they will not be used at this stage of joining (and will be in `ScanHashMapAfterProbe`), and they need to be skipped.
+      */
+    size_t num_columns_to_skip = 0;
+    if (needScanHashMapAfterProbe(kind))
+        num_columns_to_skip = keys_size;
+
+    /// Add new columns to the block.
+    std::vector<size_t> num_columns_to_add;
+    for (size_t i = 0; i < sample_block_without_keys.columns(); ++i)
+    {
+        if (probe_output_name_set.find(sample_block_without_keys.getByPosition(i).name) != probe_output_name_set.end())
+            num_columns_to_add.push_back(i);
+    }
+
+    MutableColumns added_columns;
+    added_columns.reserve(num_columns_to_add.size());
+
+    std::vector<size_t> right_indexes;
+    right_indexes.reserve(num_columns_to_add.size());
+
+    size_t rows = probe_process_info.block.rows();
+    for (const auto & index : num_columns_to_add)
+    {
+        const ColumnWithTypeAndName & src_column = sample_block_without_keys.getByPosition(index);
+        RUNTIME_CHECK_MSG(
+            !block.has(src_column.name),
+            "block from probe side has a column with the same name: {} as a column in sample_block_without_keys",
+            src_column.name);
+
+        added_columns.push_back(src_column.column->cloneEmpty());
+        if (src_column.type && src_column.type->haveMaximumSizeOfValue())
+        {
+            // todo figure out more accurate `rows`
+            added_columns.back()->reserve(rows);
+        }
+        right_indexes.push_back(num_columns_to_skip + index);
+    }
+
+    bool use_row_flagged_hash_map = useRowFlaggedHashMap(kind, has_other_condition);
+    if (use_row_flagged_hash_map)
+    {
+        /// For RightSemi/RightAnti join with other conditions, using this column to record hash entries that matches keys
+        /// Note: this column will record map entry addresses, so should use it carefully and better limit its usage in this function only.
+        // todo figure out more accurate `rows`
+        added_columns.push_back(flag_mapped_entry_helper_type->createColumn());
+        added_columns.back()->reserve(rows);
+    }
+
+    //IColumn::Offset current_offset = 0;
+    auto & offsets_to_replicate = probe_process_info.offsets_to_replicate;
+
+    RUNTIME_CHECK_MSG(num_columns_to_skip == 0, "num_columns_to_skip != 0");
+    RUNTIME_CHECK_MSG(kind == ASTTableJoin::Kind::Inner && strictness == ASTTableJoin::Strictness::All, "kind != inner && strictness != all");
+
+    probeBlockImpl<MapsAll>(
+        join_map_method,
+        rows,
+        probe_process_info.hash_join_data->key_columns,
+        key_sizes,
+        added_columns,
+        num_columns_to_add.size(),
+        probe_process_info.null_map,
+        offsets_to_replicate,
+        collators,
+        probe_process_info,
+        table);
+
+    /*JoinPartition::probeBlock(
+        partitions,
+        rows,
+        probe_process_info.hash_join_data->key_columns,
+        key_sizes,
+        added_columns,
+        probe_process_info.null_map,
+        current_offset,
+        offsets_to_replicate,
+        right_indexes,
+        collators,
+        join_build_info,
+        probe_process_info);*/
+    FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_prob_failpoint);
+    /// For RIGHT_SEMI/RIGHT_ANTI join without other conditions, hash table has been marked already, just return empty build table header
+    if (isRightSemiFamily(kind) && !use_row_flagged_hash_map)
+    {
+        return sample_block_without_keys;
+    }
+
+    for (size_t index = 0; index < num_columns_to_add.size(); ++index)
+    {
+        const ColumnWithTypeAndName & sample_col = sample_block_without_keys.getByPosition(num_columns_to_add[index]);
+        block.insert(ColumnWithTypeAndName(std::move(added_columns[index]), sample_col.type, sample_col.name));
+    }
+    if (use_row_flagged_hash_map)
+        block.insert(ColumnWithTypeAndName(
+            std::move(added_columns[num_columns_to_add.size()]),
+            flag_mapped_entry_helper_type,
+            flag_mapped_entry_helper_name));
+
+    size_t process_rows = probe_process_info.end_row - probe_process_info.start_row;
+
+    // if rows equal 0, we could ignore filter and offsets_to_replicate, and do not need to update start row.
+    if (likely(rows != 0))
+    {
+        /// If ALL ... JOIN - we replicate all the columns except the new ones.
+        if (offsets_to_replicate)
+        {
+            for (size_t i = 0; i < existing_columns; ++i)
+            {
+                block.safeGetByPosition(i).column = block.safeGetByPosition(i).column->replicateRange(
+                    probe_process_info.start_row,
+                    probe_process_info.end_row,
+                    *offsets_to_replicate);
+            }
+
+            if (rows != process_rows)
+            {
+                offsets_to_replicate->assign(
+                    offsets_to_replicate->begin() + probe_process_info.start_row,
+                    offsets_to_replicate->begin() + probe_process_info.end_row);
+            }
+        }
+    }
+
+    /// handle other conditions
+    if (has_other_condition)
+    {
+        assert(offsets_to_replicate != nullptr);
+        handleOtherConditions(block, nullptr, offsets_to_replicate.get());
+
+        if (useRowFlaggedHashMap(kind, has_other_condition))
+        {
+            // set hash table used flag using SemiMapped column
+            auto & mapped_column = block.getByName(flag_mapped_entry_helper_name).column;
+            const auto & ptr_col = static_cast<const PointerHelper::ColumnType &>(*mapped_column);
+            const auto & container = static_cast<const PointerHelper::ArrayType &>(ptr_col.getData());
+            for (size_t i = 0; i < block.rows(); ++i)
+            {
+                auto ptr_value = container[i];
+                auto * current = reinterpret_cast<RowRefListWithUsedFlag *>(ptr_value);
+                current->setUsed();
+            }
+
+            if (isRightSemiFamily(kind))
+            {
+                // Return build table header for right semi/anti join
+                block = sample_block_without_keys;
+            }
+            else if (kind == ASTTableJoin::Kind::RightOuter)
+            {
+                block.erase(flag_mapped_entry_helper_name);
+            }
+        }
+    }
+
+    return block;
+}
+
 Block Join::removeUselessColumn(Block & block) const
 {
     Block projected_block;
@@ -2195,15 +2527,9 @@ void Join::workAfterBuildFinish(size_t stream_index)
     for (size_t i = 0; i < build_concurrency; ++i)
         row_count += build_workers_data[i]->row_count;
 
-    pointer_table_size = pointerTableCapacity(row_count);
-    RUNTIME_ASSERT(isPowerOfTwo(pointer_table_size));
-
-    pointer_table_size_mask = pointer_table_size - 1;
     Stopwatch watch;
-    Allocator<true> alloc;
-    pointer_table
-        = reinterpret_cast<std::atomic<char *> *>(alloc.alloc(pointer_table_size * sizeof(char *), sizeof(char *)));
-    LOG_INFO(log, "allocate pointer table cost {}ms, rows {}, pointer table size {}", watch.elapsedMilliseconds(), row_count, pointer_table_size);
+    table.init(row_count);
+    LOG_INFO(log, "allocate pointer table cost {}ms, rows {}, pointer table size {}", watch.elapsedMilliseconds(), row_count, table.pointer_table_size);
 
     if (isNullAwareSemiFamily(kind))
         finalizeNullAwareSemiFamilyBuild();
@@ -2895,13 +3221,13 @@ void Join::buildPointerTable(size_t stream_index)
             for (char * row_ptr : row_ptrs)
             {
                 auto hash = unalignedLoad<size_t>(row_ptr);
-                size_t bucket = hash & pointer_table_size_mask;
+                size_t bucket = hash & table.pointer_table_size_mask;
                 char * head;
                 do
                 {
-                    head = pointer_table[bucket].load(std::memory_order_relaxed);
+                    head = table.pointer_table[bucket].load(std::memory_order_relaxed);
                     unalignedStore<char *>(row_ptr + pointer_offset, head);
-                } while (!std::atomic_compare_exchange_weak(&pointer_table[bucket], &head, row_ptr));
+                } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
             }
     LOG_INFO(log, "{} build pointer table finish cost {}ms, rows {}", stream_index, watch.elapsedMilliseconds(), worker_data->row_count);
 }
