@@ -143,11 +143,20 @@ public:
     size_t convert_time = 0;
 };
 
-struct JoinHashPointerTable
+class JoinHashPointerTable
 {
+public:
+    JoinHashPointerTable() = default;
+    ~JoinHashPointerTable()
+    {
+        if (pointer_table != nullptr)
+            alloc.free(reinterpret_cast<void *>(pointer_table), pointer_table_size * sizeof(std::atomic<char *>));
+    }
+
     size_t pointer_table_size = 0;
     size_t pointer_table_size_mask = 0;
     std::atomic<char *> * pointer_table = nullptr;
+    Allocator<true> alloc;
 
     static size_t pointerTableCapacity(size_t count) { return std::max(roundUpToPowerOfTwoOrZero(count * 2), 1 << 10); }
 
@@ -158,7 +167,6 @@ struct JoinHashPointerTable
 
         pointer_table_size_mask = pointer_table_size - 1;
 
-        Allocator<true> alloc;
         pointer_table = reinterpret_cast<std::atomic<char *> *>(
             alloc.alloc(pointer_table_size * sizeof(std::atomic<char *>), sizeof(std::atomic<char *>)));
     }
