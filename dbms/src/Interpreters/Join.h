@@ -526,6 +526,11 @@ private:
 
     JoinHashPointerTable table;
 
+    size_t worker_data_index = 0;
+    size_t worker_data_partition_index = 0;
+    size_t worker_data_partition_iter_index = 0;
+    std::mutex build_pointer_table_lock;
+
 private:
     /** Set information about structure of right hand of JOIN (joined data).
       * You must call this method before subsequent calls to insertFromBlock.

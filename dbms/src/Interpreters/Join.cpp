@@ -3267,28 +3267,56 @@ void Join::finalize(const Names & parent_require)
 
 void Join::buildPointerTable(size_t stream_index)
 {
-    assert(stream_index < build_workers_data.size());
     Stopwatch watch;
-    auto & worker_data = build_workers_data[stream_index];
-    for (auto & multi_row_ptrs : worker_data->partitioned_multi_row_ptrs)
-        for (auto & row_ptrs : multi_row_ptrs)
-            for (char * row_ptr : row_ptrs)
+    size_t build_size = 0;
+    while (true)
+    {
+        RowPtrs * row_ptrs = nullptr;
+        {
+            std::unique_lock lock(build_pointer_table_lock);
+            while (worker_data_index < build_concurrency)
             {
-                auto hash = unalignedLoad<size_t>(row_ptr);
-                size_t bucket = hash & table.pointer_table_size_mask;
-                char * head;
-                do
+                auto & worker_data = build_workers_data[worker_data_index];
+                while (worker_data_partition_index < PARTITION_COUNT)
                 {
-                    head = table.pointer_table[bucket].load(std::memory_order_relaxed);
-                    unalignedStore<char *>(row_ptr + pointer_offset, head);
-                } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
+                    auto & multi_row_ptrs = worker_data->partitioned_multi_row_ptrs[worker_data_partition_index];
+                    if (worker_data_partition_iter_index < multi_row_ptrs.size())
+                    {
+                        row_ptrs = &multi_row_ptrs[worker_data_partition_iter_index];
+                        ++worker_data_partition_iter_index;
+                        break;
+                    }
+                    ++worker_data_partition_index;
+                    worker_data_partition_iter_index = 0;
+                }
+                if (row_ptrs != nullptr)
+                    break;
+                ++worker_data_index;
+                worker_data_partition_index = 0;
+                worker_data_partition_iter_index = 0;
             }
+        }
+        if (row_ptrs == nullptr)
+            break;
+        build_size += row_ptrs->size();
+        for (char * row_ptr : *row_ptrs)
+        {
+            auto hash = unalignedLoad<size_t>(row_ptr);
+            size_t bucket = hash & table.pointer_table_size_mask;
+            char * head;
+            do
+            {
+                head = table.pointer_table[bucket].load(std::memory_order_relaxed);
+                unalignedStore<char *>(row_ptr + pointer_offset, head);
+            } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
+        }
+    }
     LOG_INFO(
         log,
-        "{} build pointer table finish cost {}ms, rows {}",
+        "{} build pointer table finish cost {}ms, build rows {}",
         stream_index,
         watch.elapsedMilliseconds(),
-        worker_data->row_count);
+        build_size);
 }
 
 } // namespace DB
