@@ -44,6 +44,11 @@ void PhysicalJoinBuild::buildPipelineExecGroupImpl(
 
 EventPtr PhysicalJoinBuild::doSinkComplete(DB::PipelineExecutorContext & exec_context)
 {
+    if (!join_ptr->enableNewHashJoin())
+    {
+        join_ptr.reset();
+        return nullptr;
+    }
     auto finalize_event = std::make_shared<HashJoinBuildFinalizeEvent>(exec_context, log->identifier(), join_ptr);
     join_ptr.reset();
     return finalize_event;

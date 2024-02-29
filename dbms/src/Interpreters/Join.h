@@ -283,6 +283,8 @@ public:
 
     bool isSpilled() const { return hash_join_spill_context->isSpilled(); }
 
+    bool enableNewHashJoin() const { return enable_new_hash_join; }
+
     std::optional<RestoreInfo> getOneRestoreStream(size_t max_block_size);
 
     void dispatchProbeBlock(Block & block, PartitionBlocks & partition_blocks_list, size_t stream_index);
