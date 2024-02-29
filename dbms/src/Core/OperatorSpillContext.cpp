@@ -19,12 +19,14 @@ namespace DB
 {
 bool OperatorSpillContext::isSpillEnabled() const
 {
-    return enable_spill && (auto_spill_mode || operator_spill_threshold > 0);
+    return false;
+    //return enable_spill && (auto_spill_mode || operator_spill_threshold > 0);
 }
 
 bool OperatorSpillContext::supportSpill() const
 {
-    return enable_spill && (supportAutoTriggerSpill() || operator_spill_threshold > 0);
+    return false;
+    //return enable_spill && (supportAutoTriggerSpill() || operator_spill_threshold > 0);
 }
 
 Int64 OperatorSpillContext::getTotalRevocableMemory()

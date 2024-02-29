@@ -195,6 +195,7 @@ PhysicalPlanNodePtr PhysicalJoin::build(
         flag_mapped_entry_helper_name,
         settings.join_probe_cache_columns_threshold,
         context.isTest(),
+        settings.enable_new_hash_join,
         runtime_filter_list);
 
     recordJoinExecuteInfo(dag_context, executor_id, build_plan->execId(), join_ptr);

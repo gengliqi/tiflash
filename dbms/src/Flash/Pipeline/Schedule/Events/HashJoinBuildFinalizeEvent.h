@@ -15,8 +15,8 @@
 #pragma once
 
 #include <Flash/Pipeline/Schedule/Events/Event.h>
-#include <Operators/OperatorProfileInfo.h>
 #include <Interpreters/Join.h>
+#include <Operators/OperatorProfileInfo.h>
 
 namespace DB
 {

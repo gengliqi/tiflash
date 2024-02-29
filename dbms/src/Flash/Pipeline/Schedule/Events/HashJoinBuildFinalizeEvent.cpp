@@ -21,7 +21,12 @@ void HashJoinBuildFinalizeEvent::scheduleImpl()
 {
     size_t concurrency = join_ptr->getBuildConcurrency();
     for (size_t i = 0; i < concurrency; ++i)
-        addTask(std::make_unique<HashJoinBuildFinalizeTask>(exec_context, log->identifier(), shared_from_this(), join_ptr, i));
+        addTask(std::make_unique<HashJoinBuildFinalizeTask>(
+            exec_context,
+            log->identifier(),
+            shared_from_this(),
+            join_ptr,
+            i));
 }
 
 } // namespace DB

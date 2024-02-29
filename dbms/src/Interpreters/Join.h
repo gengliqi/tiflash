@@ -242,6 +242,7 @@ public:
         const String & flag_mapped_entry_helper_name_,
         size_t probe_cache_column_threshold_,
         bool is_test,
+        bool enable_new_hash_join_,
         const std::vector<RuntimeFilterPtr> & runtime_filter_list_ = dummy_runtime_filter_list);
 
     RestoreConfig restore_config;
@@ -508,6 +509,8 @@ private:
     // the index of vector is the stream_index.
     std::vector<MarkedSpillData> build_side_marked_spilled_data;
     std::vector<MarkedSpillData> probe_side_marked_spilled_data;
+
+    bool enable_new_hash_join;
 
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
 

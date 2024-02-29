@@ -130,6 +130,7 @@ Join::Join(
     const String & flag_mapped_entry_helper_name_,
     size_t probe_cache_column_threshold_,
     bool is_test_,
+    bool enable_new_hash_join_,
     const std::vector<RuntimeFilterPtr> & runtime_filter_list_)
     : restore_config(restore_config_)
     , match_helper_name(match_helper_name_)
@@ -164,6 +165,7 @@ Join::Join(
                                                 restore_config.restore_partition_id)))
     , enable_fine_grained_shuffle(fine_grained_shuffle_count_ > 0)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
+    , enable_new_hash_join(enable_new_hash_join_)
 {
     has_other_condition = non_equal_conditions.other_cond_expr != nullptr;
     bool is_semi = isSemiFamily(kind) || isLeftOuterSemiFamily(kind) || isNullAwareSemiFamily(kind);
@@ -380,7 +382,8 @@ std::shared_ptr<Join> Join::createRestoreJoin(size_t max_bytes_before_external_j
         match_helper_name,
         flag_mapped_entry_helper_name,
         probe_cache_column_threshold,
-        is_test);
+        is_test,
+        enable_new_hash_join);
     /// init output names after finalize, the restored join don't need to finalize
     ret->output_columns_after_finalize = output_columns_after_finalize;
     ret->output_column_names_set_after_finalize = output_column_names_set_after_finalize;
@@ -642,6 +645,7 @@ void convertBlockToRows(
     const Sizes & key_sizes,
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
+    const NameSet & probe_output_name_set,
     BuildWorkerData & worker_data)
 {
     switch (join_map_method)
@@ -662,6 +666,7 @@ void convertBlockToRows(
             key_sizes,                                                                                      \
             collators,                                                                                      \
             null_map,                                                                                       \
+            probe_output_name_set,                                                                          \
             worker_data);                                                                                   \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -681,6 +686,7 @@ void convertBlockToRowsType(
     const Sizes & key_sizes,
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
+    const NameSet & probe_output_name_set,
     BuildWorkerData & worker_data)
 {
 #define CALL(has_null_map, need_record_null_rows)                                     \
@@ -691,6 +697,7 @@ void convertBlockToRowsType(
         key_sizes,                                                                    \
         collators,                                                                    \
         null_map,                                                                     \
+        probe_output_name_set,                                                        \
         worker_data);
 
     if (null_map)
@@ -719,6 +726,7 @@ void convertBlockToRowsTypeImpl(
     const Sizes & key_sizes,
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
+    const NameSet & probe_output_name_set,
     BuildWorkerData & worker_data)
 {
     Stopwatch watch;
@@ -734,7 +742,10 @@ void convertBlockToRowsTypeImpl(
 
     size_t columns = stored_block->columns();
     for (size_t i = 0; i < columns; ++i)
-        stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
+    {
+        if (probe_output_name_set.find(stored_block->getByPosition(i).name) != probe_output_name_set.end())
+            stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
+    }
 
     size_t part_count = need_record_null_rows ? PARTITION_COUNT + 1 : PARTITION_COUNT;
     std::vector<size_t> partition_row_sizes(part_count);
@@ -821,7 +832,10 @@ void convertBlockToRowsTypeImpl(
         size_t start = i;
         size_t end = i + step > rows ? rows : i + step;
         for (size_t j = 0; j < columns; ++j)
-            stored_block->getByPosition(j).column->serializeToPos(worker_data.row_ptrs, start, end);
+        {
+            if (probe_output_name_set.find(stored_block->getByPosition(j).name) != probe_output_name_set.end())
+                stored_block->getByPosition(j).column->serializeToPos(worker_data.row_ptrs, start, end);
+        }
     }
 
     for (size_t i = 0; i < PARTITION_COUNT; ++i)
@@ -940,30 +954,40 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
         if (enable_join_spill)
             assert(partitions[stream_index]->getPartitionPool() != nullptr);
 
-        convertBlockToRows<MapsAll>(
-            join_map_method,
-            needRecordNotInsertRows(kind),
-            stored_block,
-            rows,
-            key_columns,
-            key_sizes,
-            collators,
-            null_map,
-            *build_workers_data[stream_index]);
-        /// Fill the hash table.
-        JoinPartition::insertBlockIntoMaps(
-            partitions,
-            rows,
-            key_columns,
-            key_sizes,
-            collators,
-            stored_block,
-            null_map,
-            stream_index,
-            getBuildConcurrency(),
-            enable_fine_grained_shuffle,
-            enable_join_spill,
-            probe_cache_column_threshold);
+        if (enable_new_hash_join)
+        {
+            const NameSet & probe_output_name_set = has_other_condition
+                ? output_columns_names_set_for_other_condition_after_finalize
+                : output_column_names_set_after_finalize;
+            convertBlockToRows<MapsAll>(
+                join_map_method,
+                needRecordNotInsertRows(kind),
+                stored_block,
+                rows,
+                key_columns,
+                key_sizes,
+                collators,
+                null_map,
+                probe_output_name_set,
+                *build_workers_data[stream_index]);
+        }
+        else
+        {
+            /// Fill the hash table.
+            JoinPartition::insertBlockIntoMaps(
+                partitions,
+                rows,
+                key_columns,
+                key_sizes,
+                collators,
+                stored_block,
+                null_map,
+                stream_index,
+                getBuildConcurrency(),
+                enable_fine_grained_shuffle,
+                enable_join_spill,
+                probe_cache_column_threshold);
+        }
     }
 
     // generator in runtime filter
@@ -1617,6 +1641,12 @@ void probeBlockImpl(
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table)
 {
+    if (rows == 0)
+    {
+        probe_process_info.all_rows_joined_finish = true;
+        return;
+    }
+
     switch (join_map_method)
     {
     case JoinMapMethod::EMPTY:
@@ -1627,17 +1657,17 @@ void probeBlockImpl(
 #define M(METHOD)                                                                                           \
     case JoinMapMethod::METHOD:                                                                             \
         using KeyGetterType##METHOD = KeyGetterForType<JoinMapMethod::METHOD, typename Maps::METHOD##Type>; \
-        probeBlockImplType<typename KeyGetterType##METHOD::Type, typename KeyGetterType##METHOD::Hash>( \
-            rows,                                                                          \
-            key_columns,                                                                                   \
-            key_sizes,                                                                                           \
-            added_columns,                                                                                    \
-            num_columns_to_add,                                                                                      \
-            null_map,                                                                                      \
-            offsets_to_replicate,                                                                                       \
-            collators,                                                                                                \
-            probe_process_info,                                                                                                \
-            table);                                                                                   \
+        probeBlockImplType<typename KeyGetterType##METHOD::Type, typename KeyGetterType##METHOD::Hash>(     \
+            rows,                                                                                           \
+            key_columns,                                                                                    \
+            key_sizes,                                                                                      \
+            added_columns,                                                                                  \
+            num_columns_to_add,                                                                             \
+            null_map,                                                                                       \
+            offsets_to_replicate,                                                                           \
+            collators,                                                                                      \
+            probe_process_info,                                                                             \
+            table);                                                                                         \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
@@ -1660,18 +1690,18 @@ void probeBlockImplType(
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table)
 {
-#define CALL(has_null_map) \
-         probeBlockImplTypeCase<KeyGetter, Hash, true>( \
-        rows, \
-   key_columns,\
-   key_sizes,\
-   added_columns,\
-   num_columns_to_add,\
-   null_map,\
-   offsets_to_replicate,\
-   collators,\
-   probe_process_info,\
-   table);
+#define CALL(has_null_map)                                 \
+    probeBlockImplTypeCase<KeyGetter, Hash, has_null_map>( \
+        rows,                                              \
+        key_columns,                                       \
+        key_sizes,                                         \
+        added_columns,                                     \
+        num_columns_to_add,                                \
+        null_map,                                          \
+        offsets_to_replicate,                              \
+        collators,                                         \
+        probe_process_info,                                \
+        table);
 
     if (null_map)
     {
@@ -1685,10 +1715,7 @@ void probeBlockImplType(
 #undef CALL
 }
 
-template <
-    typename KeyGetter,
-    typename Hash,
-    bool has_null_map>
+template <typename KeyGetter, typename Hash, bool has_null_map>
 void NO_INLINE probeBlockImplTypeCase(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -1718,6 +1745,7 @@ void NO_INLINE probeBlockImplTypeCase(
         if (has_null_map && (*null_map)[i])
         {
             // TODO: support outer/right-semi join
+            (*offsets_to_replicate)[i] = current_offset;
             continue;
         }
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
@@ -1728,11 +1756,11 @@ void NO_INLINE probeBlockImplTypeCase(
         char * head = table.pointer_table[bucket].load(std::memory_order_relaxed);
         while (head)
         {
-            decltype(key) key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
+            auto key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
             if (key == key2)
             {
-                size_t offset = keyHolderGetKeySize(key2);
-                row_ptrs_buffer.push_back(head + key_offset + offset);
+                size_t key_size = keyHolderGetKeySize(key2);
+                row_ptrs_buffer.push_back(head + key_offset + key_size);
                 ++current_offset;
             }
             head = unalignedLoad<char *>(head + pointer_offset);
@@ -1744,7 +1772,10 @@ void NO_INLINE probeBlockImplTypeCase(
                 added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
             row_ptrs_buffer.clear();
             if (current_offset >= probe_process_info.max_block_size)
+            {
+                ++i;
                 break;
+            }
         }
     }
     if (!row_ptrs_buffer.empty())
@@ -1756,7 +1787,9 @@ void NO_INLINE probeBlockImplTypeCase(
     probe_process_info.updateEndRow<false>(i);
 }
 
-Block Join::doJoinBlockHashNew(ProbeProcessInfo & probe_process_info, const JoinBuildInfo & join_build_info [[maybe_unused]]) const
+Block Join::doJoinBlockHashNew(
+    ProbeProcessInfo & probe_process_info,
+    const JoinBuildInfo & join_build_info [[maybe_unused]]) const
 {
     assert(probe_process_info.prepare_for_probe_done);
     probe_process_info.updateStartRow<false>();
@@ -1830,7 +1863,9 @@ Block Join::doJoinBlockHashNew(ProbeProcessInfo & probe_process_info, const Join
     auto & offsets_to_replicate = probe_process_info.offsets_to_replicate;
 
     RUNTIME_CHECK_MSG(num_columns_to_skip == 0, "num_columns_to_skip != 0");
-    RUNTIME_CHECK_MSG(kind == ASTTableJoin::Kind::Inner && strictness == ASTTableJoin::Strictness::All, "kind != inner && strictness != all");
+    RUNTIME_CHECK_MSG(
+        kind == ASTTableJoin::Kind::Inner && strictness == ASTTableJoin::Strictness::All,
+        "kind != inner && strictness != all");
 
     probeBlockImpl<MapsAll>(
         join_map_method,
@@ -1967,7 +2002,11 @@ Block Join::joinBlockHash(ProbeProcessInfo & probe_process_info) const
         restore_config.restore_round);
     while (true)
     {
-        auto block = doJoinBlockHash(probe_process_info, join_build_info);
+        Block block;
+        if (enable_new_hash_join)
+            block = doJoinBlockHashNew(probe_process_info, join_build_info);
+        else
+            block = doJoinBlockHash(probe_process_info, join_build_info);
         assert(block);
         block = removeUselessColumn(block);
         result_rows += block.rows();
@@ -2499,7 +2538,13 @@ bool Join::finishOneBuild(size_t stream_index)
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_mpp_hash_build);
     }
     --active_build_threads;
-    LOG_INFO(log, "{} convert block to rows cost {}ms, {} rows", stream_index, build_workers_data[stream_index]->convert_time, build_workers_data[stream_index]->row_count);
+    if (enable_new_hash_join)
+        LOG_INFO(
+            log,
+            "{} convert block to rows cost {}ms, {} rows",
+            stream_index,
+            build_workers_data[stream_index]->convert_time,
+            build_workers_data[stream_index]->row_count);
     if (active_build_threads == 0)
     {
         workAfterBuildFinish(stream_index);
@@ -2523,13 +2568,21 @@ void Join::finalizeBuild()
 
 void Join::workAfterBuildFinish(size_t stream_index)
 {
-    size_t row_count = 0;
-    for (size_t i = 0; i < build_concurrency; ++i)
-        row_count += build_workers_data[i]->row_count;
+    if (enable_new_hash_join)
+    {
+        size_t row_count = 0;
+        for (size_t i = 0; i < build_concurrency; ++i)
+            row_count += build_workers_data[i]->row_count;
 
-    Stopwatch watch;
-    table.init(row_count);
-    LOG_INFO(log, "allocate pointer table cost {}ms, rows {}, pointer table size {}", watch.elapsedMilliseconds(), row_count, table.pointer_table_size);
+        Stopwatch watch;
+        table.init(row_count);
+        LOG_INFO(
+            log,
+            "allocate pointer table cost {}ms, rows {}, pointer table size {}",
+            watch.elapsedMilliseconds(),
+            row_count,
+            table.pointer_table_size);
+    }
 
     if (isNullAwareSemiFamily(kind))
         finalizeNullAwareSemiFamilyBuild();
@@ -3229,7 +3282,12 @@ void Join::buildPointerTable(size_t stream_index)
                     unalignedStore<char *>(row_ptr + pointer_offset, head);
                 } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
             }
-    LOG_INFO(log, "{} build pointer table finish cost {}ms, rows {}", stream_index, watch.elapsedMilliseconds(), worker_data->row_count);
+    LOG_INFO(
+        log,
+        "{} build pointer table finish cost {}ms, rows {}",
+        stream_index,
+        watch.elapsedMilliseconds(),
+        worker_data->row_count);
 }
 
 } // namespace DB

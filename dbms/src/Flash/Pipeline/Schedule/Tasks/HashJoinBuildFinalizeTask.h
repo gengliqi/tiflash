@@ -31,7 +31,8 @@ public:
         size_t index_)
         : EventTask(exec_context_, req_id, event_)
         , join_ptr(join_ptr_)
-        , index(index_) {}
+        , index(index_)
+    {}
 
 protected:
     ExecTaskStatus executeImpl() override;
