@@ -830,7 +830,7 @@ void convertBlockToRowsTypeImpl(
         worker_data.row_ptrs[i] += keyHolderGetKeySize(key);
     }
 
-    const size_t step = 1024;
+    const size_t step = 256;
     for (size_t i = 0; i < rows; i += step)
     {
         size_t start = i;
@@ -1737,7 +1737,7 @@ void NO_INLINE probeBlockImplTypeCase(
     Arena pool;
 
     size_t i;
-    const size_t buffer_size = 1024;
+    const size_t buffer_size = 256;
     RowPtrs row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
     size_t current_offset = 0;
