@@ -104,6 +104,30 @@ struct RestoreConfig
     size_t restore_partition_id;
 };
 
+enum class SimpleColumnType
+{
+    Fixed,
+    String,
+    Other,
+};
+
+class SimpleColumnView
+{
+public:
+    ConstNullMapPtr null_map;
+    size_t fixed_size;
+    StringRef fixed_data;
+    void * other_data;
+};
+
+struct SimpleMutableColumn
+{
+    SimpleColumnType type;
+    ColumnUInt8 * null_map;
+    std::unique_ptr<SimplePaddedPODArray> pod_array;
+    void * other_data;
+};
+
 const size_t PARTITION_SHIFT = 4;
 const size_t PARTITION_COUNT = 1 << PARTITION_SHIFT;
 const size_t PARTITION_MASK = PARTITION_COUNT - 1;
@@ -113,6 +137,10 @@ using MultipleRowPtrs = std::vector<RowPtrs>;
 
 const size_t pointer_offset = sizeof(size_t);
 const size_t key_offset = sizeof(size_t) + sizeof(char *);
+
+void convertToSimpleMutableColumn(MutableColumnPtr & ptr, SimpleMutableColumn & simple_column);
+void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos);
+void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPtr & ptr);
 
 class alignas(ABSL_CACHELINE_SIZE) BuildWorkerData
 {

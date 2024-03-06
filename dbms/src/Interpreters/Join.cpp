@@ -1716,6 +1716,74 @@ void probeBlockImplType(
 #undef CALL
 }
 
+void convertToSimpleMutableColumn(MutableColumnPtr & column_ptr, SimpleMutableColumn & simple_column)
+{
+    IColumn * column = column_ptr.get();
+    if (column->isColumnNullable())
+    {
+        auto * nullable_column = typeid_cast<ColumnNullable *>(column);
+        simple_column.null_map = &nullable_column->getNullMapColumn();
+        column = &nullable_column->getNestedColumn();
+    }
+    if (column->isFixedAndContiguous())
+    {
+        // There is a bug for ColumnFixedString though it's not used for now.
+        size_t fixed_size = column->sizeOfValueIfFixed();
+        RUNTIME_ASSERT(column->size() == 0);
+        simple_column.pod_array = std::make_unique<SimplePaddedPODArray>(fixed_size);
+        simple_column.type = SimpleColumnType::Fixed;
+    }
+    else if (typeid_cast<ColumnString *>(column))
+    {
+        simple_column.other_data = static_cast<void *>(column);
+        simple_column.type = SimpleColumnType::String;
+    }
+    else
+    {
+        RUNTIME_ASSERT(false);
+        simple_column.other_data = static_cast<void *>(column);
+        simple_column.type = SimpleColumnType::Other;
+    }
+}
+
+void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos)
+{
+    if (simple_column.null_map)
+    {
+        simple_column.null_map->deserializeAndInsertFromPos(pos);
+    }
+    switch (simple_column.type)
+    {
+    case SimpleColumnType::Fixed:
+    {
+        simple_column.pod_array->deserializeAndInsertFromPos(pos);
+        break;
+    }
+    case SimpleColumnType::String:
+    {
+        auto * column = static_cast<ColumnString *>(simple_column.other_data);
+        column->deserializeAndInsertFromPos(pos);
+        break;
+    }
+    case SimpleColumnType::Other:
+    {
+        auto * column = static_cast<IColumn *>(simple_column.other_data);
+        column->deserializeAndInsertFromPos(pos);
+        break;
+    }
+    }
+}
+
+void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPtr & column_ptr)
+{
+    IColumn * column = column_ptr.get();
+    if (column->isColumnNullable())
+        column = &typeid_cast<ColumnNullable *>(column)->getNestedColumn();
+
+    if (column->isFixedAndContiguous())
+        column->swapFixedAndContiguousData(*simple_column.pod_array);
+}
+
 template <typename KeyGetter, typename Hash, bool has_null_map>
 void NO_INLINE probeBlockImplTypeCase(
     size_t rows,
@@ -1731,13 +1799,21 @@ void NO_INLINE probeBlockImplTypeCase(
 {
     RUNTIME_ASSERT(probe_process_info.start_row < rows);
 
+    std::vector<SimpleMutableColumn> simple_added_columns;
+    for (size_t i = 0; i < num_columns_to_add; ++i)
+    {
+        simple_added_columns.emplace_back();
+        convertToSimpleMutableColumn(added_columns[i], simple_added_columns.back());
+    }
+
     KeyGetter key_getter(key_columns, key_sizes, collators);
     std::vector<std::string> sort_key_containers;
     sort_key_containers.resize(key_columns.size());
     Arena pool;
 
     size_t i;
-    const size_t buffer_size = 256;
+    //const size_t buffer_size = 256;
+    const size_t buffer_size = 16;
     RowPtrs row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
     size_t current_offset = 0;
@@ -1770,7 +1846,10 @@ void NO_INLINE probeBlockImplTypeCase(
         if (row_ptrs_buffer.size() >= buffer_size)
         {
             for (size_t j = 0; j < num_columns_to_add; ++j)
-                added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+            {
+                //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                deserializeAndInsertFromPos(simple_added_columns[j], row_ptrs_buffer);
+            }
             row_ptrs_buffer.clear();
             if (current_offset >= probe_process_info.max_block_size)
             {
@@ -1782,8 +1861,14 @@ void NO_INLINE probeBlockImplTypeCase(
     if (!row_ptrs_buffer.empty())
     {
         for (size_t j = 0; j < num_columns_to_add; ++j)
-            added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+        {
+            //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+            deserializeAndInsertFromPos(simple_added_columns[j], row_ptrs_buffer);
+        }
     }
+
+    for (size_t j = 0; j < num_columns_to_add; ++j)
+        convertToMutableColumn(simple_added_columns[j], added_columns[j]);
 
     probe_process_info.updateEndRow<false>(i);
 }

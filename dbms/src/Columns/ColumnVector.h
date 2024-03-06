@@ -337,6 +337,8 @@ public:
         }
     }
 
+    void swapFixedAndContiguousData(SimplePaddedPODArray & simple_data) override { simple_data.swap(data); }
+
     StringRef serializeValueIntoArena(
         size_t n,
         Arena & arena,

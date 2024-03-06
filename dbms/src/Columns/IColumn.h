@@ -455,6 +455,11 @@ public:
         throw Exception("Column " + getName() + " is not a contiguous block of memory", ErrorCodes::NOT_IMPLEMENTED);
     }
 
+    virtual void swapFixedAndContiguousData(SimplePaddedPODArray &)
+    {
+        throw Exception("Column " + getName() + " does not support swap data", ErrorCodes::NOT_IMPLEMENTED);
+    }
+
     /// If valuesHaveFixedSize, returns size of value, otherwise throw an exception.
     virtual size_t sizeOfValueIfFixed() const
     {

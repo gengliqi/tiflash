@@ -84,45 +84,26 @@ inline constexpr size_t integerRoundUp(size_t value, size_t dividend)
 static constexpr size_t EmptyPODArraySize = 1024;
 extern const char EmptyPODArray[EmptyPODArraySize];
 
+class SimplePaddedPODArray;
 /** Base class that depend only on size of element, not on element itself.
   * You can static_cast to this class if you want to insert some data regardless to the actual type T.
   */
-template <size_t ELEMENT_SIZE, size_t INITIAL_SIZE, typename TAllocator, size_t pad_right_, size_t pad_left_>
+template <typename Derived, typename TAllocator>
 class PODArrayBase
     : private boost::noncopyable
     , private TAllocator /// empty base optimization
 {
 protected:
-    /// Round padding up to an whole number of elements to simplify arithmetic.
-    static constexpr size_t pad_right = integerRoundUp(pad_right_, ELEMENT_SIZE);
-    /// pad_left is also rounded up to 16 bytes to maintain alignment of allocated memory.
-    static constexpr size_t pad_left = integerRoundUp(integerRoundUp(pad_left_, ELEMENT_SIZE), 16);
-    /// Empty array will point to this static memory as padding.
-    static constexpr char * null = pad_left ? const_cast<char *>(EmptyPODArray) + EmptyPODArraySize : nullptr;
-
-    static_assert(
-        pad_left <= EmptyPODArraySize && "Left Padding exceeds EmptyPODArraySize. Is the element size too large?");
-
-    char * c_start = null; /// Does not include pad_left.
-    char * c_end = null;
-    char * c_end_of_storage = null; /// Does not include pad_right.
+    char * c_start; /// Does not include pad_left.
+    char * c_end;
+    char * c_end_of_storage; /// Does not include pad_right.
 
     bool is_shared_memory;
 
-    [[nodiscard]] __attribute__((always_inline)) std::optional<MemoryTrackerSetter> swicthMemoryTracker()
+    [[nodiscard]] __attribute__((always_inline)) std::optional<MemoryTrackerSetter> switchMemoryTracker()
     {
         return is_shared_memory ? std::make_optional<MemoryTrackerSetter>(true, shared_column_data_mem_tracker.get())
                                 : std::nullopt;
-    }
-
-    /// The amount of memory occupied by the num_elements of the elements.
-    static size_t byte_size(size_t num_elements) { return num_elements * ELEMENT_SIZE; }
-
-    /// Minimum amount of memory to allocate for num_elements, including padding.
-    static size_t minimum_memory_for_elements(size_t num_elements)
-    {
-        auto res = byte_size(num_elements) + pad_right + pad_left;
-        return res;
     }
 
     void alloc_for_num_elements(size_t num_elements)
@@ -134,37 +115,37 @@ protected:
         //in push_back or emplace_back will do the reserveForNextSize to alloc extra memory.
         //Thus, we don't need do roundUpToPowerOfTwoOrZero here, and it can cut down extra memory usage,
         //and will not have bad affact on performance.
-        alloc(minimum_memory_for_elements(num_elements));
+        alloc(getDerived().minimum_memory_for_elements(num_elements));
     }
 
     template <typename... TAllocatorParams>
     void alloc(size_t bytes, TAllocatorParams &&... allocator_params)
     {
-        auto guard = swicthMemoryTracker();
+        auto guard = switchMemoryTracker();
         c_start = c_end
             = reinterpret_cast<char *>(TAllocator::alloc(bytes, std::forward<TAllocatorParams>(allocator_params)...))
-            + pad_left;
-        c_end_of_storage = c_start + bytes - pad_right - pad_left;
+            + getDerived().padLeft();
+        c_end_of_storage = c_start + bytes - getDerived().padRight() - getDerived().padLeft();
 
-        if (pad_left)
-            memset(c_start - ELEMENT_SIZE, 0, ELEMENT_SIZE);
+        if (getDerived().padLeft())
+            memset(c_start - getDerived().elementSize(), 0, getDerived().elementSize());
     }
 
     void dealloc()
     {
-        if (c_start == null)
+        if (c_start == getDerived().nullPtr())
             return;
 
         unprotect();
 
-        auto guard = swicthMemoryTracker();
-        TAllocator::free(c_start - pad_left, allocated_bytes());
+        auto guard = switchMemoryTracker();
+        TAllocator::free(c_start - getDerived().padLeft(), allocated_bytes());
     }
 
     template <typename... TAllocatorParams>
     void realloc(size_t bytes, TAllocatorParams &&... allocator_params)
     {
-        if (c_start == null)
+        if (c_start == getDerived().nullPtr())
         {
             alloc(bytes, std::forward<TAllocatorParams>(allocator_params)...);
             return;
@@ -172,21 +153,25 @@ protected:
 
         unprotect();
 
-        auto guard = swicthMemoryTracker();
+        auto guard = switchMemoryTracker();
         ptrdiff_t end_diff = c_end - c_start;
 
         c_start = reinterpret_cast<char *>(TAllocator::realloc(
-                      c_start - pad_left,
+                      c_start - getDerived().padLeft(),
                       allocated_bytes(),
                       bytes,
                       std::forward<TAllocatorParams>(allocator_params)...))
-            + pad_left;
+            + getDerived().padLeft();
 
         c_end = c_start + end_diff;
-        c_end_of_storage = c_start + bytes - pad_right - pad_left;
+        c_end_of_storage = c_start + bytes - getDerived().padRight() - getDerived().padLeft();
     }
 
-    bool isInitialized() const { return (c_start != null) && (c_end != null) && (c_end_of_storage != null); }
+    bool isInitialized() const
+    {
+        return (c_start != getDerived().nullPtr()) && (c_end != getDerived().nullPtr())
+            && (c_end_of_storage != getDerived().nullPtr());
+    }
 
     bool isAllocatedFromStack() const
     {
@@ -202,7 +187,9 @@ protected:
             // The allocated memory should be multiplication of ELEMENT_SIZE to hold the element, otherwise,
             // memory issue such as corruption could appear in edge case.
             realloc(
-                std::max(((INITIAL_SIZE - 1) / ELEMENT_SIZE + 1) * ELEMENT_SIZE, minimum_memory_for_elements(1)),
+                std::max(
+                    ((getDerived().initialSize() - 1) / getDerived().elementSize() + 1) * getDerived().elementSize(),
+                    getDerived().minimum_memory_for_elements(1)),
                 std::forward<TAllocatorParams>(allocator_params)...);
         }
         else
@@ -217,10 +204,11 @@ protected:
         static constexpr size_t PROTECT_PAGE_SIZE = 4096;
 
         char * left_rounded_up = reinterpret_cast<char *>(
-            (reinterpret_cast<intptr_t>(c_start) - pad_left + PROTECT_PAGE_SIZE - 1) / PROTECT_PAGE_SIZE
+            (reinterpret_cast<intptr_t>(c_start) - getDerived().padLeft() + PROTECT_PAGE_SIZE - 1) / PROTECT_PAGE_SIZE
             * PROTECT_PAGE_SIZE);
         char * right_rounded_down = reinterpret_cast<char *>(
-            (reinterpret_cast<intptr_t>(c_end_of_storage) + pad_right) / PROTECT_PAGE_SIZE * PROTECT_PAGE_SIZE);
+            (reinterpret_cast<intptr_t>(c_end_of_storage) + getDerived().padRight()) / PROTECT_PAGE_SIZE
+            * PROTECT_PAGE_SIZE);
 
         if (right_rounded_down > left_rounded_up)
         {
@@ -236,11 +224,14 @@ protected:
 
 public:
     bool empty() const { return c_end == c_start; }
-    size_t size() const { return (c_end - c_start) / ELEMENT_SIZE; }
-    size_t capacity() const { return (c_end_of_storage - c_start) / ELEMENT_SIZE; }
+    size_t size() const { return (c_end - c_start) / getDerived().elementSize(); }
+    size_t capacity() const { return (c_end_of_storage - c_start) / getDerived().elementSize(); }
 
     /// This method is safe to use only for information about memory usage.
-    size_t allocated_bytes() const { return c_end_of_storage - c_start + pad_right + pad_left; }
+    size_t allocated_bytes() const
+    {
+        return c_end_of_storage - c_start + getDerived().padRight() + getDerived().padLeft();
+    }
 
     void clear() { c_end = c_start; }
 
@@ -249,7 +240,7 @@ public:
     {
         if (n > capacity())
             realloc(
-                roundUpToPowerOfTwoOrZero(minimum_memory_for_elements(n)),
+                roundUpToPowerOfTwoOrZero(getDerived().minimum_memory_for_elements(n)),
                 std::forward<TAllocatorParams>(allocator_params)...);
     }
 
@@ -260,7 +251,7 @@ public:
         resize_assume_reserved(n);
     }
 
-    void resize_assume_reserved(const size_t n) { c_end = c_start + byte_size(n); }
+    void resize_assume_reserved(const size_t n) { c_end = c_start + getDerived().byte_size(n); }
 
     const char * raw_data() const { return c_start; }
 
@@ -273,7 +264,7 @@ public:
     template <typename... TAllocatorParams>
     void push_back_raw_many(size_t number_of_items, const void * ptr, TAllocatorParams &&... allocator_params)
     {
-        size_t items_byte_size = byte_size(number_of_items);
+        size_t items_byte_size = getDerived().byte_size(number_of_items);
         if (unlikely(c_end + items_byte_size > c_end_of_storage))
             reserve(size() + number_of_items, std::forward<TAllocatorParams>(allocator_params)...);
         memcpy(c_end, ptr, items_byte_size);
@@ -297,11 +288,62 @@ public:
 #endif
     }
 
+    const Derived & getDerived() const { return static_cast<const Derived &>(*this); }
+    Derived & getDerived() { return static_cast<Derived &>(*this); }
+
     ~PODArrayBase() { dealloc(); }
 
     PODArrayBase()
         : is_shared_memory(current_memory_tracker == nullptr)
     {}
+
+    void init(char * null)
+    {
+        c_start = null;
+        c_end = null;
+        c_end_of_storage = null;
+    }
+
+    friend SimplePaddedPODArray;
+};
+
+template <
+    size_t ELEMENT_SIZE,
+    size_t INITIAL_SIZE = 4096,
+    typename TAllocator = Allocator<false>,
+    size_t pad_right_ = 0,
+    size_t pad_left_ = 0>
+class PODArrayTemplate
+    : public PODArrayBase<PODArrayTemplate<ELEMENT_SIZE, INITIAL_SIZE, TAllocator, pad_right_, pad_left_>, TAllocator>
+{
+public:
+    PODArrayTemplate() { this->init(null); }
+
+    /// Round padding up to an whole number of elements to simplify arithmetic.
+    static constexpr size_t pad_right = integerRoundUp(pad_right_, ELEMENT_SIZE);
+    /// pad_left is also rounded up to 16 bytes to maintain alignment of allocated memory.
+    static constexpr size_t pad_left = integerRoundUp(integerRoundUp(pad_left_, ELEMENT_SIZE), 16);
+    /// Empty array will point to this static memory as padding.
+    static constexpr char * null = pad_left ? const_cast<char *>(EmptyPODArray) + EmptyPODArraySize : nullptr;
+
+    static_assert(
+        pad_left <= EmptyPODArraySize && "Left Padding exceeds EmptyPODArraySize. Is the element size too large?");
+
+    static constexpr size_t elementSize() { return ELEMENT_SIZE; }
+    static constexpr size_t initialSize() { return INITIAL_SIZE; }
+    static constexpr size_t padRight() { return pad_right; }
+    static constexpr size_t padLeft() { return pad_left; }
+    static constexpr char * nullPtr() { return null; }
+
+    /// The amount of memory occupied by the num_elements of the elements.
+    static size_t byte_size(size_t num_elements) { return num_elements * ELEMENT_SIZE; }
+
+    /// Minimum amount of memory to allocate for num_elements, including padding.
+    static size_t minimum_memory_for_elements(size_t num_elements)
+    {
+        auto res = byte_size(num_elements) + pad_right + pad_left;
+        return res;
+    }
 };
 
 template <
@@ -310,11 +352,9 @@ template <
     typename TAllocator = Allocator<false>,
     size_t pad_right_ = 0,
     size_t pad_left_ = 0>
-class PODArray : public PODArrayBase<sizeof(T), INITIAL_SIZE, TAllocator, pad_right_, pad_left_>
+class PODArray : public PODArrayTemplate<sizeof(T), INITIAL_SIZE, TAllocator, pad_right_, pad_left_>
 {
 protected:
-    using Base = PODArrayBase<sizeof(T), INITIAL_SIZE, TAllocator, pad_right_, pad_left_>;
-
     T * t_start() { return reinterpret_cast<T *>(this->c_start); }
     T * t_end() { return reinterpret_cast<T *>(this->c_end); }
     T * t_end_of_storage() { return reinterpret_cast<T *>(this->c_end_of_storage); }
@@ -521,7 +561,7 @@ public:
 
             /// arr1 takes ownership of the heap memory of arr2.
             arr1.c_start = arr2.c_start;
-            arr1.c_end_of_storage = arr1.c_start + heap_allocated - arr1.pad_right;
+            arr1.c_end_of_storage = arr1.c_start + heap_allocated - arr1.padRight();
             arr1.c_end = arr1.c_start + this->byte_size(heap_size);
 
             /// Allocate stack space for arr2.
@@ -539,9 +579,9 @@ public:
                 memcpy(dest.c_start, src.c_start, this->byte_size(src.size()));
                 dest.c_end = dest.c_start + (src.c_end - src.c_start);
 
-                src.c_start = Base::null;
-                src.c_end = Base::null;
-                src.c_end_of_storage = Base::null;
+                src.c_start = this->nullPtr();
+                src.c_end = this->nullPtr();
+                src.c_end_of_storage = this->nullPtr();
             }
             else
             {
@@ -591,8 +631,8 @@ public:
             size_t rhs_size = rhs.size();
             size_t rhs_allocated = rhs.allocated_bytes();
 
-            this->c_end_of_storage = this->c_start + rhs_allocated - Base::pad_right;
-            rhs.c_end_of_storage = rhs.c_start + lhs_allocated - Base::pad_right;
+            this->c_end_of_storage = this->c_start + rhs_allocated - this->padRight();
+            rhs.c_end_of_storage = rhs.c_start + lhs_allocated - this->padRight();
 
             this->c_end = this->c_start + this->byte_size(rhs_size);
             rhs.c_end = rhs.c_start + this->byte_size(lhs_size);
@@ -666,11 +706,104 @@ void swap(
 }
 
 /** For columns. Padding is enough to read and write xmm-register at the address of the last element. */
-template <typename T, size_t INITIAL_SIZE = 4096, typename TAllocator = Allocator<false>>
-using PaddedPODArray = PODArray<T, INITIAL_SIZE, TAllocator, 15, 16>;
+const size_t PAD_RIGHT = 15;
+const size_t PAD_LEFT = 16;
+template <typename T, size_t INITIAL_SIZE = 4096>
+using PaddedPODArray = PODArray<T, INITIAL_SIZE, Allocator<false>, PAD_RIGHT, PAD_LEFT>;
 
 template <typename T, size_t stack_size_in_bytes>
 using PODArrayWithStackMemory
     = PODArray<T, 0, AllocatorWithStackMemory<Allocator<false>, integerRoundUp(stack_size_in_bytes, sizeof(T))>>;
+
+class SimplePaddedPODArray : public PODArrayBase<SimplePaddedPODArray, Allocator<false>>
+{
+public:
+    explicit SimplePaddedPODArray(size_t element_size_, size_t initial_size_ = 4096)
+        : element_size(element_size_)
+        , initial_size(initial_size_)
+        /// The same as PODArrayTemplate.
+        , pad_right(integerRoundUp(PAD_RIGHT, element_size))
+        , pad_left(integerRoundUp(integerRoundUp(PAD_LEFT, element_size), 16))
+        , null(pad_left ? const_cast<char *>(EmptyPODArray) + EmptyPODArraySize : nullptr)
+    {
+        this->init(null);
+    }
+
+    SimplePaddedPODArray(SimplePaddedPODArray && other)
+        : element_size(other.element_size)
+        , initial_size(other.initial_size)
+        , pad_right(other.pad_right)
+        , pad_left(other.pad_left)
+        , null(other.null)
+    {
+        swap(other);
+    }
+
+    SimplePaddedPODArray & operator=(SimplePaddedPODArray && other)
+    {
+        swap(other);
+        return *this;
+    }
+
+    size_t elementSize() const { return element_size; }
+    size_t initialSize() const { return initial_size; }
+    size_t padRight() const { return pad_right; }
+    size_t padLeft() const { return pad_left; }
+    char * nullPtr() const { return null; }
+
+    /// The amount of memory occupied by the num_elements of the elements.
+    size_t byte_size(size_t num_elements) { return num_elements * element_size; }
+
+    /// Minimum amount of memory to allocate for num_elements, including padding.
+    size_t minimum_memory_for_elements(size_t num_elements)
+    {
+        auto res = byte_size(num_elements) + pad_right + pad_left;
+        return res;
+    }
+
+    void swap(SimplePaddedPODArray & other)
+    {
+        assert(element_size == other.element_size);
+        assert(initial_size == other.initial_size);
+
+        std::swap(c_start, other.c_start);
+        std::swap(c_end, other.c_end);
+        std::swap(c_end_of_storage, other.c_end_of_storage);
+    }
+
+    template <typename T, size_t INITIAL_SIZE>
+    void swap(PaddedPODArray<T, INITIAL_SIZE> & other)
+    {
+        assert(element_size == other.elementSize());
+        assert(initial_size == other.initialSize());
+        assert(pad_right == other.padRight());
+        assert(pad_left == other.padLeft());
+        assert(null == other.nullPtr());
+
+        std::swap(c_start, other.c_start);
+        std::swap(c_end, other.c_end);
+        std::swap(c_end_of_storage, other.c_end_of_storage);
+    }
+
+    void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos)
+    {
+        size_t prev_size = size();
+        resize(prev_size + pos.size());
+
+        size_t size = pos.size();
+        for (size_t i = 0; i < size; ++i)
+        {
+            std::memcpy(c_start + element_size * (prev_size + i), pos[i], element_size);
+            pos[i] += element_size;
+        }
+    }
+
+private:
+    const size_t element_size;
+    const size_t initial_size;
+    const size_t pad_right;
+    const size_t pad_left;
+    char * null;
+};
 
 } // namespace DB

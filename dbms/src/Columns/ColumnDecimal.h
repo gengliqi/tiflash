@@ -167,14 +167,9 @@ public:
         }
     }
 
-    StringRef getRawData() const override
-    {
-        if constexpr (is_Decimal256)
-        {
-            throw Exception("getRawData is not supported for " + IColumn::getName());
-        }
-        return StringRef(reinterpret_cast<const char *>(data.data()), byteSize());
-    }
+    void swapFixedAndContiguousData(SimplePaddedPODArray & simple_data) override { simple_data.swap(data); }
+
+    StringRef getRawData() const override { return StringRef(reinterpret_cast<const char *>(data.data()), byteSize()); }
 
     StringRef serializeValueIntoArena(
         size_t n,
@@ -194,7 +189,6 @@ public:
 
     Field operator[](size_t n) const override { return DecimalField(data[n], scale); }
 
-    //StringRef getRawData() const override { return StringRef(reinterpret_cast<const char*>(data.data()), data.size()); }
     StringRef getDataAt(size_t n) const override
     {
         if constexpr (is_Decimal256)
