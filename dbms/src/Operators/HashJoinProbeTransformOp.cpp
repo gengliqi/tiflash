@@ -58,7 +58,7 @@ void HashJoinProbeTransformOp::transformHeaderImpl(Block & header_)
 {
     ProbeProcessInfo header_probe_process_info(0, 0);
     header_probe_process_info.resetBlock(std::move(header_));
-    header_ = origin_join->joinBlock(header_probe_process_info, true);
+    header_ = origin_join->joinBlock(header_probe_process_info, 0, true);
 }
 
 void HashJoinProbeTransformOp::operateSuffixImpl()

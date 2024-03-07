@@ -60,7 +60,7 @@ public:
     }
 
     // For probe stage
-    Block joinBlock(ProbeProcessInfo & probe_process_info) { return join->joinBlock(probe_process_info); }
+    Block joinBlock(ProbeProcessInfo & probe_process_info) { return join->joinBlock(probe_process_info, op_index); }
     void dispatchBlock(Block & block, PartitionBlocks & partition_blocks_list)
     {
         join->dispatchProbeBlock(block, partition_blocks_list, op_index);

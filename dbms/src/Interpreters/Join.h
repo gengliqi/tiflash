@@ -168,7 +168,16 @@ public:
     PaddedPODArray<size_t> row_sizes;
     PaddedPODArray<size_t> hashes;
     RowPtrs row_ptrs;
+
+    size_t build_time = 0;
     size_t convert_time = 0;
+    size_t column_num = 0;
+};
+
+struct alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
+{
+    size_t probe_time = 0;
+    size_t row_count = 0;
 };
 
 class JoinHashPointerTable
@@ -295,7 +304,7 @@ public:
     /** Join data from the map (that was previously built by calls to insertFromBlock) to the block with data from "left" table.
       * Could be called from different threads in parallel.
       */
-    Block joinBlock(ProbeProcessInfo & probe_process_info, bool dry_run = false) const;
+    Block joinBlock(ProbeProcessInfo & probe_process_info, size_t stream_index, bool dry_run = false) const;
 
     void checkTypes(const Block & block) const;
 
@@ -551,6 +560,8 @@ private:
     bool enable_new_hash_join;
 
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
+
+    std::vector<std::unique_ptr<ProbeWorkerData>> probe_workers_data;
 
     JoinHashPointerTable table;
 

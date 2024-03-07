@@ -189,6 +189,9 @@ Join::Join(
         probe_spill_config,
         max_bytes_before_external_join,
         log);
+    if (enable_new_hash_join)
+        hash_join_spill_context->disableSpill();
+
     size_t max_restore_round = 4;
 #ifdef DBMS_PUBLIC_GTEST
     max_restore_round = MAX_RESTORE_ROUND_IN_GTEST;
@@ -442,6 +445,8 @@ void Join::initProbe(const Block & sample_block, size_t probe_concurrency_)
     if (hash_join_spill_context->isSpillEnabled())
         hash_join_spill_context->buildProbeSpiller(probe_sample_block);
     probe_side_marked_spilled_data.resize(probe_concurrency);
+    for (size_t i = 0; i < probe_concurrency; ++i)
+        probe_workers_data.emplace_back(std::make_unique<ProbeWorkerData>());
 }
 
 Join::MarkedSpillData & Join::getBuildSideMarkedSpillData(size_t stream_index)
@@ -537,9 +542,13 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
 {
     if unlikely (block.rows() == 0)
         return;
+    Stopwatch watch;
+
     std::shared_lock lock(rwlock);
     assert(stream_index < getBuildConcurrency());
     total_input_build_rows += block.rows();
+
+    build_workers_data[stream_index]->row_count += block.rows();
 
     if (unlikely(!initialized))
         throw Exception("Logical error: Join was not initialized", ErrorCodes::LOGICAL_ERROR);
@@ -623,6 +632,8 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
                         getTotalHashTableAndPoolByteCount()));
         }
     }
+
+    build_workers_data[stream_index]->build_time += watch.elapsedMilliseconds();
 }
 
 bool Join::isEnableSpill() const
@@ -751,6 +762,8 @@ void convertBlockToRowsTypeImpl(
         }
     }
 
+    worker_data.column_num = added_indexes.size();
+
     size_t part_count = need_record_null_rows ? PARTITION_COUNT + 1 : PARTITION_COUNT;
     std::vector<size_t> partition_row_sizes(part_count);
     std::vector<size_t> partition_row_count(PARTITION_COUNT);
@@ -842,7 +855,6 @@ void convertBlockToRowsTypeImpl(
     for (size_t i = 0; i < PARTITION_COUNT; ++i)
     {
         worker_data.partitioned_row_counts[i] += partition_row_count[i];
-        worker_data.row_count += partition_row_count[i];
         worker_data.partitioned_multi_row_ptrs[i].emplace_back(std::move(partitioned_row_ptrs[i]));
     }
 
@@ -1637,7 +1649,6 @@ void probeBlockImpl(
     MutableColumns & added_columns,
     size_t num_columns_to_add,
     ConstNullMapPtr null_map,
-    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table)
@@ -1665,7 +1676,6 @@ void probeBlockImpl(
             added_columns,                                                                                  \
             num_columns_to_add,                                                                             \
             null_map,                                                                                       \
-            offsets_to_replicate,                                                                           \
             collators,                                                                                      \
             probe_process_info,                                                                             \
             table);                                                                                         \
@@ -1686,7 +1696,6 @@ void probeBlockImplType(
     MutableColumns & added_columns,
     size_t num_columns_to_add,
     ConstNullMapPtr null_map,
-    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table)
@@ -1699,7 +1708,6 @@ void probeBlockImplType(
         added_columns,                                     \
         num_columns_to_add,                                \
         null_map,                                          \
-        offsets_to_replicate,                              \
         collators,                                         \
         probe_process_info,                                \
         table);
@@ -1792,7 +1800,6 @@ void NO_INLINE probeBlockImplTypeCase(
     MutableColumns & added_columns,
     size_t num_columns_to_add,
     ConstNullMapPtr null_map,
-    std::unique_ptr<IColumn::Offsets> & offsets_to_replicate,
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table)
@@ -1817,12 +1824,13 @@ void NO_INLINE probeBlockImplTypeCase(
     RowPtrs row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
     size_t current_offset = 0;
+    auto & offsets_to_replicate = *probe_process_info.offsets_to_replicate;
     for (i = probe_process_info.start_row; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
         {
             // TODO: support outer/right-semi join
-            (*offsets_to_replicate)[i] = current_offset;
+            offsets_to_replicate[i] = current_offset;
             continue;
         }
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
@@ -1842,7 +1850,7 @@ void NO_INLINE probeBlockImplTypeCase(
             }
             head = unalignedLoad<char *>(head + pointer_offset);
         }
-        (*offsets_to_replicate)[i] = current_offset;
+        offsets_to_replicate[i] = current_offset;
         if (row_ptrs_buffer.size() >= buffer_size)
         {
             for (size_t j = 0; j < num_columns_to_add; ++j)
@@ -1946,8 +1954,6 @@ Block Join::doJoinBlockHashNew(
     }
 
     //IColumn::Offset current_offset = 0;
-    auto & offsets_to_replicate = probe_process_info.offsets_to_replicate;
-
     RUNTIME_CHECK_MSG(num_columns_to_skip == 0, "num_columns_to_skip != 0");
     RUNTIME_CHECK_MSG(
         kind == ASTTableJoin::Kind::Inner && strictness == ASTTableJoin::Strictness::All,
@@ -1961,7 +1967,6 @@ Block Join::doJoinBlockHashNew(
         added_columns,
         num_columns_to_add.size(),
         probe_process_info.null_map,
-        offsets_to_replicate,
         collators,
         probe_process_info,
         table);
@@ -1998,6 +2003,8 @@ Block Join::doJoinBlockHashNew(
             flag_mapped_entry_helper_name));
 
     size_t process_rows = probe_process_info.end_row - probe_process_info.start_row;
+
+    auto & offsets_to_replicate = probe_process_info.offsets_to_replicate;
 
     // if rows equal 0, we could ignore filter and offsets_to_replicate, and do not need to update start row.
     if (likely(rows != 0))
@@ -2627,10 +2634,15 @@ bool Join::finishOneBuild(size_t stream_index)
     if (enable_new_hash_join)
         LOG_INFO(
             log,
-            "{} convert block to rows cost {}ms, {} rows",
+            "{} convert block to rows cost {}ms",
             stream_index,
-            build_workers_data[stream_index]->convert_time,
-            build_workers_data[stream_index]->row_count);
+            build_workers_data[stream_index]->convert_time);
+    LOG_INFO(
+        log,
+        "{} finish one build, {} rows, cost {}ms",
+        stream_index,
+        build_workers_data[stream_index]->row_count,
+        build_workers_data[stream_index]->build_time);
     if (active_build_threads == 0)
     {
         workAfterBuildFinish(stream_index);
@@ -2656,18 +2668,19 @@ void Join::workAfterBuildFinish(size_t stream_index)
 {
     if (enable_new_hash_join)
     {
-        size_t row_count = 0;
+        size_t all_row_count = 0;
         for (size_t i = 0; i < build_concurrency; ++i)
-            row_count += build_workers_data[i]->row_count;
+            all_row_count += build_workers_data[i]->row_count;
 
         Stopwatch watch;
-        table.init(row_count);
+        table.init(all_row_count);
         LOG_INFO(
             log,
-            "allocate pointer table cost {}ms, rows {}, pointer table size {}",
+            "allocate pointer table cost {}ms, rows {}, pointer table size {}, added column num {}",
             watch.elapsedMilliseconds(),
-            row_count,
-            table.pointer_table_size);
+            all_row_count,
+            table.pointer_table_size,
+            build_workers_data[stream_index]->column_num);
     }
 
     if (isNullAwareSemiFamily(kind))
@@ -2830,6 +2843,13 @@ bool Join::finishOneProbe(size_t stream_index)
     {
         FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_mpp_hash_probe);
     }
+    LOG_INFO(
+        log,
+        "{} finish one probe, {} rows, cost {}ms",
+        stream_index,
+        probe_workers_data[stream_index]->row_count,
+        probe_workers_data[stream_index]->probe_time);
+
     --active_probe_threads;
     if (active_probe_threads == 0)
     {
@@ -2885,8 +2905,9 @@ void Join::finishOneNonJoin(size_t partition_index)
     }
 }
 
-Block Join::joinBlock(ProbeProcessInfo & probe_process_info, bool dry_run) const
+Block Join::joinBlock(ProbeProcessInfo & probe_process_info, size_t stream_index, bool dry_run) const
 {
+    Stopwatch watch;
     assert(!probe_process_info.all_rows_joined_finish);
     assert(finalized);
     if unlikely (dry_run)
@@ -2933,7 +2954,11 @@ Block Join::joinBlock(ProbeProcessInfo & probe_process_info, bool dry_run) const
         block.getByName(match_helper_name).column
             = ColumnNullable::create(std::move(col_non_matched), std::move(nullable_column->getNullMapColumnPtr()));
     }
-
+    if (!dry_run)
+    {
+        probe_workers_data[stream_index]->probe_time += watch.elapsedMilliseconds();
+        probe_workers_data[stream_index]->row_count += block.rows();
+    }
     return block;
 }
 

@@ -141,7 +141,7 @@ Block HashJoinProbeExec::probe()
             return {};
         }
     }
-    return join->joinBlock(probe_process_info);
+    return join->joinBlock(probe_process_info, stream_index);
 }
 
 HashJoinProbeExecPtr HashJoinProbeExec::tryGetRestoreExec()

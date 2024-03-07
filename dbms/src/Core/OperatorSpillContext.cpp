@@ -19,8 +19,7 @@ namespace DB
 {
 bool OperatorSpillContext::isSpillEnabled() const
 {
-    return false;
-    //return enable_spill && (auto_spill_mode || operator_spill_threshold > 0);
+    return enable_spill && (auto_spill_mode || operator_spill_threshold > 0);
 }
 
 bool OperatorSpillContext::supportSpill() const
