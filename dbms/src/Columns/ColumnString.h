@@ -41,10 +41,10 @@ private:
     /// For convenience, every string ends with terminating zero byte. Note that strings could contain zero bytes in the middle.
     Chars_t chars;
 
-    size_t ALWAYS_INLINE offsetAt(size_t i) const { return i == 0 ? 0 : offsets[i - 1]; }
+    size_t ALWAYS_INLINE offsetAt(ssize_t i) const { return offsets[i - 1]; }
 
     /// Size of i-th element, including terminating zero.
-    size_t ALWAYS_INLINE sizeAt(size_t i) const { return i == 0 ? offsets[0] : (offsets[i] - offsets[i - 1]); }
+    size_t ALWAYS_INLINE sizeAt(ssize_t i) const { return offsets[i] - offsets[i - 1]; }
 
     template <bool positive>
     struct less;
@@ -158,9 +158,25 @@ public:
     void insertDisjunctFrom(const IColumn & src_, const std::vector<size_t> & position_vec) override
     {
         const auto & src = static_cast<const ColumnString &>(src_);
-        offsets.reserve(offsets.size() + position_vec.size());
-        for (auto position : position_vec)
-            insertFromImpl(src, position);
+        size_t insert_size = position_vec.size();
+        size_t old_size = offsets.size();
+        chars.reserve(chars.size() + (src.chars.size() / src.size() * insert_size));
+        offsets.resize(offsets.size() + insert_size);
+        size_t string_offset, string_size;
+        size_t current_new_offset = offsetAt(old_size);
+        for (size_t i = 0; i < insert_size; ++i)
+        {
+            string_offset = offsetAt(position_vec[i]);
+            string_size = sizeAt(position_vec[i]);
+            chars.resize(current_new_offset + string_size);
+            memcpySmallAllowReadWriteOverflow15(&chars[current_new_offset], &src.chars[string_offset], string_size);
+
+            current_new_offset += string_size;
+            offsets[old_size + i] = current_new_offset;
+        }
+        //offsets.reserve(offsets.size() + position_vec.size());
+        //for (auto position : position_vec)
+        //    insertFromImpl(src, position);
     }
 
     template <bool add_terminating_zero>

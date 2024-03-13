@@ -767,6 +767,7 @@ void convertBlockToRowsTypeImpl(
     size_t part_count = need_record_null_rows ? PARTITION_COUNT + 1 : PARTITION_COUNT;
     std::vector<size_t> partition_row_sizes(part_count);
     std::vector<size_t> partition_row_count(PARTITION_COUNT);
+    const size_t align = 8;
     for (size_t i = 0; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
@@ -774,6 +775,7 @@ void convertBlockToRowsTypeImpl(
             if constexpr (need_record_null_rows)
             {
                 worker_data.row_sizes[i] += sizeof(char *);
+                worker_data.row_sizes[i] = (worker_data.row_sizes[i] + align - 1) / align * align;
                 partition_row_sizes[PARTITION_COUNT] += worker_data.row_sizes[i];
             }
             continue;
@@ -1754,7 +1756,7 @@ void convertToSimpleMutableColumn(MutableColumnPtr & column_ptr, SimpleMutableCo
     }
 }
 
-void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos)
+inline void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos)
 {
     if (simple_column.null_map)
     {
@@ -1806,9 +1808,15 @@ void NO_INLINE probeBlockImplTypeCase(
 {
     RUNTIME_ASSERT(probe_process_info.start_row < rows);
 
+    size_t limit_count = rows - probe_process_info.start_row;
+    if (limit_count < 1024)
+        limit_count = 1024;
+    else
+        limit_count = std::min(probe_process_info.max_block_size, limit_count);
     std::vector<SimpleMutableColumn> simple_added_columns;
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
+        added_columns[i]->reserve(limit_count);
         simple_added_columns.emplace_back();
         convertToSimpleMutableColumn(added_columns[i], simple_added_columns.back());
     }
@@ -1819,8 +1827,9 @@ void NO_INLINE probeBlockImplTypeCase(
     Arena pool;
 
     size_t i;
+    char * current_head = nullptr;
     //const size_t buffer_size = 256;
-    const size_t buffer_size = 16;
+    const size_t buffer_size = 32;
     RowPtrs row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
     size_t current_offset = 0;
@@ -1836,9 +1845,17 @@ void NO_INLINE probeBlockImplTypeCase(
         auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
         SCOPE_EXIT(keyHolderDiscardKey(key_holder));
         auto key = keyHolderGetKey(key_holder);
-        size_t hash_value = Hash()(key);
-        size_t bucket = hash_value & table.pointer_table_size_mask;
-        char * head = table.pointer_table[bucket].load(std::memory_order_relaxed);
+        char * head;
+        if unlikely (i == probe_process_info.start_row && probe_process_info.new_hash_current_head != nullptr)
+        {
+            head = probe_process_info.new_hash_current_head;
+        }
+        else
+        {
+            size_t hash_value = Hash()(key);
+            size_t bucket = hash_value & table.pointer_table_size_mask;
+            head = table.pointer_table[bucket].load(std::memory_order_relaxed);
+        }
         while (head)
         {
             auto key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
@@ -1847,23 +1864,35 @@ void NO_INLINE probeBlockImplTypeCase(
                 size_t key_size = keyHolderGetKeySize(key2);
                 row_ptrs_buffer.push_back(head + key_offset + key_size);
                 ++current_offset;
+                if (row_ptrs_buffer.size() >= buffer_size)
+                {
+                    for (size_t j = 0; j < num_columns_to_add; ++j)
+                    {
+                        //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                        deserializeAndInsertFromPos(simple_added_columns[j], row_ptrs_buffer);
+                    }
+                    row_ptrs_buffer.clear();
+                }
+                if unlikely (current_offset >= limit_count)
+                {
+                    head = unalignedLoad<char *>(head + pointer_offset);
+                    break;
+                }
             }
             head = unalignedLoad<char *>(head + pointer_offset);
         }
         offsets_to_replicate[i] = current_offset;
-        if (row_ptrs_buffer.size() >= buffer_size)
+        if unlikely (current_offset >= limit_count)
         {
-            for (size_t j = 0; j < num_columns_to_add; ++j)
-            {
-                //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                deserializeAndInsertFromPos(simple_added_columns[j], row_ptrs_buffer);
-            }
-            row_ptrs_buffer.clear();
-            if (current_offset >= probe_process_info.max_block_size)
+            if (head == nullptr)
             {
                 ++i;
-                break;
             }
+            else
+            {
+                current_head = head;
+            }
+            break;
         }
     }
     if (!row_ptrs_buffer.empty())
@@ -1878,7 +1907,7 @@ void NO_INLINE probeBlockImplTypeCase(
     for (size_t j = 0; j < num_columns_to_add; ++j)
         convertToMutableColumn(simple_added_columns[j], added_columns[j]);
 
-    probe_process_info.updateEndRow<false>(i);
+    probe_process_info.updateEndRow<false>(i, current_head);
 }
 
 Block Join::doJoinBlockHashNew(
@@ -1935,11 +1964,6 @@ Block Join::doJoinBlockHashNew(
             src_column.name);
 
         added_columns.push_back(src_column.column->cloneEmpty());
-        if (src_column.type && src_column.type->haveMaximumSizeOfValue())
-        {
-            // todo figure out more accurate `rows`
-            added_columns.back()->reserve(rows);
-        }
         right_indexes.push_back(num_columns_to_skip + index);
     }
 
@@ -2002,8 +2026,6 @@ Block Join::doJoinBlockHashNew(
             flag_mapped_entry_helper_type,
             flag_mapped_entry_helper_name));
 
-    size_t process_rows = probe_process_info.end_row - probe_process_info.start_row;
-
     auto & offsets_to_replicate = probe_process_info.offsets_to_replicate;
 
     // if rows equal 0, we could ignore filter and offsets_to_replicate, and do not need to update start row.
@@ -2012,19 +2034,20 @@ Block Join::doJoinBlockHashNew(
         /// If ALL ... JOIN - we replicate all the columns except the new ones.
         if (offsets_to_replicate)
         {
+            size_t start = probe_process_info.start_row;
+            size_t end = probe_process_info.new_hash_current_head == nullptr ? probe_process_info.end_row
+                                                                             : probe_process_info.end_row + 1;
             for (size_t i = 0; i < existing_columns; ++i)
             {
-                block.safeGetByPosition(i).column = block.safeGetByPosition(i).column->replicateRange(
-                    probe_process_info.start_row,
-                    probe_process_info.end_row,
-                    *offsets_to_replicate);
+                block.safeGetByPosition(i).column
+                    = block.safeGetByPosition(i).column->replicateRange(start, end, *offsets_to_replicate);
             }
 
-            if (rows != process_rows)
+            if (has_other_condition)
             {
                 offsets_to_replicate->assign(
-                    offsets_to_replicate->begin() + probe_process_info.start_row,
-                    offsets_to_replicate->begin() + probe_process_info.end_row);
+                    offsets_to_replicate->begin() + start,
+                    offsets_to_replicate->begin() + end);
             }
         }
     }

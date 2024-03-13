@@ -165,6 +165,9 @@ protected:
 
         c_end = c_start + end_diff;
         c_end_of_storage = c_start + bytes - getDerived().padRight() - getDerived().padLeft();
+
+        if (getDerived().padLeft())
+            memset(c_start - getDerived().elementSize(), 0, getDerived().elementSize());
     }
 
     bool isInitialized() const

@@ -102,6 +102,8 @@ struct ProbeProcessInfo
     bool all_rows_joined_finish;
     UInt64 cache_columns_threshold;
 
+    char * new_hash_current_head = nullptr;
+
     /// these should be inited before probe each block
     bool prepare_for_probe_done = false;
     ColumnPtr null_map_holder = nullptr;
@@ -150,9 +152,10 @@ struct ProbeProcessInfo
     }
 
     template <bool is_shallow_cross_probe_mode>
-    void updateEndRow(size_t next_row_to_probe)
+    void updateEndRow(size_t next_row_to_probe, char * current_head = nullptr)
     {
         end_row = next_row_to_probe;
+        new_hash_current_head = current_head;
         if constexpr (is_shallow_cross_probe_mode)
         {
             if (cross_join_data->next_right_block_index < cross_join_data->right_block_size)

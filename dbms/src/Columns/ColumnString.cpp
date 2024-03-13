@@ -276,7 +276,6 @@ ColumnPtr ColumnString::replicateRange(size_t start_row, size_t end_row, const I
     return res;
 }
 
-
 void ColumnString::gather(ColumnGathererStream & gatherer)
 {
     gatherer.gather(*this);
