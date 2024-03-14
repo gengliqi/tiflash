@@ -80,7 +80,7 @@ public:
     void insert(const Field & x) override;
     void insertFrom(const IColumn & src, size_t n) override;
     void insertManyFrom(const IColumn & src, size_t n, size_t length) override;
-    void insertDisjunctFrom(const IColumn & src, const std::vector<size_t> & position_vec) override;
+    void insertDisjunctFrom(const IColumn & src, const IColumn::Offsets & position_vec) override;
 
     void insertDefault() override
     {

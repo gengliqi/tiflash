@@ -359,7 +359,8 @@ void DAGQueryBlockInterpreter::handleJoin(
         flag_mapped_entry_helper_name,
         settings.join_probe_cache_columns_threshold,
         context.isTest(),
-        settings.enable_new_hash_join);
+        settings.enable_new_hash_join,
+        settings.new_hash_join_prefetch_threshold);
 
     recordJoinExecuteInfo(tiflash_join.build_side_index, join_ptr);
 

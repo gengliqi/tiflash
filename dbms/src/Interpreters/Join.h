@@ -289,6 +289,7 @@ public:
         size_t probe_cache_column_threshold_,
         bool is_test,
         bool enable_new_hash_join_,
+        size_t prefetch_threshold_,
         const std::vector<RuntimeFilterPtr> & runtime_filter_list_ = dummy_runtime_filter_list);
 
     RestoreConfig restore_config;
@@ -559,6 +560,8 @@ private:
     std::vector<MarkedSpillData> probe_side_marked_spilled_data;
 
     bool enable_new_hash_join;
+    size_t prefetch_threshold;
+    bool enable_prefetch = false;
 
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
 

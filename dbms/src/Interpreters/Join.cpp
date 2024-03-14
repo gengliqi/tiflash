@@ -131,6 +131,7 @@ Join::Join(
     size_t probe_cache_column_threshold_,
     bool is_test_,
     bool enable_new_hash_join_,
+    size_t prefetch_threshold_,
     const std::vector<RuntimeFilterPtr> & runtime_filter_list_)
     : restore_config(restore_config_)
     , match_helper_name(match_helper_name_)
@@ -166,6 +167,7 @@ Join::Join(
     , enable_fine_grained_shuffle(fine_grained_shuffle_count_ > 0)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
     , enable_new_hash_join(enable_new_hash_join_)
+    , prefetch_threshold(prefetch_threshold_)
 {
     has_other_condition = non_equal_conditions.other_cond_expr != nullptr;
     bool is_semi = isSemiFamily(kind) || isLeftOuterSemiFamily(kind) || isNullAwareSemiFamily(kind);
@@ -386,7 +388,8 @@ std::shared_ptr<Join> Join::createRestoreJoin(size_t max_bytes_before_external_j
         flag_mapped_entry_helper_name,
         probe_cache_column_threshold,
         is_test,
-        enable_new_hash_join);
+        enable_new_hash_join,
+        prefetch_threshold);
     /// init output names after finalize, the restored join don't need to finalize
     ret->output_columns_after_finalize = output_columns_after_finalize;
     ret->output_column_names_set_after_finalize = output_column_names_set_after_finalize;
@@ -1655,7 +1658,8 @@ void probeBlockImpl(
     ConstNullMapPtr null_map,
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
-    const JoinHashPointerTable & table)
+    const JoinHashPointerTable & table,
+    bool prefetch [[maybe_unused]])
 {
     if (rows == 0)
     {
@@ -1866,7 +1870,7 @@ void NO_INLINE probeBlockImplTypeCase(
                 size_t key_size = keyHolderGetKeySize(key2);
                 row_ptrs_buffer.push_back(head + key_offset + key_size);
                 ++current_offset;
-                if (row_ptrs_buffer.size() >= buffer_size)
+                if unlikely (row_ptrs_buffer.size() >= buffer_size)
                 {
                     for (size_t j = 0; j < num_columns_to_add; ++j)
                     {
@@ -1995,7 +1999,8 @@ Block Join::doJoinBlockHashNew(
         probe_process_info.null_map,
         collators,
         probe_process_info,
-        table);
+        table,
+        enable_prefetch);
 
     /*JoinPartition::probeBlock(
         partitions,
@@ -2036,20 +2041,31 @@ Block Join::doJoinBlockHashNew(
         /// If ALL ... JOIN - we replicate all the columns except the new ones.
         if (offsets_to_replicate)
         {
-            size_t start = probe_process_info.start_row;
-            size_t end = probe_process_info.new_hash_current_head == nullptr ? probe_process_info.end_row
-                                                                             : probe_process_info.end_row + 1;
-            for (size_t i = 0; i < existing_columns; ++i)
+            if (enable_prefetch)
             {
-                block.safeGetByPosition(i).column
-                    = block.safeGetByPosition(i).column->replicateRange(start, end, *offsets_to_replicate);
-            }
+                size_t start = probe_process_info.start_row;
+                size_t end = probe_process_info.new_hash_current_head == nullptr ? probe_process_info.end_row
+                                                                                 : probe_process_info.end_row + 1;
+                for (size_t i = 0; i < existing_columns; ++i)
+                {
+                    block.safeGetByPosition(i).column
+                        = block.safeGetByPosition(i).column->replicateRange(start, end, *offsets_to_replicate);
+                }
 
-            if (has_other_condition)
+                if (has_other_condition)
+                {
+                    offsets_to_replicate->assign(
+                        offsets_to_replicate->begin() + start,
+                        offsets_to_replicate->begin() + end);
+                }
+            }
+            else
             {
-                offsets_to_replicate->assign(
-                    offsets_to_replicate->begin() + start,
-                    offsets_to_replicate->begin() + end);
+                for (size_t i = 0; i < existing_columns; ++i)
+                {
+                    auto columnPtr = block.safeGetByPosition(i).column->cloneEmpty();
+                    columnPtr->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), *offsets_to_replicate);
+                }
             }
         }
     }

@@ -139,8 +139,10 @@ public:
     /// Appends one element from other column with the same type multiple times.
     virtual void insertManyFrom(const IColumn & src, size_t position, size_t length) = 0;
 
+    using Offset = UInt64;
+    using Offsets = PaddedPODArray<Offset>;
     /// Appends disjunctive elements from other column with the same type.
-    virtual void insertDisjunctFrom(const IColumn & src, const std::vector<size_t> & position_vec) = 0;
+    virtual void insertDisjunctFrom(const IColumn & src, const Offsets & position_vec) = 0;
 
     /// Appends data located in specified memory chunk if it is possible (throws an exception if it cannot be implemented).
     /// Is used to optimize some computations (in aggregation, for example).
@@ -312,8 +314,8 @@ public:
     /** Copies each element according offsets parameter.
       * (i-th element should be copied offsets[i] - offsets[i - 1] times.)
       */
-    using Offset = UInt64;
-    using Offsets = PaddedPODArray<Offset>;
+    //using Offset = UInt64;
+    //using Offsets = PaddedPODArray<Offset>;
 
     virtual Ptr replicateRange(size_t start_row, size_t end_row, const IColumn::Offsets & offsets) const = 0;
 
