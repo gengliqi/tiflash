@@ -818,6 +818,8 @@ void convertBlockToRowsTypeImpl(
             if constexpr (need_record_null_rows)
             {
                 worker_data.row_ptrs[i] = partition_first_ptr[PARTITION_COUNT];
+                assert(((intptr_t)worker_data.row_ptrs[i] & (align - 1)) == 0);
+
                 partition_first_ptr[PARTITION_COUNT] += worker_data.row_sizes[i];
 
                 /// Append to null rows list
@@ -835,6 +837,8 @@ void convertBlockToRowsTypeImpl(
 
         size_t part_num = worker_data.hashes[i] & PARTITION_MASK;
         worker_data.row_ptrs[i] = partition_first_ptr[part_num];
+        assert(((intptr_t)worker_data.row_ptrs[i] & (align - 1)) == 0);
+
         partition_first_ptr[part_num] += worker_data.row_sizes[i];
 
         partitioned_row_ptrs[part_num].push_back(worker_data.row_ptrs[i]);
@@ -1891,13 +1895,9 @@ void NO_INLINE probeBlockImplTypeCase(
         if unlikely (current_offset >= limit_count)
         {
             if (head == nullptr)
-            {
                 ++i;
-            }
             else
-            {
                 current_head = head;
-            }
             break;
         }
     }
@@ -2041,7 +2041,7 @@ Block Join::doJoinBlockHashNew(
         /// If ALL ... JOIN - we replicate all the columns except the new ones.
         if (offsets_to_replicate)
         {
-            if (enable_prefetch)
+            if (!enable_prefetch)
             {
                 size_t start = probe_process_info.start_row;
                 size_t end = probe_process_info.new_hash_current_head == nullptr ? probe_process_info.end_row
@@ -2063,8 +2063,9 @@ Block Join::doJoinBlockHashNew(
             {
                 for (size_t i = 0; i < existing_columns; ++i)
                 {
-                    auto columnPtr = block.safeGetByPosition(i).column->cloneEmpty();
-                    columnPtr->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), *offsets_to_replicate);
+                    auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
+                    mutable_column->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), *offsets_to_replicate);
+                    block.safeGetByPosition(i).column = std::move(mutable_column);
                 }
             }
         }

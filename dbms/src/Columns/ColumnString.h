@@ -166,8 +166,8 @@ public:
         size_t current_new_offset = offsetAt(old_size);
         for (size_t i = 0; i < insert_size; ++i)
         {
-            string_offset = offsetAt(position_vec[i]);
-            string_size = sizeAt(position_vec[i]);
+            string_offset = src.offsetAt(position_vec[i]);
+            string_size = src.sizeAt(position_vec[i]);
             chars.resize(current_new_offset + string_size);
             memcpySmallAllowReadWriteOverflow15(&chars[current_new_offset], &src.chars[string_offset], string_size);
 
