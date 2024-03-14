@@ -786,6 +786,7 @@ void convertBlockToRowsTypeImpl(
         const auto & key = keyHolderGetKey(key_holder);
 
         worker_data.row_sizes[i] += sizeof(size_t) + sizeof(char *) + keyHolderGetKeySize(key);
+        worker_data.row_sizes[i] = (worker_data.row_sizes[i] + align - 1) / align * align;
         worker_data.hashes[i] = Hash()(key);
         size_t part_num = worker_data.hashes[i] & PARTITION_MASK;
         partition_row_sizes[part_num] += worker_data.row_sizes[i];
@@ -797,8 +798,9 @@ void convertBlockToRowsTypeImpl(
     {
         if (partition_row_sizes[i] > 0)
         {
-            partition_first_ptr[i] = new char[partition_row_sizes[i]];
-            worker_data.row_memory.emplace_back(partition_first_ptr[i]);
+            //partition_first_ptr[i] = new char[partition_row_sizes[i]];
+            partition_first_ptr[i] = static_cast<char *>(worker_data.alloc.alloc(partition_row_sizes[i], align));
+            worker_data.row_memory.emplace_back(partition_first_ptr[i], partition_row_sizes[i]);
         }
     }
 

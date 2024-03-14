@@ -153,11 +153,12 @@ public:
     ~BuildWorkerData()
     {
         for (auto & c : row_memory)
-            delete c;
+            alloc.free(c.first, c.second);
         row_memory.clear();
     }
 
-    std::vector<char *> row_memory;
+    Allocator<false> alloc;
+    std::vector<std::pair<char *, size_t>> row_memory;
     std::vector<MultipleRowPtrs> partitioned_multi_row_ptrs;
     PaddedPODArray<size_t> partitioned_row_counts;
     size_t row_count = 0;
