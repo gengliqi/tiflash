@@ -33,6 +33,7 @@
 #include <exception>
 #include <ext/scope_guard.h>
 #include <magic_enum.hpp>
+#include <queue>
 
 namespace DB
 {
@@ -132,6 +133,7 @@ Join::Join(
     bool is_test_,
     bool enable_new_hash_join_,
     size_t prefetch_threshold_,
+    size_t prefetch_length_,
     const std::vector<RuntimeFilterPtr> & runtime_filter_list_)
     : restore_config(restore_config_)
     , match_helper_name(match_helper_name_)
@@ -168,6 +170,7 @@ Join::Join(
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
     , enable_new_hash_join(enable_new_hash_join_)
     , prefetch_threshold(prefetch_threshold_)
+    , prefetch_length(prefetch_length_)
 {
     has_other_condition = non_equal_conditions.other_cond_expr != nullptr;
     bool is_semi = isSemiFamily(kind) || isLeftOuterSemiFamily(kind) || isNullAwareSemiFamily(kind);
@@ -389,7 +392,8 @@ std::shared_ptr<Join> Join::createRestoreJoin(size_t max_bytes_before_external_j
         probe_cache_column_threshold,
         is_test,
         enable_new_hash_join,
-        prefetch_threshold);
+        prefetch_threshold,
+        prefetch_length);
     /// init output names after finalize, the restored join don't need to finalize
     ret->output_columns_after_finalize = output_columns_after_finalize;
     ret->output_column_names_set_after_finalize = output_column_names_set_after_finalize;
@@ -1663,7 +1667,9 @@ void probeBlockImpl(
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table,
-    bool prefetch [[maybe_unused]])
+    bool enable_prefetch,
+    size_t prefetch_length,
+    ProbeWorkerData & worker_data)
 {
     if (rows == 0)
     {
@@ -1690,7 +1696,10 @@ void probeBlockImpl(
             null_map,                                                                                       \
             collators,                                                                                      \
             probe_process_info,                                                                             \
-            table);                                                                                         \
+            table,                                                                                          \
+            enable_prefetch,                                                                                \
+            prefetch_length,                                                                                \
+            worker_data);                                                                                   \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
@@ -1710,8 +1719,40 @@ void probeBlockImplType(
     ConstNullMapPtr null_map,
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
-    const JoinHashPointerTable & table)
+    const JoinHashPointerTable & table,
+    bool enable_prefetch,
+    size_t prefetch_length,
+    ProbeWorkerData & worker_data)
 {
+    if (enable_prefetch)
+    {
+#define CALL(has_null_map)                                         \
+    probeBlockImplTypeCasePrefetch<KeyGetter, Hash, has_null_map>( \
+        rows,                                                      \
+        key_columns,                                               \
+        key_sizes,                                                 \
+        added_columns,                                             \
+        num_columns_to_add,                                        \
+        null_map,                                                  \
+        collators,                                                 \
+        probe_process_info,                                        \
+        table,                                                     \
+        prefetch_length,                                           \
+        worker_data);
+
+        if (null_map)
+        {
+            CALL(true);
+        }
+        else
+        {
+            CALL(false);
+        }
+
+#undef CALL
+    }
+    else
+    {
 #define CALL(has_null_map)                                 \
     probeBlockImplTypeCase<KeyGetter, Hash, has_null_map>( \
         rows,                                              \
@@ -1722,18 +1763,20 @@ void probeBlockImplType(
         null_map,                                          \
         collators,                                         \
         probe_process_info,                                \
-        table);
+        table,                                             \
+        worker_data);
 
-    if (null_map)
-    {
-        CALL(true);
-    }
-    else
-    {
-        CALL(false);
-    }
+        if (null_map)
+        {
+            CALL(true);
+        }
+        else
+        {
+            CALL(false);
+        }
 
 #undef CALL
+    }
 }
 
 void convertToSimpleMutableColumn(MutableColumnPtr & column_ptr, SimpleMutableColumn & simple_column)
@@ -1804,6 +1847,254 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
         column->swapFixedAndContiguousData(*simple_column.pod_array);
 }
 
+#define PREFETCH_READ(ptr) __builtin_prefetch(ptr, 0 /* rw==read */, 3 /* locality */)
+
+template <typename KeyGetter, typename Hash, bool has_null_map>
+void NO_INLINE probeBlockImplTypeCasePrefetch(
+    size_t rows,
+    const ColumnRawPtrs & key_columns,
+    const Sizes & key_sizes,
+    MutableColumns & added_columns,
+    size_t num_columns_to_add,
+    ConstNullMapPtr null_map,
+    const TiDB::TiDBCollators & collators,
+    ProbeProcessInfo & probe_process_info,
+    const JoinHashPointerTable & table,
+    size_t prefetch_length,
+    ProbeWorkerData & worker_data)
+{
+    RUNTIME_ASSERT(probe_process_info.start_row <= rows);
+
+    size_t limit_count = rows;
+    if (limit_count < 1024)
+        limit_count = 1024;
+    else
+        limit_count = std::min(probe_process_info.max_block_size, limit_count);
+
+    worker_data.simple_added_columns.clear();
+    for (size_t i = 0; i < num_columns_to_add; ++i)
+    {
+        added_columns[i]->reserve(limit_count);
+        worker_data.simple_added_columns.emplace_back();
+        convertToSimpleMutableColumn(added_columns[i], worker_data.simple_added_columns.back());
+    }
+
+    KeyGetter key_getter(key_columns, key_sizes, collators);
+    worker_data.sort_key_containers.resize(key_columns.size());
+
+    //const size_t buffer_size = 256;
+    const size_t buffer_size = 32;
+    auto & row_ptrs_buffer = worker_data.row_ptrs_buffer;
+    row_ptrs_buffer.reserve(buffer_size);
+    auto & selective_offsets = *probe_process_info.selective_offsets;
+    selective_offsets.reserve(limit_count);
+
+    using KetGetterType
+        = std::invoke_result_t<decltype(&KeyGetter::getKeyHolder), KeyGetter, ssize_t, Arena *, std::vector<String> &>;
+    struct PrefetchState
+    {
+        int8_t stage = 0;
+        KetGetterType key_holder;
+        size_t index;
+        union
+        {
+            char * ptr;
+            std::atomic<char *> * pointer_ptr;
+        };
+    };
+    if (!worker_data.prefetch_states)
+    {
+        worker_data.prefetch_states = decltype(worker_data.prefetch_states)(
+            static_cast<void *>(new PrefetchState[prefetch_length]),
+            [](void * ptr) { delete reinterpret_cast<PrefetchState *>(ptr); });
+    }
+    auto * states = reinterpret_cast<PrefetchState *>(worker_data.prefetch_states.get());
+
+    size_t i = probe_process_info.start_row;
+    size_t & k = worker_data.prefetch_iter;
+    size_t current_offset = 0;
+    while (i < rows)
+    {
+        k = k == prefetch_length ? 0 : k;
+        auto * state = &states[k];
+        if (state->stage == 2)
+        {
+            char * ptr = state->ptr;
+            char * next_ptr = unalignedLoad<char *>(ptr + pointer_offset);
+            if (next_ptr)
+            {
+                state->ptr = next_ptr;
+                PREFETCH_READ(next_ptr + pointer_offset);
+            }
+
+            auto key = keyHolderGetKey(state->key_holder);
+            auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
+
+            if (key == key2)
+            {
+                size_t key_size = keyHolderGetKeySize(key2);
+                row_ptrs_buffer.push_back(ptr + key_offset + key_size);
+                selective_offsets.push_back(state->index);
+                ++current_offset;
+                if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                {
+                    for (size_t j = 0; j < num_columns_to_add; ++j)
+                    {
+                        //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                        deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                    }
+                    row_ptrs_buffer.clear();
+                }
+                if unlikely (current_offset >= limit_count)
+                {
+                    break;
+                }
+            }
+            if (next_ptr)
+            {
+                ++k;
+                continue;
+            }
+
+            state->stage = 0;
+        }
+        else if (state->stage == 1)
+        {
+            char * ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+            if (ptr)
+            {
+                state->ptr = ptr;
+                state->stage = 2;
+                PREFETCH_READ(state->ptr + pointer_offset);
+                ++k;
+                continue;
+            }
+
+            state->stage = 0;
+        }
+
+        assert(state->stage == 0);
+        if constexpr (has_null_map)
+        {
+            do
+            {
+                if (!(*null_map)[i])
+                    break;
+                ++i;
+            } while (i < rows);
+
+            if (i >= rows)
+                break;
+        }
+
+        state->key_holder = key_getter.getKeyHolder(i, &worker_data.pool, worker_data.sort_key_containers);
+        auto key = keyHolderGetKey(state->key_holder);
+        size_t hash_value = Hash()(key);
+        size_t bucket = hash_value & table.pointer_table_size_mask;
+        state->index = i;
+        state->pointer_ptr = table.pointer_table + bucket;
+        state->stage = 1;
+        PREFETCH_READ(state->pointer_ptr);
+        ++i;
+        ++k;
+    }
+
+    if (current_offset < limit_count)
+    {
+        std::queue<PrefetchState *> q;
+        for (size_t j = 0; j < prefetch_length; ++j)
+        {
+            if (states[j].stage != 0)
+                q.push(&states[j]);
+        }
+        while (!q.empty())
+        {
+            auto * state = q.front();
+            q.pop();
+            if (state->stage == 2)
+            {
+                char * ptr = state->ptr;
+                char * next_ptr = unalignedLoad<char *>(ptr + pointer_offset);
+                if (next_ptr)
+                {
+                    state->ptr = next_ptr;
+                    PREFETCH_READ(next_ptr + pointer_offset);
+                    q.push(state);
+                }
+                else
+                {
+                    state->stage = 0;
+                }
+
+                auto key = keyHolderGetKey(state->key_holder);
+                auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
+
+                if (key == key2)
+                {
+                    size_t key_size = keyHolderGetKeySize(key2);
+                    row_ptrs_buffer.push_back(ptr + key_offset + key_size);
+                    selective_offsets.push_back(state->index);
+                    ++current_offset;
+                    if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                    {
+                        for (size_t j = 0; j < num_columns_to_add; ++j)
+                        {
+                            //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                            deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                        }
+                        row_ptrs_buffer.clear();
+                    }
+                    if unlikely (current_offset >= limit_count)
+                        break;
+                }
+            }
+            else if (state->stage == 1)
+            {
+                char * ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+                if (ptr)
+                {
+                    state->ptr = ptr;
+                    state->stage = 2;
+                    PREFETCH_READ(state->ptr + pointer_offset);
+                    q.push(state);
+                }
+                else
+                {
+                    state->stage = 0;
+                }
+            }
+        }
+    }
+
+    if (!row_ptrs_buffer.empty())
+    {
+        for (size_t j = 0; j < num_columns_to_add; ++j)
+        {
+            //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+            deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+        }
+        row_ptrs_buffer.clear();
+    }
+
+    for (size_t j = 0; j < num_columns_to_add; ++j)
+        convertToMutableColumn(worker_data.simple_added_columns[j], added_columns[j]);
+
+    bool till_end = i >= rows;
+    if (till_end)
+    {
+        for (size_t j = 0; j < prefetch_length; ++j)
+        {
+            if (states[j].stage != 0)
+            {
+                till_end = false;
+                break;
+            }
+        }
+    }
+
+    probe_process_info.updateEndRow<false, true>(i, nullptr, till_end);
+}
+
 template <typename KeyGetter, typename Hash, bool has_null_map>
 void NO_INLINE probeBlockImplTypeCase(
     size_t rows,
@@ -1814,33 +2105,34 @@ void NO_INLINE probeBlockImplTypeCase(
     ConstNullMapPtr null_map,
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
-    const JoinHashPointerTable & table)
+    const JoinHashPointerTable & table,
+    ProbeWorkerData & worker_data)
 {
     RUNTIME_ASSERT(probe_process_info.start_row < rows);
 
-    size_t limit_count = rows - probe_process_info.start_row;
+    size_t limit_count = rows;
     if (limit_count < 1024)
         limit_count = 1024;
     else
         limit_count = std::min(probe_process_info.max_block_size, limit_count);
-    std::vector<SimpleMutableColumn> simple_added_columns;
+
+    worker_data.simple_added_columns.clear();
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
         added_columns[i]->reserve(limit_count);
-        simple_added_columns.emplace_back();
-        convertToSimpleMutableColumn(added_columns[i], simple_added_columns.back());
+        worker_data.simple_added_columns.emplace_back();
+        convertToSimpleMutableColumn(added_columns[i], worker_data.simple_added_columns.back());
     }
 
     KeyGetter key_getter(key_columns, key_sizes, collators);
-    std::vector<std::string> sort_key_containers;
-    sort_key_containers.resize(key_columns.size());
-    Arena pool;
+    worker_data.sort_key_containers.resize(key_columns.size());
 
     size_t i;
     char * current_head = nullptr;
     //const size_t buffer_size = 256;
     const size_t buffer_size = 32;
-    RowPtrs row_ptrs_buffer;
+    auto & row_ptrs_buffer = worker_data.row_ptrs_buffer;
+    row_ptrs_buffer.clear();
     row_ptrs_buffer.reserve(buffer_size);
     size_t current_offset = 0;
     auto & offsets_to_replicate = *probe_process_info.offsets_to_replicate;
@@ -1852,7 +2144,7 @@ void NO_INLINE probeBlockImplTypeCase(
             offsets_to_replicate[i] = current_offset;
             continue;
         }
-        auto key_holder = key_getter.getKeyHolder(i, &pool, sort_key_containers);
+        auto key_holder = key_getter.getKeyHolder(i, &worker_data.pool, worker_data.sort_key_containers);
         SCOPE_EXIT(keyHolderDiscardKey(key_holder));
         auto key = keyHolderGetKey(key_holder);
         char * head;
@@ -1879,7 +2171,7 @@ void NO_INLINE probeBlockImplTypeCase(
                     for (size_t j = 0; j < num_columns_to_add; ++j)
                     {
                         //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                        deserializeAndInsertFromPos(simple_added_columns[j], row_ptrs_buffer);
+                        deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
                     }
                     row_ptrs_buffer.clear();
                 }
@@ -1906,19 +2198,21 @@ void NO_INLINE probeBlockImplTypeCase(
         for (size_t j = 0; j < num_columns_to_add; ++j)
         {
             //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-            deserializeAndInsertFromPos(simple_added_columns[j], row_ptrs_buffer);
+            deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
         }
+        row_ptrs_buffer.clear();
     }
 
     for (size_t j = 0; j < num_columns_to_add; ++j)
-        convertToMutableColumn(simple_added_columns[j], added_columns[j]);
+        convertToMutableColumn(worker_data.simple_added_columns[j], added_columns[j]);
 
     probe_process_info.updateEndRow<false>(i, current_head);
 }
 
 Block Join::doJoinBlockHashNew(
     ProbeProcessInfo & probe_process_info,
-    const JoinBuildInfo & join_build_info [[maybe_unused]]) const
+    const JoinBuildInfo & join_build_info [[maybe_unused]],
+    size_t stream_index) const
 {
     assert(probe_process_info.prepare_for_probe_done);
     probe_process_info.updateStartRow<false>();
@@ -2000,7 +2294,9 @@ Block Join::doJoinBlockHashNew(
         collators,
         probe_process_info,
         table,
-        enable_prefetch);
+        enable_prefetch,
+        prefetch_length,
+        *probe_workers_data[stream_index]);
 
     /*JoinPartition::probeBlock(
         partitions,
@@ -2039,9 +2335,9 @@ Block Join::doJoinBlockHashNew(
     if (likely(rows != 0))
     {
         /// If ALL ... JOIN - we replicate all the columns except the new ones.
-        if (offsets_to_replicate)
+        if (!enable_prefetch)
         {
-            if (!enable_prefetch)
+            if (offsets_to_replicate)
             {
                 size_t start = probe_process_info.start_row;
                 size_t end = probe_process_info.new_hash_current_head == nullptr ? probe_process_info.end_row
@@ -2059,14 +2355,16 @@ Block Join::doJoinBlockHashNew(
                         offsets_to_replicate->begin() + end);
                 }
             }
-            else
+        }
+        else
+        {
+            for (size_t i = 0; i < existing_columns; ++i)
             {
-                for (size_t i = 0; i < existing_columns; ++i)
-                {
-                    auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
-                    mutable_column->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), *offsets_to_replicate);
-                    block.safeGetByPosition(i).column = std::move(mutable_column);
-                }
+                auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
+                mutable_column->insertDisjunctFrom(
+                    *block.safeGetByPosition(i).column.get(),
+                    *probe_process_info.selective_offsets);
+                block.safeGetByPosition(i).column = std::move(mutable_column);
             }
         }
     }
@@ -2116,7 +2414,7 @@ Block Join::removeUselessColumn(Block & block) const
     return projected_block;
 }
 
-Block Join::joinBlockHash(ProbeProcessInfo & probe_process_info) const
+Block Join::joinBlockHash(ProbeProcessInfo & probe_process_info, size_t stream_index) const
 {
     std::vector<Block> result_blocks;
     size_t result_rows = 0;
@@ -2139,7 +2437,7 @@ Block Join::joinBlockHash(ProbeProcessInfo & probe_process_info) const
     {
         Block block;
         if (enable_new_hash_join)
-            block = doJoinBlockHashNew(probe_process_info, join_build_info);
+            block = doJoinBlockHashNew(probe_process_info, join_build_info, stream_index);
         else
             block = doJoinBlockHash(probe_process_info, join_build_info);
         assert(block);
@@ -2716,13 +3014,17 @@ void Join::workAfterBuildFinish(size_t stream_index)
 
         Stopwatch watch;
         table.init(all_row_count);
+
+        enable_prefetch = table.pointer_table_size >= prefetch_threshold;
+
         LOG_INFO(
             log,
-            "allocate pointer table cost {}ms, rows {}, pointer table size {}, added column num {}",
+            "allocate pointer table cost {}ms, rows {}, pointer table size {}, added column num {}, enable prefetch {}",
             watch.elapsedMilliseconds(),
             all_row_count,
             table.pointer_table_size,
-            build_workers_data[stream_index]->column_num);
+            build_workers_data[stream_index]->column_num,
+            enable_prefetch);
     }
 
     if (isNullAwareSemiFamily(kind))
@@ -2977,7 +3279,7 @@ Block Join::joinBlock(ProbeProcessInfo & probe_process_info, size_t stream_index
     else if (isSemiFamily(kind) || isLeftOuterSemiFamily(kind))
         block = joinBlockSemi(probe_process_info);
     else
-        block = joinBlockHash(probe_process_info);
+        block = joinBlockHash(probe_process_info, stream_index);
 
     /// for (cartesian)antiLeftSemi join, the meaning of "match-helper" is `non-matched` instead of `matched`.
     if (kind == Cross_LeftOuterAnti)

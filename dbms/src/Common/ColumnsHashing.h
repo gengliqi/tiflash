@@ -128,7 +128,7 @@ struct HashMethodString
         {
             if (likely(collator))
                 key = collator->sortKey(key.data, key.size, sort_key_containers[0]);
-            return ArenaKeyHolder{key, *pool};
+            return ArenaKeyHolder{key, pool};
         }
         else
         {
@@ -163,7 +163,7 @@ struct HashMethodStringBin
         auto last_offset = row == 0 ? 0 : offsets[row - 1];
         StringRef key(chars + last_offset, offsets[row] - last_offset - 1);
         key = BinCollatorSortKey<padding>(key.data, key.size);
-        return ArenaKeyHolder{key, *pool};
+        return ArenaKeyHolder{key, pool};
     }
 
 protected:
@@ -358,7 +358,7 @@ struct HashMethodFastPathTwoKeysSerialized
         StringRef key2;
         size_t alloc_size = key_1_desc.getKey(row, key1) + key_2_desc.getKey(row, key2);
         char * start = pool->alloc(alloc_size);
-        SerializedKeyHolder ret{{start, alloc_size}, *pool};
+        SerializedKeyHolder ret{{start, alloc_size}, pool};
         Key1Desc::serializeKey(start, key1);
         Key2Desc::serializeKey(start, key2);
         return ret;
@@ -412,7 +412,7 @@ struct HashMethodFixedString
 
         if constexpr (place_string_to_arena)
         {
-            return ArenaKeyHolder{key, *pool};
+            return ArenaKeyHolder{key, pool};
         }
         else
         {
@@ -613,7 +613,7 @@ struct HashMethodSerialized
     {
         return SerializedKeyHolder{
             serializeKeysToPoolContiguous(row, keys_size, key_columns, collators, sort_key_containers, *pool),
-            *pool};
+            pool};
     }
 
 protected:

@@ -197,6 +197,7 @@ PhysicalPlanNodePtr PhysicalJoin::build(
         context.isTest(),
         settings.enable_new_hash_join,
         settings.new_hash_join_prefetch_threshold,
+        settings.new_hash_join_prefetch_length,
         runtime_filter_list);
 
     recordJoinExecuteInfo(dag_context, executor_id, build_plan->execId(), join_ptr);

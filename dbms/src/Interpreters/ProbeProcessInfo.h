@@ -116,6 +116,8 @@ struct ProbeProcessInfo
     /// for hash probe
     std::unique_ptr<HashJoinProbeProcessData> hash_join_data;
 
+    std::unique_ptr<IColumn::Offsets> selective_offsets = nullptr;
+
     /// for cross probe
     std::unique_ptr<CrossJoinProbeProcessData> cross_join_data;
 
@@ -129,7 +131,8 @@ struct ProbeProcessInfo
         , start_row(0)
         , end_row(0)
         , all_rows_joined_finish(true)
-        , cache_columns_threshold(cache_columns_threshold_){};
+        , cache_columns_threshold(cache_columns_threshold_)
+    {}
 
     void resetBlock(Block && block_, size_t partition_index_ = 0);
     template <bool is_shallow_cross_probe_mode>
@@ -149,10 +152,12 @@ struct ProbeProcessInfo
             filter->resize(block.rows());
         if (offsets_to_replicate != nullptr)
             offsets_to_replicate->resize(block.rows());
+        if (selective_offsets != nullptr)
+            selective_offsets->clear();
     }
 
-    template <bool is_shallow_cross_probe_mode>
-    void updateEndRow(size_t next_row_to_probe, char * current_head = nullptr)
+    template <bool is_shallow_cross_probe_mode, bool check_till_end = false>
+    void updateEndRow(size_t next_row_to_probe, char * current_head = nullptr, bool till_end = false)
     {
         end_row = next_row_to_probe;
         new_hash_current_head = current_head;
@@ -168,7 +173,14 @@ struct ProbeProcessInfo
         }
         else
         {
-            all_rows_joined_finish = end_row == block.rows();
+            if constexpr (check_till_end)
+            {
+                all_rows_joined_finish = till_end;
+            }
+            else
+            {
+                all_rows_joined_finish = end_row == block.rows();
+            }
         }
     }
 

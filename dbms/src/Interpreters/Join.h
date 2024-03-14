@@ -175,10 +175,20 @@ public:
     size_t column_num = 0;
 };
 
-struct alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
+class alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
 {
+public:
     size_t probe_time = 0;
     size_t row_count = 0;
+
+    Arena pool;
+    std::vector<SimpleMutableColumn> simple_added_columns;
+    std::vector<std::string> sort_key_containers;
+
+    size_t prefetch_iter = 0;
+    std::unique_ptr<void, std::function<void(void *)>> prefetch_states;
+
+    RowPtrs row_ptrs_buffer;
 };
 
 class JoinHashPointerTable
@@ -290,6 +300,7 @@ public:
         bool is_test,
         bool enable_new_hash_join_,
         size_t prefetch_threshold_,
+        size_t prefetch_length_,
         const std::vector<RuntimeFilterPtr> & runtime_filter_list_ = dummy_runtime_filter_list);
 
     RestoreConfig restore_config;
@@ -559,8 +570,9 @@ private:
     std::vector<MarkedSpillData> build_side_marked_spilled_data;
     std::vector<MarkedSpillData> probe_side_marked_spilled_data;
 
-    bool enable_new_hash_join;
-    size_t prefetch_threshold;
+    const bool enable_new_hash_join;
+    const size_t prefetch_threshold;
+    const size_t prefetch_length;
     bool enable_prefetch = false;
 
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
@@ -593,10 +605,13 @@ private:
       */
     void insertFromBlockInternal(Block * stored_block, size_t stream_index);
 
-    Block joinBlockHash(ProbeProcessInfo & probe_process_info) const;
+    Block joinBlockHash(ProbeProcessInfo & probe_process_info, size_t stream_index) const;
 
     Block doJoinBlockHash(ProbeProcessInfo & probe_process_info, const JoinBuildInfo & join_build_info) const;
-    Block doJoinBlockHashNew(ProbeProcessInfo & probe_process_info, const JoinBuildInfo & join_build_info) const;
+    Block doJoinBlockHashNew(
+        ProbeProcessInfo & probe_process_info,
+        const JoinBuildInfo & join_build_info,
+        size_t stream_index) const;
 
     Block joinBlockNullAwareSemi(ProbeProcessInfo & probe_process_info) const;
 

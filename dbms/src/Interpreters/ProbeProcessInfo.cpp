@@ -35,7 +35,10 @@ void ProbeProcessInfo::resetBlock(Block && block_, size_t partition_index_)
     null_map = nullptr;
     null_map_holder = nullptr;
     filter.reset();
-    offsets_to_replicate.reset();
+    if (offsets_to_replicate)
+        offsets_to_replicate->clear();
+    if (selective_offsets)
+        selective_offsets->clear();
     if (hash_join_data)
         hash_join_data->reset();
     if (cross_join_data)
@@ -87,8 +90,16 @@ void ProbeProcessInfo::prepareForHashProbe(
         }
     }
 
-    if (!isSemiFamily(kind) && !isLeftOuterSemiFamily(kind) && strictness == ASTTableJoin::Strictness::All)
+    if (!offsets_to_replicate && !isSemiFamily(kind) && !isLeftOuterSemiFamily(kind)
+        && strictness == ASTTableJoin::Strictness::All)
         offsets_to_replicate = std::make_unique<IColumn::Offsets>(block.rows());
+
+    if (!selective_offsets && !isSemiFamily(kind) && !isLeftOuterSemiFamily(kind)
+        && strictness == ASTTableJoin::Strictness::All)
+    {
+        selective_offsets = std::make_unique<IColumn::Offsets>();
+        selective_offsets->reserve(block.rows());
+    }
 
     hash_join_data->hash_data = std::make_unique<WeakHash32>(0);
     if (need_compute_hash)
