@@ -20,10 +20,11 @@ namespace DB
 {
 std::unique_ptr<GRPCCompletionQueuePool> GRPCCompletionQueuePool::global_instance;
 
-GRPCCompletionQueuePool::GRPCCompletionQueuePool(size_t count)
-    : queues(count)
+GRPCCompletionQueuePool::GRPCCompletionQueuePool(size_t queue_count, size_t thread_per_queue)
+    : queues(queue_count)
 {
-    for (size_t i = 0; i < count; ++i)
+    for (size_t i = 0; i < queue_count; ++i)
+        for (size_t j = 0; j < thread_per_queue; ++j)
         workers.emplace_back(ThreadFactory::newThread(false, "GRPCComp", &GRPCCompletionQueuePool::thread, this, i));
 }
 

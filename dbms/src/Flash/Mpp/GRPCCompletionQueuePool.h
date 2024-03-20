@@ -26,7 +26,7 @@ class GRPCCompletionQueuePool
 public:
     static std::unique_ptr<GRPCCompletionQueuePool> global_instance;
 
-    explicit GRPCCompletionQueuePool(size_t count);
+    GRPCCompletionQueuePool(size_t queue_count, size_t thread_per_queue = 1);
     ~GRPCCompletionQueuePool();
 
     ::grpc::CompletionQueue & pickQueue();

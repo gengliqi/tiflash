@@ -1782,10 +1782,10 @@ int Server::main(const std::vector<std::string> & /*args*/)
 
         if (settings.enable_async_grpc_client)
         {
-            auto size = settings.grpc_completion_queue_pool_size;
+            auto size = settings.grpc_completion_queue_size;
             if (size == 0)
                 size = std::thread::hardware_concurrency();
-            GRPCCompletionQueuePool::global_instance = std::make_unique<GRPCCompletionQueuePool>(size);
+            GRPCCompletionQueuePool::global_instance = std::make_unique<GRPCCompletionQueuePool>(size, settings.grpc_thread_per_queue_size);
         }
 
         /// startup grpc server to serve raft and/or flash services.
