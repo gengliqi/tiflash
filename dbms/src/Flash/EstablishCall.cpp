@@ -252,18 +252,18 @@ void EstablishCallData::writeDone(String msg, const grpc::Status & status)
             time,
             waiting_task_time_ms);
 
-        RUNTIME_ASSERT(
+        /*RUNTIME_ASSERT(
             !async_tunnel_sender->isConsumerFinished(),
             async_tunnel_sender->getLogger(),
             "tunnel {} consumer finished in advance",
-            async_tunnel_sender->getTunnelId());
+            async_tunnel_sender->getTunnelId());*/
 
         if (!msg.empty())
         {
             msg = fmt::format("{}: {}", async_tunnel_sender->getTunnelId(), msg);
         }
         // Trigger mpp tunnel finish work.
-        async_tunnel_sender->consumerFinish(msg);
+        async_tunnel_sender->oneConsumerFinish(msg);
     }
     else if (!connection_id.empty())
     {

@@ -320,6 +320,7 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
     uint64_t fine_grained_shuffle_stream_count_,
     const Settings & settings)
     : exc_log(Logger::get(req_id, executor_id))
+    , connection_num_for_remote_tunnel(settings.connection_num_for_remote_tunnel)
     , rpc_context(std::move(rpc_context_))
     , source_num(source_num_)
     , enable_fine_grained_shuffle_flag(enableFineGrainedShuffle(fine_grained_shuffle_stream_count_))
@@ -335,7 +336,7 @@ ExchangeReceiverBase<RPCContext>::ExchangeReceiverBase(
           enable_fine_grained_shuffle_flag,
           output_stream_count)
     , live_local_connections(0)
-    , live_connections(source_num)
+    , live_connections(0)
     , state(ExchangeReceiverState::NORMAL)
     , collected(false)
     , local_tunnel_version(settings.local_tunnel_version)
@@ -386,9 +387,6 @@ ExchangeReceiverBase<RPCContext>::~ExchangeReceiverBase()
 template <typename RPCContext>
 void ExchangeReceiverBase<RPCContext>::handleConnectionAfterException()
 {
-    std::lock_guard lock(mu);
-    live_connections -= connection_uncreated_num;
-
     // some cv may have been blocked, wake them up and recheck the condition.
     cv.notify_all();
 }
@@ -471,6 +469,10 @@ void ExchangeReceiverBase<RPCContext>::setUpConnection()
         if (rpc_context->supportAsync(req))
         {
             async_requests.push_back(std::move(req));
+            for (size_t i = 1; i < connection_num_for_remote_tunnel; ++i)
+            {
+                async_requests.push_back(std::move(rpc_context->makeRequest(index)));
+            }
             has_remote_conn = true;
         }
         else if (req.is_local)
@@ -508,7 +510,7 @@ void ExchangeReceiverBase<RPCContext>::setUpAsyncConnection(std::vector<Request>
             });
 
             ++thread_count;
-            connection_uncreated_num -= async_conn_num;
+            live_connections += async_conn_num;
         }
     }
     else
@@ -530,7 +532,7 @@ void ExchangeReceiverBase<RPCContext>::createAsyncRequestHandler(Request && requ
         [this](bool meet_error, const String & local_err_msg, const LoggerPtr & log) {
             this->connectionDone(meet_error, local_err_msg, log);
         }));
-    --connection_uncreated_num;
+    ++live_connections;
 }
 
 template <typename RPCContext>
@@ -560,6 +562,7 @@ void ExchangeReceiverBase<RPCContext>::setUpLocalConnections(std::vector<Request
             rpc_context->establishMPPConnectionLocalV2(req, req.source_index, local_request_handler, has_remote_conn);
             --connection_uncreated_num;
         }
+        ++live_connections;
     }
 }
 

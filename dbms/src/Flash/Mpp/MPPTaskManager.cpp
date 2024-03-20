@@ -176,7 +176,7 @@ std::pair<MPPTunnelPtr, String> MPPTaskManager::findAsyncTunnel(
                     context.getSettingsRef().auto_spill_check_min_interval_ms.get());
             if (gather_task_set == nullptr)
                 gather_task_set = query->addMPPGatherTaskSet(id.gather_id);
-            auto & alarm = gather_task_set->alarms[sender_task_id][receiver_task_id];
+            auto & alarm = gather_task_set->alarms[sender_task_id][std::make_pair(receiver_task_id, static_cast<void *>(call_data))];
             call_data->setToWaitingTunnelState();
             if likely (cq != nullptr)
             {
@@ -193,7 +193,7 @@ std::pair<MPPTunnelPtr, String> MPPTaskManager::findAsyncTunnel(
                 auto task_alarm_map_it = gather_task_set->alarms.find(sender_task_id);
                 if (task_alarm_map_it != gather_task_set->alarms.end())
                 {
-                    task_alarm_map_it->second.erase(receiver_task_id);
+                    task_alarm_map_it->second.erase(std::make_pair(receiver_task_id, static_cast<void *>(call_data)));
                     if (task_alarm_map_it->second.empty())
                         gather_task_set->alarms.erase(task_alarm_map_it);
                 }

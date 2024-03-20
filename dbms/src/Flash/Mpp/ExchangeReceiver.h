@@ -199,6 +199,7 @@ private:
 private:
     LoggerPtr exc_log;
 
+    const size_t connection_num_for_remote_tunnel;
     std::shared_ptr<RPCContext> rpc_context;
 
     const tipb::ExchangeReceiver pb_exchange_receiver;

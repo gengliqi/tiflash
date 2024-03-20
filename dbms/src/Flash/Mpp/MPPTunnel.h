@@ -254,8 +254,32 @@ public:
 
     void subDataSizeMetric(size_t size) { ::DB::MPPTunnelMetric::subDataSizeMetric(*data_size_in_queue, size); }
 
+    void addOneConsumer()
+    {
+        std::unique_lock lock(mu);
+        ++active_consumer;
+    }
+
+    void oneConsumerFinish(const String & err_msg)
+    {
+        std::unique_lock lock(mu);
+        if (active_consumer == 0)
+            return;
+        if (!err_msg.empty())
+        {
+            active_consumer = 0;
+            consumerFinish(err_msg);
+            return;
+        }
+        --active_consumer;
+        if (active_consumer == 0)
+            consumerFinish(err_msg);
+    }
+
 private:
     GRPCSendQueue<TrackedMppDataPacketPtr> queue;
+    std::mutex mu;
+    int active_consumer = 0;
 };
 
 // local_only means ExhangeReceiver receives data only from local

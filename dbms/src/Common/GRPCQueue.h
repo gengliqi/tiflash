@@ -54,7 +54,11 @@ public:
         , send_queue(std::forward<Args>(args)...)
     {}
 
-    ~GRPCSendQueue() { RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr"); }
+    ~GRPCSendQueue()
+    {
+        //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
+        RUNTIME_ASSERT(tags.empty(), log, "tags are not empty");
+    }
 
     /// For test usage only.
     void setKickFuncForTest(GRPCKickFunc && func) { test_kick_func = std::move(func); }
@@ -104,8 +108,9 @@ public:
             res = send_queue.tryPop(data);
             if (res == MPMCQueueResult::EMPTY)
             {
-                RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
-                tag = new_tag;
+                //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
+                //tag = new_tag;
+                tags.push(new_tag);
             }
         }
         return res;
@@ -118,7 +123,7 @@ public:
     {
         auto ret = send_queue.cancelWith(reason);
         if (ret)
-            kickOneTag(false);
+            kickAllTagsWithFailure();
 
         return ret;
     }
@@ -132,7 +137,7 @@ public:
     {
         auto ret = send_queue.finish();
         if (ret)
-            kickOneTag(false);
+            kickAllTagsWithFailure();
 
         return ret;
     }
@@ -147,14 +152,30 @@ private:
         GRPCKickTag * t;
         {
             std::lock_guard lock(mu);
-            if (tag == nullptr)
+            /*if (tag == nullptr)
                 return;
             t = tag;
-            tag = nullptr;
+            tag = nullptr;*/
+            if (tags.empty())
+                return;
+            t = tags.front();
+            tags.pop();
         }
 
         t->setStatus(status);
         t->kick(test_kick_func);
+    }
+
+    void kickAllTagsWithFailure()
+    {
+        std::lock_guard lock(mu);
+        while (!tags.empty())
+        {
+            GRPCKickTag * t = tags.front();
+            tags.pop();
+            t->setStatus(false);
+            t->kick(test_kick_func);
+        }
     }
 
     const LoggerPtr log;
@@ -176,7 +197,9 @@ private:
     std::mutex mu;
 
     GRPCKickFunc test_kick_func;
-    GRPCKickTag * tag = nullptr;
+    std::queue<GRPCKickTag *> tags;
+
+    //GRPCKickTag * tag = nullptr;
 };
 
 /// A multi-producer-multi-consumer queue dedicated to async grpc streaming receive work.
