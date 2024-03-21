@@ -40,7 +40,7 @@ struct LocalRequestHandler
         return msg_queue->pushPacket<is_force>(source_index, req_info, tracked_packet, ReceiverMode::Local);
     }
 
-    bool isWritable() const { return msg_queue->isWritable(); }
+    bool isWritable() const { return msg_queue->isWritable(true); }
 
     void writeDone(bool meet_error, const String & local_err_msg) const
     {

@@ -282,8 +282,6 @@ private:
     int active_consumer = 0;
 };
 
-// local_only means ExhangeReceiver receives data only from local
-template <bool local_only>
 class LocalTunnelSenderV2 : public TunnelSender
 {
 public:
@@ -326,13 +324,7 @@ public:
 
     bool isWritable() const override
     {
-        if constexpr (local_only)
-            return local_request_handler.isWritable();
-        else
-        {
-            std::lock_guard lock(mu);
-            return local_request_handler.isWritable();
-        }
+        return local_request_handler.isWritable();
     }
 
 private:
@@ -344,18 +336,7 @@ private:
         if (unlikely(checkPacketErr(data)))
             return false;
 
-        // When ExchangeReceiver receives data from local and remote tiflash, number of local tunnel threads
-        // is very large and causes the time of transfering data by grpc threads becomes longer, because
-        // grpc thread is hard to get chance to push data into MPMCQueue in ExchangeReceiver.
-        // Adding a lock ensures that there is only one other thread competing with async reactor,
-        // so the probability of async reactor getting the lock is 1/2.
-        if constexpr (local_only)
-            return local_request_handler.write<is_force>(source_index, data);
-        else
-        {
-            std::lock_guard lock(mu);
-            return local_request_handler.write<is_force>(source_index, data);
-        }
+        return local_request_handler.write<is_force>(source_index, data);
     }
 
     bool checkPacketErr(TrackedMppDataPacketPtr & packet)
@@ -391,7 +372,6 @@ private:
     size_t source_index;
     LocalRequestHandler local_request_handler;
     std::atomic_bool is_done;
-    mutable std::mutex mu;
 };
 
 // TODO remove it in the future
@@ -438,8 +418,7 @@ using TunnelSenderPtr = std::shared_ptr<TunnelSender>;
 using SyncTunnelSenderPtr = std::shared_ptr<SyncTunnelSender>;
 using AsyncTunnelSenderPtr = std::shared_ptr<AsyncTunnelSender>;
 using LocalTunnelSenderV1Ptr = std::shared_ptr<LocalTunnelSenderV1>;
-using LocalTunnelSenderV2Ptr = std::shared_ptr<LocalTunnelSenderV2<false>>;
-using LocalTunnelSenderLocalOnlyV2Ptr = std::shared_ptr<LocalTunnelSenderV2<true>>;
+using LocalTunnelSenderV2Ptr = std::shared_ptr<LocalTunnelSenderV2>;
 
 /**
  * MPPTunnel represents the sender of an exchange connection.
@@ -539,7 +518,6 @@ public:
     LocalTunnelSenderV1Ptr getLocalTunnelSenderV1() { return local_tunnel_sender_v1; }
 
     LocalTunnelSenderV2Ptr getLocalTunnelSenderV2() { return local_tunnel_v2; }
-    LocalTunnelSenderLocalOnlyV2Ptr getLocalTunnelLocalOnlyV2() { return local_tunnel_local_only_v2; }
 
 private:
     friend class tests::TestMPPTunnel;
@@ -592,7 +570,6 @@ private:
     AsyncTunnelSenderPtr async_tunnel_sender;
     LocalTunnelSenderV1Ptr local_tunnel_sender_v1;
     LocalTunnelSenderV2Ptr local_tunnel_v2;
-    LocalTunnelSenderLocalOnlyV2Ptr local_tunnel_local_only_v2;
 
     std::atomic<Int64> data_size_in_queue;
 };

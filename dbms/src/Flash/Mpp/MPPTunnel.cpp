@@ -241,7 +241,7 @@ void MPPTunnel::connectSync(PacketWriter * writer)
     LOG_DEBUG(log, "Sync tunnel connected");
 }
 
-void MPPTunnel::connectLocalV2(size_t source_index, LocalRequestHandler & local_request_handler, bool has_remote_conn)
+void MPPTunnel::connectLocalV2(size_t source_index, LocalRequestHandler & local_request_handler, bool has_remote_conn [[maybe_unused]])
 {
     {
         std::unique_lock lk(mu);
@@ -253,26 +253,13 @@ void MPPTunnel::connectLocalV2(size_t source_index, LocalRequestHandler & local_
         RUNTIME_CHECK_MSG(mode == TunnelSenderMode::LOCAL, "{} should be a local tunnel", tunnel_id);
 
         LOG_TRACE(log, "ready to connect local tunnel version 2");
-        if (has_remote_conn)
-        {
-            local_tunnel_v2 = std::make_shared<LocalTunnelSenderV2<false>>(
-                source_index,
-                local_request_handler,
-                log,
-                mem_tracker,
-                tunnel_id);
-            tunnel_sender = local_tunnel_v2;
-        }
-        else
-        {
-            local_tunnel_local_only_v2 = std::make_shared<LocalTunnelSenderV2<true>>(
-                source_index,
-                local_request_handler,
-                log,
-                mem_tracker,
-                tunnel_id);
-            tunnel_sender = local_tunnel_local_only_v2;
-        }
+        local_tunnel_v2 = std::make_shared<LocalTunnelSenderV2>(
+            source_index,
+            local_request_handler,
+            log,
+            mem_tracker,
+            tunnel_id);
+        tunnel_sender = local_tunnel_v2;
 
         status = TunnelStatus::Connected;
         cv_for_status_changed.notify_all();

@@ -97,7 +97,10 @@ public:
             channel->cancel();
     }
 
-    bool isWritable() const { return grpc_recv_queue.isWritable(); }
+    bool isWritable(bool is_local) const
+    {
+        return grpc_recv_queue.isWritable(is_local);
+    }
 
 #ifndef DBMS_PUBLIC_GTEST
 private:

@@ -222,6 +222,7 @@ public:
     explicit GRPCRecvQueue(const LoggerPtr & log_, Args &&... args)
         : log(log_)
         , recv_queue(std::forward<Args>(args)...)
+        , local_queue(std::forward<Args>(args)...)
     {}
 
     ~GRPCRecvQueue() { RUNTIME_ASSERT(data_tags.empty(), log, "data_tags is not empty"); }
@@ -234,8 +235,11 @@ public:
     {
         auto ret = recv_queue.pop(data);
         if (ret == MPMCQueueResult::OK)
+        {
             kickOneTagWithSuccess();
-        return ret;
+            return ret;
+        }
+        return local_queue.pop(data);
     }
 
     /// Non-blocking pop the data from the queue.
@@ -243,8 +247,11 @@ public:
     {
         auto ret = recv_queue.tryPop(data);
         if (ret == MPMCQueueResult::OK)
+        {
             kickOneTagWithSuccess();
-        return ret;
+            return ret;
+        }
+        return local_queue.tryPop(data);
     }
 
     /// Non-blocking dequeue the queue.
@@ -252,8 +259,11 @@ public:
     {
         auto ret = recv_queue.tryDequeue();
         if (ret == MPMCQueueResult::OK)
+        {
             kickOneTagWithSuccess();
-        return ret;
+            return ret;
+        }
+        return local_queue.tryDequeue();
     }
 
     /// Non-blocking push the data from the remote node in grpc thread.
@@ -286,10 +296,10 @@ public:
     }
 
     /// Blocking push the data from the local node.
-    MPMCQueueResult push(T && data) { return recv_queue.push(std::move(data)); }
+    MPMCQueueResult push(T && data) { return local_queue.push(std::move(data)); }
 
     /// Non-blocking force to push the data from the local node.
-    MPMCQueueResult forcePush(T && data) { return recv_queue.forcePush(std::move(data)); }
+    MPMCQueueResult forcePush(T && data) { return local_queue.forcePush(std::move(data)); }
 
     MPMCQueueStatus getStatus() const { return recv_queue.getStatus(); }
 
@@ -302,7 +312,7 @@ public:
         auto ret = recv_queue.cancelWith(reason);
         if (ret)
             kickAllTagsWithFailure();
-
+        local_queue.cancelWith(reason);
         return ret;
     }
 
@@ -315,10 +325,16 @@ public:
         auto ret = recv_queue.finish();
         if (ret)
             kickAllTagsWithFailure();
+        local_queue.finish();
         return ret;
     }
 
-    bool isWritable() const { return recv_queue.isWritable(); }
+    bool isWritable(bool is_local) const
+    {
+        if (is_local)
+            return local_queue.isWritable();
+        return recv_queue.isWritable();
+    }
 
 private:
     friend class tests::TestGRPCRecvQueue;
@@ -356,6 +372,7 @@ private:
     const LoggerPtr log;
 
     LooseBoundedMPMCQueue<T> recv_queue;
+    LooseBoundedMPMCQueue<T> local_queue;
 
     /// The mutex is used to protect data_tags and avoid LOST NOTIFICATION like the one in GRPCSendQueue.
     ///
@@ -371,6 +388,7 @@ private:
 
     GRPCKickFunc test_kick_func;
     std::deque<std::pair<T, GRPCKickTag *>> data_tags;
+    std::atomic<bool> enable_small_size = true;
 };
 
 } // namespace DB
