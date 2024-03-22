@@ -307,6 +307,7 @@ void EstablishCallData::trySendOneMsg()
         packet->switchMemTracker(nullptr);
         state = WAIT_WRITE;
         write(packet->packet);
+        LOG_DEBUG(getLogger(), "ExchangeLog: sender write data");
         return;
     case MPMCQueueResult::FINISHED:
         writeDone("", grpc::Status::OK);
@@ -317,6 +318,7 @@ void EstablishCallData::trySendOneMsg()
         return;
     case MPMCQueueResult::EMPTY:
         // No new message.
+        LOG_DEBUG(getLogger(), "ExchangeLog: sender queue is empty");
         return;
     default:
         RUNTIME_ASSERT(false, getLogger(), "Result {} is invalid", magic_enum::enum_name(res));

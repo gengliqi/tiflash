@@ -67,6 +67,7 @@ public:
     MPMCQueueResult push(T && data)
     {
         auto ret = send_queue.push(std::move(data));
+        LOG_DEBUG(log, "ExchangeLog: sender push queue");
         if (ret == MPMCQueueResult::OK)
             kickOneTag(true);
 
@@ -77,6 +78,7 @@ public:
     MPMCQueueResult forcePush(T && data)
     {
         auto ret = send_queue.forcePush(std::move(data));
+        LOG_DEBUG(log, "ExchangeLog: sender force push queue");
         if (ret == MPMCQueueResult::OK)
             kickOneTag(true);
 
@@ -138,7 +140,7 @@ public:
         auto ret = send_queue.finish();
         if (ret)
             kickAllTagsWithFailure();
-
+        LOG_DEBUG(log, "ExchangeLog: sender queue finish");
         return ret;
     }
 
@@ -237,9 +239,13 @@ public:
         if (ret == MPMCQueueResult::OK)
         {
             kickOneTagWithSuccess();
+            LOG_DEBUG(log, "ExchangeLog: receiver pop queue from grpc");
             return ret;
         }
-        return local_queue.pop(data);
+        ret = local_queue.pop(data);
+        if (ret == MPMCQueueResult::OK)
+            LOG_DEBUG(log, "ExchangeLog: receiver pop queue from local");
+        return ret;
     }
 
     /// Non-blocking pop the data from the queue.
@@ -249,9 +255,13 @@ public:
         if (ret == MPMCQueueResult::OK)
         {
             kickOneTagWithSuccess();
+            LOG_DEBUG(log, "ExchangeLog: receiver try pop queue from grpc");
             return ret;
         }
-        return local_queue.tryPop(data);
+        ret = local_queue.tryPop(data);
+        if (ret == MPMCQueueResult::OK)
+            LOG_DEBUG(log, "ExchangeLog: receiver try pop queue from local");
+        return ret;
     }
 
     /// Non-blocking dequeue the queue.
@@ -326,6 +336,8 @@ public:
         if (ret)
             kickAllTagsWithFailure();
         local_queue.finish();
+        LOG_DEBUG(log, "ExchangeLog: receiver queue finish");
+
         return ret;
     }
 
@@ -388,7 +400,6 @@ private:
 
     GRPCKickFunc test_kick_func;
     std::deque<std::pair<T, GRPCKickTag *>> data_tags;
-    std::atomic<bool> enable_small_size = true;
 };
 
 } // namespace DB

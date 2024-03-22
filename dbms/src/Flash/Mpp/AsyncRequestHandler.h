@@ -170,6 +170,7 @@ private:
             return;
         case MPMCQueueResult::FULL:
             // Do nothing and return immediately
+            LOG_DEBUG(log, "ExchangeLog: receiver queue is full");
             return;
         default:
             closeConnection("Exchange receiver meet error : push packet fail");
@@ -209,6 +210,7 @@ private:
         stage = AsyncRequestStage::WAIT_READ;
         packet = std::make_shared<TrackedMppDataPacket>(MPPDataPacketV0);
         reader->read(packet, asGRPCKickTag());
+        LOG_DEBUG(log, "ExchangeLog: receiver read data");
     }
 
     void closeConnection(String && msg)
