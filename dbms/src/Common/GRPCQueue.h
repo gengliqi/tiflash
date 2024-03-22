@@ -162,6 +162,7 @@ private:
                 return;
             t = tags.front();
             tags.pop();
+            LOG_DEBUG(log, "ExchangeLog: sender kick one tag");
         }
 
         t->setStatus(status);
@@ -178,6 +179,7 @@ private:
             t->setStatus(false);
             t->kick(test_kick_func);
         }
+        LOG_DEBUG(log, "ExchangeLog: sender kick all tags");
     }
 
     const LoggerPtr log;
@@ -363,6 +365,8 @@ private:
                 return;
             t = data_tags.front().second;
             data_tags.pop_front();
+
+            LOG_DEBUG(log, "ExchangeLog: receiver kick one tag");
         }
 
         t->setStatus(true);
@@ -379,6 +383,7 @@ private:
             t->setStatus(false);
             t->kick(test_kick_func);
         }
+        LOG_DEBUG(log, "ExchangeLog: receiver kick all tags");
     }
 
     const LoggerPtr log;
