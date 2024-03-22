@@ -3719,10 +3719,11 @@ void Join::finalize(const Names & parent_require)
     finalized = true;
 }
 
-void Join::buildPointerTable(size_t stream_index)
+bool Join::buildPointerTable(size_t stream_index)
 {
     Stopwatch watch;
     size_t build_size = 0;
+    bool is_end = false;
     while (true)
     {
         RowPtrs * row_ptrs = nullptr;
@@ -3751,7 +3752,10 @@ void Join::buildPointerTable(size_t stream_index)
             }
         }
         if (row_ptrs == nullptr)
+        {
+            is_end = true;
             break;
+        }
         build_size += row_ptrs->size();
         for (char * row_ptr : *row_ptrs)
         {
@@ -3764,13 +3768,24 @@ void Join::buildPointerTable(size_t stream_index)
                 unalignedStore<char *>(row_ptr + pointer_offset, head);
             } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
         }
+        if (build_size >= 8192 * 2)
+        {
+            break;
+        }
     }
-    LOG_INFO(
-        log,
-        "{} build pointer table finish cost {}ms, build rows {}",
-        stream_index,
-        watch.elapsedMilliseconds(),
-        build_size);
+    build_workers_data[stream_index]->build_pointer_table_size += build_size;
+    build_workers_data[stream_index]->build_pointer_table_time += watch.elapsedMilliseconds();
+    if (is_end)
+    {
+        LOG_INFO(
+            log,
+            "{} build pointer table finish cost {}ms, build rows {}",
+            stream_index,
+            build_workers_data[stream_index]->build_pointer_table_time,
+            build_workers_data[stream_index]->build_pointer_table_size);
+        return false;
+    }
+    return true;
 }
 
 } // namespace DB

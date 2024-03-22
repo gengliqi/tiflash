@@ -173,6 +173,9 @@ public:
     size_t build_time = 0;
     size_t convert_time = 0;
     size_t column_num = 0;
+
+    size_t build_pointer_table_time = 0;
+    size_t build_pointer_table_size = 0;
 };
 
 class alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
@@ -449,7 +452,7 @@ public:
     const Names & getRequiredColumns() const { return required_columns; }
     void finalize(const Names & parent_require);
 
-    void buildPointerTable(size_t stream_index);
+    bool buildPointerTable(size_t stream_index);
 
 private:
     friend class ScanHashMapAfterProbeBlockInputStream;
