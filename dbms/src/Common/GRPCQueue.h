@@ -67,7 +67,7 @@ public:
     MPMCQueueResult push(T && data)
     {
         auto ret = send_queue.push(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: sender push queue");
+        LOG_DEBUG(log, "ExchangeLog: sender push queue, size {}", send_queue.size());
         if (ret == MPMCQueueResult::OK)
             kickOneTag(true);
 
@@ -78,7 +78,7 @@ public:
     MPMCQueueResult forcePush(T && data)
     {
         auto ret = send_queue.forcePush(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: sender force push queue");
+        LOG_DEBUG(log, "ExchangeLog: sender force push queue, size {}", send_queue.size());
         if (ret == MPMCQueueResult::OK)
             kickOneTag(true);
 
@@ -113,8 +113,11 @@ public:
                 //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
                 //tag = new_tag;
                 tags.push(new_tag);
+                LOG_DEBUG(log, "ExchangeLog: sender queue is empty");
             }
         }
+        if (res == MPMCQueueResult::OK)
+            LOG_DEBUG(log, "ExchangeLog: sender pop queue, size {}", send_queue.size());
         return res;
     }
 
@@ -241,12 +244,12 @@ public:
         if (ret == MPMCQueueResult::OK)
         {
             kickOneTagWithSuccess();
-            LOG_DEBUG(log, "ExchangeLog: receiver pop queue from grpc");
+            LOG_DEBUG(log, "ExchangeLog: receiver pop grpc queue, size {}", recv_queue.size());
             return ret;
         }
         ret = local_queue.pop(data);
         if (ret == MPMCQueueResult::OK)
-            LOG_DEBUG(log, "ExchangeLog: receiver pop queue from local");
+            LOG_DEBUG(log, "ExchangeLog: receiver pop local queue, size {}", local_queue.size());
         return ret;
     }
 
@@ -257,12 +260,12 @@ public:
         if (ret == MPMCQueueResult::OK)
         {
             kickOneTagWithSuccess();
-            LOG_DEBUG(log, "ExchangeLog: receiver try pop queue from grpc");
+            LOG_DEBUG(log, "ExchangeLog: receiver try pop grpc queue, size {}", recv_queue.size());
             return ret;
         }
         ret = local_queue.tryPop(data);
         if (ret == MPMCQueueResult::OK)
-            LOG_DEBUG(log, "ExchangeLog: receiver try pop queue from local");
+            LOG_DEBUG(log, "ExchangeLog: receiver try pop local queue, size {}", local_queue.size());
         return ret;
     }
 
@@ -302,16 +305,31 @@ public:
             std::lock_guard<std::mutex> lock(mu);
             res = recv_queue.tryPush(data);
             if (res == MPMCQueueResult::FULL)
+            {
                 data_tags.push_back(std::make_pair(std::move(data), new_tag));
+                LOG_DEBUG(log, "ExchangeLog: receiver grpc queue is full");
+            }
         }
+        if (res == MPMCQueueResult::OK)
+            LOG_DEBUG(log, "ExchangeLog: receiver push grpc queue, size {}", recv_queue.size());
         return res;
     }
 
     /// Blocking push the data from the local node.
-    MPMCQueueResult push(T && data) { return local_queue.push(std::move(data)); }
+    MPMCQueueResult push(T && data)
+    {
+        auto ret = local_queue.push(std::move(data));
+        LOG_DEBUG(log, "ExchangeLog: receiver push local queue, size {}", local_queue.size());
+        return ret;
+    }
 
     /// Non-blocking force to push the data from the local node.
-    MPMCQueueResult forcePush(T && data) { return local_queue.forcePush(std::move(data)); }
+    MPMCQueueResult forcePush(T && data)
+    {
+        auto ret = local_queue.forcePush(std::move(data));
+        LOG_DEBUG(log, "ExchangeLog: receiver force push local queue, size {}", local_queue.size());
+        return ret;
+    }
 
     MPMCQueueStatus getStatus() const { return recv_queue.getStatus(); }
 

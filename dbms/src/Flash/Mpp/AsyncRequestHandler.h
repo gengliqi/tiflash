@@ -170,7 +170,6 @@ private:
             return;
         case MPMCQueueResult::FULL:
             // Do nothing and return immediately
-            LOG_DEBUG(log, "ExchangeLog: receiver queue is full");
             return;
         default:
             closeConnection("Exchange receiver meet error : push packet fail");
