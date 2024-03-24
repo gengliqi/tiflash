@@ -29,6 +29,7 @@ struct BaseRuntimeStatistics
     size_t allocated_bytes = 0;
     size_t concurrency = 0;
     UInt64 execution_time_ns = 0;
+    UInt64 await_time_ns = 0;
 
     void append(const BlockStreamProfileInfo &);
     void append(const OperatorProfileInfo &);

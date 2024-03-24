@@ -69,7 +69,7 @@ OperatorStatus Operator::await()
     if (op_status != OperatorStatus::WAITING)
     {
         exec_context.triggerAutoSpill();
-        profile_info.update();
+        profile_info.update(true);
     }
     return op_status;
 }

@@ -34,6 +34,7 @@ struct OperatorProfileInfo
     size_t allocated_bytes = 0;
     // execution time is the total time spent on current Operator
     UInt64 execution_time = 0;
+    UInt64 await_time = 0;
 
     ALWAYS_INLINE void anchor() { total_stopwatch.start(); }
 
@@ -54,7 +55,15 @@ struct OperatorProfileInfo
         anchor();
     }
 
-    ALWAYS_INLINE void update() { execution_time += total_stopwatch.elapsedFromLastTime(); }
+    ALWAYS_INLINE void update(bool await = false)
+    {
+        auto elapsed = total_stopwatch.elapsedFromLastTime();
+        execution_time += elapsed;
+        if unlikely (await)
+        {
+            await_time += elapsed;
+        }
+    }
 
     ALWAYS_INLINE void update(const Block & block)
     {
