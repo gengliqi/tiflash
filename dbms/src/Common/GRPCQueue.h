@@ -21,6 +21,7 @@
 #include <Common/grpcpp.h>
 #include <Flash/Pipeline/Schedule/ThreadPool/TaskThreadPool.h>
 #include <Flash/Pipeline/Schedule/TaskScheduler.h>
+#include <Flash/Pipeline/Schedule/Tasks/TaskHelper.h>
 
 #include <functional>
 #include <magic_enum.hpp>
@@ -33,6 +34,34 @@ namespace tests
 class TestGRPCSendQueue;
 class TestGRPCRecvQueue;
 } // namespace tests
+
+static inline bool awaitTask(TaskPtr && task)
+{
+    auto status = task->await();
+    switch (status)
+    {
+    case ExecTaskStatus::WAITING:
+        return false;
+    case ExecTaskStatus::RUNNING:
+        task->profile_info.elapsedAwaitTime();
+        TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+        return true;
+    case ExecTaskStatus::IO_IN:
+    case ExecTaskStatus::IO_OUT:
+        task->profile_info.elapsedAwaitTime();
+        TaskScheduler::instance->submitToIOTaskThreadPool(std::move(task));
+        return true;
+    case FINISH_STATUS:
+        task->profile_info.elapsedAwaitTime();
+        //task->startTraceMemory();
+        task->finalize();
+        //task->endTraceMemory();
+        task.reset();
+        return true;
+    default:
+        __builtin_unreachable();
+    }
+}
 
 /// A multi-producer-single-consumer queue dedicated to async grpc streaming send work.
 ///
@@ -60,6 +89,7 @@ public:
     {
         //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
         RUNTIME_ASSERT(tags.empty(), log, "tags are not empty");
+        RUNTIME_ASSERT(registered_tasks.empty(), log, "tasks are not empty");
     }
 
     /// For test usage only.
@@ -171,11 +201,11 @@ public:
     {
         if (send_queue.isWritable())
         {
-            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
-            return;
+            if (awaitTask(std::move(task)))
+                return;
         }
         std::lock_guard<std::mutex> lock(mu);
-        registered_tasks.push(std::move(task));
+        registered_tasks.push_back(std::move(task));
     }
 
 private:
@@ -222,14 +252,19 @@ private:
             if (registered_tasks.empty())
                 return;
             task = std::move(registered_tasks.front());
-            registered_tasks.pop();
+            registered_tasks.pop_front();
         }
-        TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+        if (awaitTask(std::move(task)))
+            return;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            registered_tasks.push_front(std::move(task));
+        }
     }
 
     void wakeupAllTasks()
     {
-        std::queue<TaskPtr> all_tasks;
+        std::deque<TaskPtr> all_tasks;
         {
             std::lock_guard<std::mutex> lock(mu);
             all_tasks.swap(registered_tasks);
@@ -237,8 +272,9 @@ private:
         while (!all_tasks.empty())
         {
             auto task = std::move(all_tasks.front());
-            all_tasks.pop();
-            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+            all_tasks.pop_front();
+            bool res = awaitTask(std::move(task));
+            assert(res);
         }
     }
 
@@ -265,7 +301,7 @@ private:
 
     //GRPCKickTag * tag = nullptr;
 
-    std::queue<TaskPtr> registered_tasks;
+    std::deque<TaskPtr> registered_tasks;
 };
 
 /// A multi-producer-multi-consumer queue dedicated to async grpc streaming receive work.
@@ -291,7 +327,11 @@ public:
         , local_queue(std::forward<Args>(args)...)
     {}
 
-    ~GRPCRecvQueue() { RUNTIME_ASSERT(data_tags.empty(), log, "data_tags is not empty"); }
+    ~GRPCRecvQueue()
+    {
+        RUNTIME_ASSERT(data_tags.empty(), log, "data_tags is not empty");
+        RUNTIME_ASSERT(registered_tasks.empty(), log, "tasks are not empty");
+    }
 
     /// For test usage only.
     void setKickFuncForTest(GRPCKickFunc && func) { test_kick_func = std::move(func); }
@@ -448,11 +488,11 @@ public:
     {
         if (!recv_queue.empty() || !local_queue.empty())
         {
-            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
-            return;
+            if (awaitTask(std::move(task)))
+                return;
         }
         std::lock_guard<std::mutex> lock(mu);
-        registered_tasks.push(std::move(task));
+        registered_tasks.push_back(std::move(task));
     }
 
 private:
@@ -499,14 +539,19 @@ private:
             if (registered_tasks.empty())
                 return;
             task = std::move(registered_tasks.front());
-            registered_tasks.pop();
+            registered_tasks.pop_front();
         }
-        TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+        if (awaitTask(std::move(task)))
+            return;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            registered_tasks.push_front(std::move(task));
+        }
     }
 
     void wakeupAllTasks()
     {
-        std::queue<TaskPtr> all_tasks;
+        std::deque<TaskPtr> all_tasks;
         {
             std::lock_guard<std::mutex> lock(mu);
             all_tasks.swap(registered_tasks);
@@ -514,8 +559,9 @@ private:
         while (!all_tasks.empty())
         {
             auto task = std::move(all_tasks.front());
-            all_tasks.pop();
-            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+            all_tasks.pop_front();
+            bool res = awaitTask(std::move(task));
+            assert(res);
         }
     }
 
@@ -539,7 +585,7 @@ private:
     GRPCKickFunc test_kick_func;
     std::deque<std::pair<T, GRPCKickTag *>> data_tags;
 
-    std::queue<TaskPtr> registered_tasks;
+    std::deque<TaskPtr> registered_tasks;
 };
 
 } // namespace DB

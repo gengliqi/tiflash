@@ -59,9 +59,9 @@ public:
 };
 
 #if __APPLE__ && __clang__
-static __thread AwaitableTaskRegister * current_task_register;
+extern __thread AwaitableTaskRegister * current_task_register;
 #else
-static thread_local AwaitableTaskRegister * current_task_register;
+extern thread_local AwaitableTaskRegister * current_task_register;
 #endif
 
 template <typename Impl>

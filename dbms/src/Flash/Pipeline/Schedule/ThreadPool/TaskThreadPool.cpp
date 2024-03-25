@@ -27,12 +27,21 @@
 
 namespace DB
 {
+
+#if __APPLE__ && __clang__
+__thread AwaitableTaskRegister * current_task_register = nullptr;
+#else
+thread_local AwaitableTaskRegister * current_task_register = nullptr;
+#endif
+
 template <typename Impl>
 TaskThreadPool<Impl>::TaskThreadPool(TaskScheduler & scheduler_, const ThreadPoolConfig & config)
     : task_queue(Impl::newTaskQueue(config.queue_type))
     , scheduler(scheduler_)
     , optimize_reactor(config.optimize_reactor)
 {
+    LOG_INFO(logger, "task enable optimize reactor: {}", optimize_reactor);
+
     RUNTIME_CHECK(config.pool_size > 0);
     threads.reserve(config.pool_size);
     for (size_t i = 0; i < config.pool_size; ++i)
