@@ -1758,7 +1758,8 @@ int Server::main(const std::vector<std::string> & /*args*/)
             };
             TaskSchedulerConfig config{
                 {get_pool_size(settings.pipeline_cpu_task_thread_pool_size),
-                 settings.pipeline_cpu_task_thread_pool_queue_type},
+                 settings.pipeline_cpu_task_thread_pool_queue_type,
+                 settings.scheduler_optimize_reactor},
                 {get_pool_size(settings.pipeline_io_task_thread_pool_size),
                  settings.pipeline_io_task_thread_pool_queue_type},
             };

@@ -19,6 +19,8 @@
 #include <Common/Logger.h>
 #include <Common/LooseBoundedMPMCQueue.h>
 #include <Common/grpcpp.h>
+#include <Flash/Pipeline/Schedule/ThreadPool/TaskThreadPool.h>
+#include <Flash/Pipeline/Schedule/TaskScheduler.h>
 
 #include <functional>
 #include <magic_enum.hpp>
@@ -45,7 +47,7 @@ class TestGRPCRecvQueue;
 /// 1. for pop function calling in grpc thread, save the tag when queue is empty.
 /// 2. for push function calling in compute thread, push the tag into completion queue if any.
 template <typename T>
-class GRPCSendQueue
+class GRPCSendQueue : public AwaitableTaskRegister
 {
 public:
     template <typename... Args>
@@ -54,7 +56,7 @@ public:
         , send_queue(std::forward<Args>(args)...)
     {}
 
-    ~GRPCSendQueue()
+    ~GRPCSendQueue() override
     {
         //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
         RUNTIME_ASSERT(tags.empty(), log, "tags are not empty");
@@ -117,7 +119,10 @@ public:
             }
         }
         if (res == MPMCQueueResult::OK)
+        {
             LOG_DEBUG(log, "ExchangeLog: sender pop queue, size {}", send_queue.size());
+            wakeupOneTask();
+        }
         return res;
     }
 
@@ -129,6 +134,8 @@ public:
         auto ret = send_queue.cancelWith(reason);
         if (ret)
             kickAllTagsWithFailure();
+
+        wakeupAllTasks();
 
         return ret;
     }
@@ -144,10 +151,32 @@ public:
         if (ret)
             kickAllTagsWithFailure();
         LOG_DEBUG(log, "ExchangeLog: sender queue finish");
+
+        wakeupAllTasks();
+
         return ret;
     }
 
-    bool isWritable() const { return send_queue.isWritable(); }
+    bool isWritable() const
+    {
+        bool ret = send_queue.isWritable();
+        if (!ret)
+        {
+            current_task_register = const_cast<GRPCSendQueue<T> *>(this);
+        }
+        return ret;
+    }
+
+    void registerAwaitableTask(TaskPtr && task) override
+    {
+        if (send_queue.isWritable())
+        {
+            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mu);
+        registered_tasks.push(std::move(task));
+    }
 
 private:
     friend class tests::TestGRPCSendQueue;
@@ -185,6 +214,34 @@ private:
         LOG_DEBUG(log, "ExchangeLog: sender kick all tags");
     }
 
+    void wakeupOneTask()
+    {
+        TaskPtr task;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            if (registered_tasks.empty())
+                return;
+            task = std::move(registered_tasks.front());
+            registered_tasks.pop();
+        }
+        TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+    }
+
+    void wakeupAllTasks()
+    {
+        std::queue<TaskPtr> all_tasks;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            all_tasks.swap(registered_tasks);
+        }
+        while (!all_tasks.empty())
+        {
+            auto task = std::move(all_tasks.front());
+            all_tasks.pop();
+            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+        }
+    }
+
     const LoggerPtr log;
 
     LooseBoundedMPMCQueue<T> send_queue;
@@ -207,6 +264,8 @@ private:
     std::queue<GRPCKickTag *> tags;
 
     //GRPCKickTag * tag = nullptr;
+
+    std::queue<TaskPtr> registered_tasks;
 };
 
 /// A multi-producer-multi-consumer queue dedicated to async grpc streaming receive work.
@@ -222,7 +281,7 @@ private:
 /// 1. for push function calling in grpc thread, save the tag(s) when queue is full.
 /// 2. for pop function calling in compute thread, push one tag into completion queue if any.
 template <typename T>
-class GRPCRecvQueue
+class GRPCRecvQueue : public AwaitableTaskRegister
 {
 public:
     template <typename... Args>
@@ -265,7 +324,11 @@ public:
         }
         ret = local_queue.tryPop(data);
         if (ret == MPMCQueueResult::OK)
+        {
             LOG_DEBUG(log, "ExchangeLog: receiver try pop local queue, size {}", local_queue.size());
+            return ret;
+        }
+        current_task_register = this;
         return ret;
     }
 
@@ -311,7 +374,10 @@ public:
             }
         }
         if (res == MPMCQueueResult::OK)
+        {
             LOG_DEBUG(log, "ExchangeLog: receiver push grpc queue, size {}", recv_queue.size());
+            wakeupOneTask();
+        }
         return res;
     }
 
@@ -327,7 +393,12 @@ public:
     MPMCQueueResult forcePush(T && data)
     {
         auto ret = local_queue.forcePush(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: receiver force push local queue, size {}", local_queue.size());
+
+        if (ret == MPMCQueueResult::OK)
+        {
+            LOG_DEBUG(log, "ExchangeLog: receiver force push local queue, size {}", local_queue.size());
+            wakeupOneTask();
+        }
         return ret;
     }
 
@@ -343,6 +414,9 @@ public:
         if (ret)
             kickAllTagsWithFailure();
         local_queue.cancelWith(reason);
+
+        wakeupAllTasks();
+
         return ret;
     }
 
@@ -358,6 +432,8 @@ public:
         local_queue.finish();
         LOG_DEBUG(log, "ExchangeLog: receiver queue finish");
 
+        wakeupAllTasks();
+
         return ret;
     }
 
@@ -366,6 +442,17 @@ public:
         if (is_local)
             return local_queue.isWritable();
         return recv_queue.isWritable();
+    }
+
+    void registerAwaitableTask(TaskPtr && task) override
+    {
+        if (!recv_queue.empty() || !local_queue.empty())
+        {
+            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mu);
+        registered_tasks.push(std::move(task));
     }
 
 private:
@@ -404,6 +491,34 @@ private:
         LOG_DEBUG(log, "ExchangeLog: receiver kick all tags");
     }
 
+    void wakeupOneTask()
+    {
+        TaskPtr task;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            if (registered_tasks.empty())
+                return;
+            task = std::move(registered_tasks.front());
+            registered_tasks.pop();
+        }
+        TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+    }
+
+    void wakeupAllTasks()
+    {
+        std::queue<TaskPtr> all_tasks;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            all_tasks.swap(registered_tasks);
+        }
+        while (!all_tasks.empty())
+        {
+            auto task = std::move(all_tasks.front());
+            all_tasks.pop();
+            TaskScheduler::instance->submitToCPUTaskThreadPool(std::move(task));
+        }
+    }
+
     const LoggerPtr log;
 
     LooseBoundedMPMCQueue<T> recv_queue;
@@ -423,6 +538,8 @@ private:
 
     GRPCKickFunc test_kick_func;
     std::deque<std::pair<T, GRPCKickTag *>> data_tags;
+
+    std::queue<TaskPtr> registered_tasks;
 };
 
 } // namespace DB

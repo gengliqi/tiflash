@@ -31,6 +31,7 @@ template <typename Impl>
 TaskThreadPool<Impl>::TaskThreadPool(TaskScheduler & scheduler_, const ThreadPoolConfig & config)
     : task_queue(Impl::newTaskQueue(config.queue_type))
     , scheduler(scheduler_)
+    , optimize_reactor(config.optimize_reactor)
 {
     RUNTIME_CHECK(config.pool_size > 0);
     threads.reserve(config.pool_size);
@@ -100,6 +101,7 @@ void TaskThreadPool<Impl>::handleTask(TaskPtr & task)
     UInt64 total_time_spent = 0;
     while (true)
     {
+        current_task_register = nullptr;
         status_after_exec = Impl::exec(task);
         total_time_spent += task->profile_info.elapsedFromPrev();
         // The executing task should yield if it takes more than `YIELD_MAX_TIME_SPENT_NS`.
@@ -122,7 +124,14 @@ void TaskThreadPool<Impl>::handleTask(TaskPtr & task)
         break;
     case ExecTaskStatus::WAITING:
         task->endTraceMemory();
-        scheduler.submitToWaitReactor(std::move(task));
+        if (optimize_reactor && current_task_register != nullptr)
+        {
+            current_task_register->registerAwaitableTask(std::move(task));
+        }
+        else
+        {
+            scheduler.submitToWaitReactor(std::move(task));
+        }
         break;
     case FINISH_STATUS:
         task->finalize();

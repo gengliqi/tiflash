@@ -35,19 +35,34 @@ struct ThreadPoolConfig
         : pool_size(pool_size_)
     {}
 
-    ThreadPoolConfig(size_t pool_size_, TaskQueueType queue_type_)
+    ThreadPoolConfig(size_t pool_size_, TaskQueueType queue_type_, bool optimize_reactor_ = false)
         : pool_size(pool_size_)
         , queue_type(queue_type_)
+        , optimize_reactor(optimize_reactor_)
     {}
 
     size_t pool_size;
     TaskQueueType queue_type = TaskQueueType::DEFAULT;
+    bool optimize_reactor;
 
     String toString() const
     {
         return fmt::format("[pool_size: {}, queue_type: {}]", pool_size, magic_enum::enum_name(queue_type));
     }
 };
+
+class AwaitableTaskRegister
+{
+public:
+    virtual ~AwaitableTaskRegister() = default;
+    virtual void registerAwaitableTask(TaskPtr && task_) = 0;
+};
+
+#if __APPLE__ && __clang__
+static __thread AwaitableTaskRegister * current_task_register;
+#else
+static thread_local AwaitableTaskRegister * current_task_register;
+#endif
 
 template <typename Impl>
 class TaskThreadPool
@@ -83,6 +98,8 @@ private:
     std::vector<std::thread> threads;
 
     TaskThreadPoolMetrics<Impl::is_cpu> metrics;
+
+    bool optimize_reactor;
 };
 
 } // namespace DB

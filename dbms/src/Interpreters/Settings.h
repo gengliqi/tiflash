@@ -328,7 +328,8 @@ struct Settings
     M(SettingBool, enable_new_hash_join, true, "")                                                                                                                                                                                                                                    \
     M(SettingUInt64, new_hash_join_prefetch_threshold, 1048576, "") \
     M(SettingUInt64, new_hash_join_prefetch_length, 8, "") \
-    M(SettingUInt64, connection_num_for_remote_tunnel, 1, "")
+    M(SettingUInt64, connection_num_for_remote_tunnel, 1, "") \
+    M(SettingBool, scheduler_optimize_reactor, true, "")
 
 
 // clang-format on

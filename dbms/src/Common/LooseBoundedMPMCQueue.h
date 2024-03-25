@@ -164,6 +164,12 @@ public:
         return queue.size();
     }
 
+    bool empty() const
+    {
+        std::lock_guard lock(mu);
+        return queue.empty();
+    }
+
     bool isWritable() const
     {
         std::lock_guard lock(mu);
