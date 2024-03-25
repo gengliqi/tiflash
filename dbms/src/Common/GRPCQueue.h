@@ -273,7 +273,7 @@ private:
         {
             auto task = std::move(all_tasks.front());
             all_tasks.pop_front();
-            bool res = awaitTask(std::move(task));
+            bool res [[maybe_unused]] = awaitTask(std::move(task));
             assert(res);
         }
     }
@@ -560,7 +560,7 @@ private:
         {
             auto task = std::move(all_tasks.front());
             all_tasks.pop_front();
-            bool res = awaitTask(std::move(task));
+            bool res [[maybe_unused]] = awaitTask(std::move(task));
             assert(res);
         }
     }
