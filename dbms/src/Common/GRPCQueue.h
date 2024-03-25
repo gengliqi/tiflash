@@ -273,8 +273,9 @@ private:
         {
             auto task = std::move(all_tasks.front());
             all_tasks.pop_front();
-            bool res [[maybe_unused]] = awaitTask(std::move(task));
-            assert(res);
+            bool res = awaitTask(std::move(task));
+            if unlikely (!res)
+                RUNTIME_ASSERT(false, task->log, "await task is still waiting");
         }
     }
 
@@ -560,8 +561,9 @@ private:
         {
             auto task = std::move(all_tasks.front());
             all_tasks.pop_front();
-            bool res [[maybe_unused]] = awaitTask(std::move(task));
-            assert(res);
+            bool res = awaitTask(std::move(task));
+            if unlikely (!res)
+                RUNTIME_ASSERT(false, task->log, "await task is still waiting");
         }
     }
 
