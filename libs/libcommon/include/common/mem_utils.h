@@ -34,10 +34,12 @@ using ConstBytePtr = char const *;
 
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
 bool memoryEqualAVX2x4Loop(ConstBytePtr & p1, ConstBytePtr & p2, size_t & size);
+void avx2_store_nontemp_64B(void * dst, void * src);
 #endif
 
 #ifdef TIFLASH_ENABLE_AVX512_SUPPORT
 bool memoryEqualAVX512x4Loop(ConstBytePtr & p1, ConstBytePtr & p2, size_t & size);
+void avx512_store_nontemp_64B(void * dst, void * src);
 #endif
 
 #ifdef TIFLASH_ENABLE_ASIMD_SUPPORT

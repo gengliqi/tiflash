@@ -317,7 +317,7 @@ __attribute__((pure)) bool memoryIsByteAVX2(const void * data, size_t size, std:
     return result;
 }
 
-static inline void avx2_store_nontemp_64B(void * dst, void * src)
+__attribute__((always_inline, pure)) inline void avx2_store_nontemp_64B(void * dst, void * src)
 {
     __m256i * d1 = (__m256i*) dst;
     __m256i s1 = *((__m256i*) src);
