@@ -19,7 +19,7 @@
 #include <Common/Exception.h>
 #include <Common/MemoryTrackerSetter.h>
 #include <Common/memcpySmall.h>
-#include <Common/mem_utils.h>
+#include <common/mem_utils.h>
 #include <common/likely.h>
 #include <common/strong_typedef.h>
 #include <string.h>

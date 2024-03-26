@@ -283,9 +283,9 @@ __attribute__((always_inline, pure)) inline bool memoryIsZero(const void * data,
 __attribute__((always_inline, pure)) inline void store_nontemp_64B(void * dst, void * src)
 {
 #ifdef TIFLASH_ENABLE_AVX512_SUPPORT
-    avx512_store_nontemp_64B(dst, src);
+    _detail::avx512_store_nontemp_64B(dst, src);
 #elif TIFLASH_ENABLE_AVX_SUPPORT
-    avx2_store_nontemp_64B(dst, src);
+    _detail::avx2_store_nontemp_64B(dst, src);
 #else
     memcpy(dst, src, 64);
 #endif
