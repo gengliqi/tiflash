@@ -827,7 +827,7 @@ public:
         deserializeAndInsertFromPos(pos);
 #else
         size_t prev_size = size();
-        reserve(prev_size + pos.size());
+        reserve(prev_size + pos.size(), align);
 
         assert(((uintptr_t)c_start & (align - 1)) == 0);
         size_t size = pos.size();
