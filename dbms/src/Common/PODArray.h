@@ -19,6 +19,7 @@
 #include <Common/Exception.h>
 #include <Common/MemoryTrackerSetter.h>
 #include <Common/memcpySmall.h>
+#include <Common/TargetSpecific.h>
 #include <common/likely.h>
 #include <common/strong_typedef.h>
 #include <string.h>
@@ -310,6 +311,9 @@ public:
     friend SimplePaddedPODArray;
 };
 
+#define CALC_PAD_RIGHT(pad_right, element_size) integerRoundUp(pad_right, element_size)
+#define CALC_PAD_LEFT(pad_left, element_size) integerRoundUp(integerRoundUp(pad_left, element_size), 64)
+
 template <
     size_t ELEMENT_SIZE,
     size_t INITIAL_SIZE = 4096,
@@ -323,9 +327,9 @@ public:
     PODArrayTemplate() { this->init(null); }
 
     /// Round padding up to an whole number of elements to simplify arithmetic.
-    static constexpr size_t pad_right = integerRoundUp(pad_right_, ELEMENT_SIZE);
+    static constexpr size_t pad_right = CALC_PAD_RIGHT(pad_right_, ELEMENT_SIZE);
     /// pad_left is also rounded up to 16 bytes to maintain alignment of allocated memory.
-    static constexpr size_t pad_left = integerRoundUp(integerRoundUp(pad_left_, ELEMENT_SIZE), 16);
+    static constexpr size_t pad_left = CALC_PAD_LEFT(pad_left_, ELEMENT_SIZE);
     /// Empty array will point to this static memory as padding.
     static constexpr char * null = pad_left ? const_cast<char *>(EmptyPODArray) + EmptyPODArraySize : nullptr;
 
@@ -718,15 +722,30 @@ template <typename T, size_t stack_size_in_bytes>
 using PODArrayWithStackMemory
     = PODArray<T, 0, AllocatorWithStackMemory<Allocator<false>, integerRoundUp(stack_size_in_bytes, sizeof(T))>>;
 
+#ifdef __x86_64__
+static inline void store_nontemp_64B(void * dst, void * src)
+{
+    __m256i * d1 = (__m256i*) dst;
+    __m256i s1 = *((__m256i*) src);
+    __m256i * d2 = d1+1;
+    __m256i s2 = *(((__m256i*) src)+1);
+
+    _mm256_stream_si256(d1, s1);
+    _mm256_stream_si256(d2, s2);
+}
+#endif
+
 class SimplePaddedPODArray : public PODArrayBase<SimplePaddedPODArray, Allocator<false>>
 {
 public:
+    static const size_t align = 64;
+
     explicit SimplePaddedPODArray(size_t element_size_, size_t initial_size_ = 4096)
         : element_size(element_size_)
         , initial_size(initial_size_)
         /// The same as PODArrayTemplate.
-        , pad_right(integerRoundUp(PAD_RIGHT, element_size))
-        , pad_left(integerRoundUp(integerRoundUp(PAD_LEFT, element_size), 16))
+        , pad_right(CALC_PAD_RIGHT(PAD_RIGHT, element_size))
+        , pad_left(CALC_PAD_LEFT(PAD_LEFT, element_size))
         , null(pad_left ? const_cast<char *>(EmptyPODArray) + EmptyPODArraySize : nullptr)
     {
         this->init(null);
@@ -791,14 +810,72 @@ public:
     void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos)
     {
         size_t prev_size = size();
-        resize(prev_size + pos.size());
+        reserve(prev_size + pos.size());
 
         size_t size = pos.size();
         for (size_t i = 0; i < size; ++i)
         {
-            std::memcpy(c_start + element_size * (prev_size + i), pos[i], element_size);
+            std::memcpy(c_end, pos[i], element_size);
+            c_end += element_size;
             pos[i] += element_size;
         }
+    }
+
+    void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos)
+    {
+#ifndef __x86_64__
+        deserializeAndInsertFromPos(pos);
+#else
+        size_t prev_size = size();
+        reserve(prev_size + pos.size());
+
+        assert(((uintptr_t)c_start & (align - 1)) == 0);
+        size_t size = pos.size();
+        for (size_t i = 0; i < size; ++i)
+        {
+            if (buf_size + element_size < align)
+            {
+                std::memcpy(&buf[buf_size], pos[i], element_size);
+                buf_size += element_size;
+            }
+            else
+            {
+                size_t copy_size = align - buf_size;
+                std::memcpy(&buf[buf_size], pos[i], copy_size);
+                store_nontemp_64B(c_end, buf);
+                c_end += align;
+
+                while (copy_size + align <= element_size)
+                {
+                    store_nontemp_64B(c_end, pos[i] + copy_size);
+                    c_end += align;
+                    copy_size += align;
+                }
+                if unlikely (copy_size < element_size)
+                {
+                    buf_size = element_size - copy_size;
+                    std::memcpy(buf, pos[i] + copy_size, buf_size);
+                }
+                else
+                {
+                    buf_size = 0;
+                }
+            }
+            pos[i] += element_size;
+        }
+#endif
+    }
+
+    void flushBuffer()
+    {
+#ifdef __x86_64__
+        if (buf_size == 0)
+            return;
+
+        std::memcpy(c_end, buf, buf_size);
+        c_end += buf_size;
+        buf_size = 0;
+#endif
     }
 
 private:
@@ -807,6 +884,11 @@ private:
     const size_t pad_right;
     const size_t pad_left;
     char * null;
+
+#ifdef __x86_64__
+    size_t buf_size = 0;
+    char buf[align];
+#endif
 };
 
 } // namespace DB

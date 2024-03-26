@@ -361,7 +361,9 @@ void DAGQueryBlockInterpreter::handleJoin(
         context.isTest(),
         settings.enable_new_hash_join,
         settings.new_hash_join_prefetch_threshold,
-        settings.new_hash_join_prefetch_length);
+        settings.new_hash_join_prefetch_length,
+        settings.new_hash_join_prefetch_insert_buffer,
+        settings.new_hash_join_prefetch_insert_enable_simd);
 
     recordJoinExecuteInfo(tiflash_join.build_side_index, join_ptr);
 

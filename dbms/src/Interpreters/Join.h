@@ -304,6 +304,8 @@ public:
         bool enable_new_hash_join_,
         size_t prefetch_threshold_,
         size_t prefetch_length_,
+        size_t insert_buffer_size_,
+        bool insert_enable_simd_,
         const std::vector<RuntimeFilterPtr> & runtime_filter_list_ = dummy_runtime_filter_list);
 
     RestoreConfig restore_config;
@@ -577,6 +579,8 @@ private:
     const size_t prefetch_threshold;
     const size_t prefetch_length;
     bool enable_prefetch = false;
+    size_t insert_buffer_size;
+    bool insert_enable_simd;
 
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
 

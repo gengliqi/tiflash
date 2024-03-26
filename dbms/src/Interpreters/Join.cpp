@@ -134,6 +134,8 @@ Join::Join(
     bool enable_new_hash_join_,
     size_t prefetch_threshold_,
     size_t prefetch_length_,
+    size_t insert_buffer_size_,
+    bool insert_enable_simd_,
     const std::vector<RuntimeFilterPtr> & runtime_filter_list_)
     : restore_config(restore_config_)
     , match_helper_name(match_helper_name_)
@@ -171,6 +173,8 @@ Join::Join(
     , enable_new_hash_join(enable_new_hash_join_)
     , prefetch_threshold(prefetch_threshold_)
     , prefetch_length(prefetch_length_)
+    , insert_buffer_size(insert_buffer_size_)
+    , insert_enable_simd(insert_enable_simd_)
 {
     has_other_condition = non_equal_conditions.other_cond_expr != nullptr;
     bool is_semi = isSemiFamily(kind) || isLeftOuterSemiFamily(kind) || isNullAwareSemiFamily(kind);
@@ -393,7 +397,9 @@ std::shared_ptr<Join> Join::createRestoreJoin(size_t max_bytes_before_external_j
         is_test,
         enable_new_hash_join,
         prefetch_threshold,
-        prefetch_length);
+        prefetch_length,
+        insert_buffer_size,
+        insert_enable_simd);
     /// init output names after finalize, the restored join don't need to finalize
     ret->output_columns_after_finalize = output_columns_after_finalize;
     ret->output_column_names_set_after_finalize = output_column_names_set_after_finalize;
@@ -1669,6 +1675,8 @@ void probeBlockImpl(
     const JoinHashPointerTable & table,
     bool enable_prefetch,
     size_t prefetch_length,
+    size_t insert_buffer_size,
+    bool insert_enable_simd,
     ProbeWorkerData & worker_data)
 {
     if (rows == 0)
@@ -1699,6 +1707,8 @@ void probeBlockImpl(
             table,                                                                                          \
             enable_prefetch,                                                                                \
             prefetch_length,                                                                                \
+            insert_buffer_size,                                                                                                \
+            insert_enable_simd,                                                                                                \
             worker_data);                                                                                   \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -1722,12 +1732,14 @@ void probeBlockImplType(
     const JoinHashPointerTable & table,
     bool enable_prefetch,
     size_t prefetch_length,
+    size_t insert_buffer_size,
+    bool insert_enable_simd,
     ProbeWorkerData & worker_data)
 {
     if (enable_prefetch)
     {
-#define CALL(has_null_map)                                         \
-    probeBlockImplTypeCasePrefetch<KeyGetter, Hash, has_null_map>( \
+#define CALL(has_null_map, simd)                                         \
+    probeBlockImplTypeCasePrefetch<KeyGetter, Hash, has_null_map, simd>( \
         rows,                                                      \
         key_columns,                                               \
         key_sizes,                                                 \
@@ -1738,23 +1750,38 @@ void probeBlockImplType(
         probe_process_info,                                        \
         table,                                                     \
         prefetch_length,                                           \
+        insert_buffer_size,                                                           \
         worker_data);
 
         if (null_map)
         {
-            CALL(true);
+            if (insert_enable_simd)
+            {
+                CALL(true, true);
+            }
+            else
+            {
+                CALL(true, false);
+            }
         }
         else
         {
-            CALL(false);
+            if (insert_enable_simd)
+            {
+                CALL(false, true);
+            }
+            else
+            {
+                CALL(false, false);
+            }
         }
 
 #undef CALL
     }
     else
     {
-#define CALL(has_null_map)                                 \
-    probeBlockImplTypeCase<KeyGetter, Hash, has_null_map>( \
+#define CALL(has_null_map, simd)                                 \
+    probeBlockImplTypeCase<KeyGetter, Hash, has_null_map, simd>( \
         rows,                                              \
         key_columns,                                       \
         key_sizes,                                         \
@@ -1764,15 +1791,30 @@ void probeBlockImplType(
         collators,                                         \
         probe_process_info,                                \
         table,                                             \
+        insert_buffer_size,                                                   \
         worker_data);
 
         if (null_map)
         {
-            CALL(true);
+            if (insert_enable_simd)
+            {
+                CALL(true, true);
+            }
+            else
+            {
+                CALL(true, false);
+            }
         }
         else
         {
-            CALL(false);
+            if (insert_enable_simd)
+            {
+                CALL(false, true);
+            }
+            else
+            {
+                CALL(false, false);
+            }
         }
 
 #undef CALL
@@ -1809,6 +1851,7 @@ void convertToSimpleMutableColumn(MutableColumnPtr & column_ptr, SimpleMutableCo
     }
 }
 
+template <bool SIMD>
 inline void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos)
 {
     if (simple_column.null_map)
@@ -1819,7 +1862,14 @@ inline void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, Row
     {
     case SimpleColumnType::Fixed:
     {
-        simple_column.pod_array->deserializeAndInsertFromPos(pos);
+        if constexpr (SIMD)
+        {
+            simple_column.pod_array->deserializeAndInsertFromPosSIMD(pos);
+        }
+        else
+        {
+            simple_column.pod_array->deserializeAndInsertFromPos(pos);
+        }
         break;
     }
     case SimpleColumnType::String:
@@ -1844,12 +1894,15 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
         column = &typeid_cast<ColumnNullable *>(column)->getNestedColumn();
 
     if (column->isFixedAndContiguous())
+    {
+        simple_column.pod_array->flushBuffer();
         column->swapFixedAndContiguousData(*simple_column.pod_array);
+    }
 }
 
 #define PREFETCH_READ(ptr) __builtin_prefetch(ptr, 0 /* rw==read */, 3 /* locality */)
 
-template <typename KeyGetter, typename Hash, bool has_null_map>
+template <typename KeyGetter, typename Hash, bool has_null_map, bool SIMD>
 void NO_INLINE probeBlockImplTypeCasePrefetch(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -1861,6 +1914,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table,
     size_t prefetch_length,
+    size_t buffer_size,
     ProbeWorkerData & worker_data)
 {
     RUNTIME_ASSERT(probe_process_info.start_row <= rows);
@@ -1883,7 +1937,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     worker_data.sort_key_containers.resize(key_columns.size());
 
     //const size_t buffer_size = 256;
-    const size_t buffer_size = 32;
+    //const size_t buffer_size = 32;
     auto & row_ptrs_buffer = worker_data.row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
     auto & selective_offsets = *probe_process_info.selective_offsets;
@@ -1941,7 +1995,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     for (size_t j = 0; j < num_columns_to_add; ++j)
                     {
                         //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                        deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                        deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
                     }
                     row_ptrs_buffer.clear();
                 }
@@ -2040,7 +2094,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                         for (size_t j = 0; j < num_columns_to_add; ++j)
                         {
                             //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                            deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                            deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
                         }
                         row_ptrs_buffer.clear();
                     }
@@ -2071,7 +2125,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         for (size_t j = 0; j < num_columns_to_add; ++j)
         {
             //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-            deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+            deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
         }
         row_ptrs_buffer.clear();
     }
@@ -2095,7 +2149,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     probe_process_info.updateEndRow<false, true>(i, nullptr, till_end);
 }
 
-template <typename KeyGetter, typename Hash, bool has_null_map>
+template <typename KeyGetter, typename Hash, bool has_null_map, bool SIMD>
 void NO_INLINE probeBlockImplTypeCase(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -2106,6 +2160,7 @@ void NO_INLINE probeBlockImplTypeCase(
     const TiDB::TiDBCollators & collators,
     ProbeProcessInfo & probe_process_info,
     const JoinHashPointerTable & table,
+    size_t buffer_size,
     ProbeWorkerData & worker_data)
 {
     RUNTIME_ASSERT(probe_process_info.start_row < rows);
@@ -2130,7 +2185,7 @@ void NO_INLINE probeBlockImplTypeCase(
     size_t i;
     char * current_head = nullptr;
     //const size_t buffer_size = 256;
-    const size_t buffer_size = 32;
+    //const size_t buffer_size = 32;
     auto & row_ptrs_buffer = worker_data.row_ptrs_buffer;
     row_ptrs_buffer.clear();
     row_ptrs_buffer.reserve(buffer_size);
@@ -2171,7 +2226,7 @@ void NO_INLINE probeBlockImplTypeCase(
                     for (size_t j = 0; j < num_columns_to_add; ++j)
                     {
                         //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                        deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                        deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
                     }
                     row_ptrs_buffer.clear();
                 }
@@ -2198,7 +2253,7 @@ void NO_INLINE probeBlockImplTypeCase(
         for (size_t j = 0; j < num_columns_to_add; ++j)
         {
             //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-            deserializeAndInsertFromPos(worker_data.simple_added_columns[j], row_ptrs_buffer);
+            deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
         }
         row_ptrs_buffer.clear();
     }
@@ -2296,6 +2351,8 @@ Block Join::doJoinBlockHashNew(
         table,
         enable_prefetch,
         prefetch_length,
+        insert_buffer_size,
+        insert_enable_simd,
         *probe_workers_data[stream_index]);
 
     /*JoinPartition::probeBlock(
