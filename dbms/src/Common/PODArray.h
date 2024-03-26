@@ -825,8 +825,7 @@ public:
 
     void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos)
     {
-        size_t prev_size = size();
-        reserve(prev_size + pos.size(), align);
+        reserve((c_end + buf_size - c_start) / element_size + pos.size(), align);
 
         assert(((uintptr_t)c_end & (align - 1)) == 0);
         size_t size = pos.size();
@@ -841,6 +840,7 @@ public:
             {
                 size_t copy_size = align - buf_size;
                 std::memcpy(&buf[buf_size], pos[i], copy_size);
+
                 store_nontemp_64B(c_end, buf);
                 c_end += align;
 
@@ -882,7 +882,7 @@ private:
     char * null;
 
     size_t buf_size = 0;
-    char buf[align];
+    alignas(64) char buf[align];
 };
 
 } // namespace DB

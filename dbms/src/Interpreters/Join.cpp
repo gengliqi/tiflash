@@ -1851,6 +1851,34 @@ void convertToSimpleMutableColumn(MutableColumnPtr & column_ptr, SimpleMutableCo
     }
 }
 
+void reserveSimpleMutableColumn(SimpleMutableColumn & simple_column, size_t n)
+{
+    if (simple_column.null_map)
+    {
+        simple_column.null_map->reserve(n);
+    }
+    switch (simple_column.type)
+    {
+    case SimpleColumnType::Fixed:
+    {
+        simple_column.pod_array->reserve(n, SimplePaddedPODArray::align);
+        break;
+    }
+    case SimpleColumnType::String:
+    {
+        auto * column = static_cast<ColumnString *>(simple_column.other_data);
+        column->reserve(n);
+        break;
+    }
+    case SimpleColumnType::Other:
+    {
+        auto * column = static_cast<IColumn *>(simple_column.other_data);
+        column->reserve(n);
+        break;
+    }
+    }
+}
+
 template <bool SIMD>
 inline void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos)
 {
@@ -1928,9 +1956,10 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     worker_data.simple_added_columns.clear();
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
-        added_columns[i]->reserve(limit_count);
         worker_data.simple_added_columns.emplace_back();
-        convertToSimpleMutableColumn(added_columns[i], worker_data.simple_added_columns.back());
+        auto & last_simple_column = worker_data.simple_added_columns.back();
+        convertToSimpleMutableColumn(added_columns[i], last_simple_column);
+        reserveSimpleMutableColumn(last_simple_column, limit_count);
     }
 
     KeyGetter key_getter(key_columns, key_sizes, collators);
@@ -2174,9 +2203,10 @@ void NO_INLINE probeBlockImplTypeCase(
     worker_data.simple_added_columns.clear();
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
-        added_columns[i]->reserve(limit_count);
         worker_data.simple_added_columns.emplace_back();
-        convertToSimpleMutableColumn(added_columns[i], worker_data.simple_added_columns.back());
+        auto & last_simple_column = worker_data.simple_added_columns.back();
+        convertToSimpleMutableColumn(added_columns[i], last_simple_column);
+        reserveSimpleMutableColumn(last_simple_column, limit_count);
     }
 
     KeyGetter key_getter(key_columns, key_sizes, collators);
