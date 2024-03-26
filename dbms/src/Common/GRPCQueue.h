@@ -204,8 +204,7 @@ public:
             if (awaitTask(std::move(task)))
                 return;
         }
-        std::lock_guard<std::mutex> lock(mu);
-        registered_tasks.push_back(std::move(task));
+        registerOneTask(std::move(task));
     }
 
 private:
@@ -244,6 +243,21 @@ private:
         LOG_DEBUG(log, "ExchangeLog: sender kick all tags");
     }
 
+    void registerOneTask(TaskPtr && task)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            if (!is_end)
+            {
+                registered_tasks.push_front(std::move(task));
+                return;
+            }
+        }
+        bool res = awaitTask(std::move(task));
+        if unlikely (!res)
+            RUNTIME_ASSERT(false, task->log, "await task is still waiting after finish");
+    }
+
     void wakeupOneTask()
     {
         TaskPtr task;
@@ -256,10 +270,7 @@ private:
         }
         if (awaitTask(std::move(task)))
             return;
-        {
-            std::lock_guard<std::mutex> lock(mu);
-            registered_tasks.push_front(std::move(task));
-        }
+        registerOneTask(std::move(task));
     }
 
     void wakeupAllTasks()
@@ -267,6 +278,7 @@ private:
         std::deque<TaskPtr> all_tasks;
         {
             std::lock_guard<std::mutex> lock(mu);
+            is_end = true;
             all_tasks.swap(registered_tasks);
         }
         while (!all_tasks.empty())
@@ -275,7 +287,7 @@ private:
             all_tasks.pop_front();
             bool res = awaitTask(std::move(task));
             if unlikely (!res)
-                RUNTIME_ASSERT(false, task->log, "await task is still waiting");
+                RUNTIME_ASSERT(false, task->log, "await task is still waiting after finish");
         }
     }
 
@@ -301,7 +313,7 @@ private:
     std::queue<GRPCKickTag *> tags;
 
     //GRPCKickTag * tag = nullptr;
-
+    bool is_end = false;
     std::deque<TaskPtr> registered_tasks;
 };
 
@@ -492,8 +504,7 @@ public:
             if (awaitTask(std::move(task)))
                 return;
         }
-        std::lock_guard<std::mutex> lock(mu);
-        registered_tasks.push_back(std::move(task));
+        registerOneTask(std::move(task));
     }
 
 private:
@@ -532,6 +543,21 @@ private:
         LOG_DEBUG(log, "ExchangeLog: receiver kick all tags");
     }
 
+    void registerOneTask(TaskPtr && task)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            if (!is_end)
+            {
+                registered_tasks.push_front(std::move(task));
+                return;
+            }
+        }
+        bool res = awaitTask(std::move(task));
+        if unlikely (!res)
+            RUNTIME_ASSERT(false, task->log, "await task is still waiting after finish");
+    }
+
     void wakeupOneTask()
     {
         TaskPtr task;
@@ -544,10 +570,7 @@ private:
         }
         if (awaitTask(std::move(task)))
             return;
-        {
-            std::lock_guard<std::mutex> lock(mu);
-            registered_tasks.push_front(std::move(task));
-        }
+        registerOneTask(std::move(task));
     }
 
     void wakeupAllTasks()
@@ -555,6 +578,7 @@ private:
         std::deque<TaskPtr> all_tasks;
         {
             std::lock_guard<std::mutex> lock(mu);
+            is_end = true;
             all_tasks.swap(registered_tasks);
         }
         while (!all_tasks.empty())
@@ -563,7 +587,7 @@ private:
             all_tasks.pop_front();
             bool res = awaitTask(std::move(task));
             if unlikely (!res)
-                RUNTIME_ASSERT(false, task->log, "await task is still waiting");
+                RUNTIME_ASSERT(false, task->log, "await task is still waiting after finish");
         }
     }
 
@@ -587,6 +611,7 @@ private:
     GRPCKickFunc test_kick_func;
     std::deque<std::pair<T, GRPCKickTag *>> data_tags;
 
+    bool is_end = false;
     std::deque<TaskPtr> registered_tasks;
 };
 
