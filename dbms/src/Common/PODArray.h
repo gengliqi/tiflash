@@ -826,12 +826,12 @@ public:
                 size_t copy_size = align - buf_size;
                 std::memcpy(&buf[buf_size], pos[i], copy_size);
 
-                store_nontemp_64B(c_end, buf);
+                mem_utils::store_nontemp_64B(c_end, buf);
                 c_end += align;
 
                 while (copy_size + align <= element_size)
                 {
-                    store_nontemp_64B(c_end, pos[i] + copy_size);
+                    mem_utils::store_nontemp_64B(c_end, pos[i] + copy_size);
                     c_end += align;
                     copy_size += align;
                 }
