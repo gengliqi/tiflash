@@ -183,6 +183,14 @@ __attribute__((pure)) bool memoryIsByteAVX512(const void * data, size_t size, st
     return result;
 }
 
+static inline void avx512_store_nontemp_64B(void * dst, void * src)
+{
+    __m512i * d1 = (__m512i*) dst;
+    __m512i s1 = *((__m512i*) src);
+
+    _mm512_stream_si512(d1, s1);
+}
+
 } // namespace mem_utils::_detail
 
 #endif

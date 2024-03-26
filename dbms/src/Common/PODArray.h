@@ -19,7 +19,7 @@
 #include <Common/Exception.h>
 #include <Common/MemoryTrackerSetter.h>
 #include <Common/memcpySmall.h>
-#include <Common/TargetSpecific.h>
+#include <Common/mem_utils.h>
 #include <common/likely.h>
 #include <common/strong_typedef.h>
 #include <string.h>
@@ -721,21 +721,6 @@ using PaddedPODArray = PODArray<T, INITIAL_SIZE, Allocator<false>, PAD_RIGHT, PA
 template <typename T, size_t stack_size_in_bytes>
 using PODArrayWithStackMemory
     = PODArray<T, 0, AllocatorWithStackMemory<Allocator<false>, integerRoundUp(stack_size_in_bytes, sizeof(T))>>;
-
-static inline void store_nontemp_64B(void * dst, void * src)
-{
-#ifdef __x86_64__
-    __m256i * d1 = (__m256i*) dst;
-    __m256i s1 = *((__m256i*) src);
-    __m256i * d2 = d1 + 1;
-    __m256i s2 = *(((__m256i*) src) + 1);
-
-    _mm256_stream_si256(d1, s1);
-    _mm256_stream_si256(d2, s2);
-#else
-    std::memcpy(dst, src, 64);
-#endif
-}
 
 class SimplePaddedPODArray : public PODArrayBase<SimplePaddedPODArray, Allocator<false>>
 {

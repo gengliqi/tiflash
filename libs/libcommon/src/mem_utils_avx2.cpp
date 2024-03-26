@@ -317,6 +317,17 @@ __attribute__((pure)) bool memoryIsByteAVX2(const void * data, size_t size, std:
     return result;
 }
 
+static inline void avx2_store_nontemp_64B(void * dst, void * src)
+{
+    __m256i * d1 = (__m256i*) dst;
+    __m256i s1 = *((__m256i*) src);
+    __m256i * d2 = d1 + 1;
+    __m256i s2 = *(((__m256i*) src) + 1);
+
+    _mm256_stream_si256(d1, s1);
+    _mm256_stream_si256(d2, s2);
+}
+
 } // namespace mem_utils::_detail
 
 #endif

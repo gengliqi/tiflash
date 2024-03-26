@@ -277,4 +277,16 @@ __attribute__((always_inline, pure)) inline bool memoryIsZero(const void * data,
 {
     return memoryIsByte(data, size, std::byte{0});
 }
+
+__attribute__((always_inline, pure)) inline void store_nontemp_64B(void * dst, void * src)
+{
+#ifdef TIFLASH_ENABLE_AVX512_SUPPORT
+    avx512_store_nontemp_64B(dst, src);
+#elif TIFLASH_ENABLE_AVX_SUPPORT
+    avx2_store_nontemp_64B(dst, src);
+#else
+    memcpy(dst, src, 64);
+#endif
+}
+
 } // namespace mem_utils
