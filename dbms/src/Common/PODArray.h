@@ -722,23 +722,25 @@ template <typename T, size_t stack_size_in_bytes>
 using PODArrayWithStackMemory
     = PODArray<T, 0, AllocatorWithStackMemory<Allocator<false>, integerRoundUp(stack_size_in_bytes, sizeof(T))>>;
 
-#ifdef __x86_64__
 static inline void store_nontemp_64B(void * dst, void * src)
 {
+#ifdef __x86_64__
     __m256i * d1 = (__m256i*) dst;
     __m256i s1 = *((__m256i*) src);
-    __m256i * d2 = d1+1;
-    __m256i s2 = *(((__m256i*) src)+1);
+    __m256i * d2 = d1 + 1;
+    __m256i s2 = *(((__m256i*) src) + 1);
 
     _mm256_stream_si256(d1, s1);
     _mm256_stream_si256(d2, s2);
-}
+#else
+    std::memcpy(dst, src, 64);
 #endif
+}
 
 class SimplePaddedPODArray : public PODArrayBase<SimplePaddedPODArray, Allocator<false>>
 {
 public:
-    static const size_t align = 64;
+    static constexpr size_t align = 64;
 
     explicit SimplePaddedPODArray(size_t element_size_, size_t initial_size_ = 4096)
         : element_size(element_size_)
@@ -823,13 +825,10 @@ public:
 
     void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos)
     {
-#ifndef __x86_64__
-        deserializeAndInsertFromPos(pos);
-#else
         size_t prev_size = size();
         reserve(prev_size + pos.size(), align);
 
-        assert(((uintptr_t)c_start & (align - 1)) == 0);
+        assert(((uintptr_t)c_end & (align - 1)) == 0);
         size_t size = pos.size();
         for (size_t i = 0; i < size; ++i)
         {
@@ -863,19 +862,16 @@ public:
             }
             pos[i] += element_size;
         }
-#endif
     }
 
     void flushBuffer()
     {
-#ifdef __x86_64__
         if (buf_size == 0)
             return;
 
         std::memcpy(c_end, buf, buf_size);
         c_end += buf_size;
         buf_size = 0;
-#endif
     }
 
 private:
@@ -885,10 +881,8 @@ private:
     const size_t pad_left;
     char * null;
 
-#ifdef __x86_64__
     size_t buf_size = 0;
     char buf[align];
-#endif
 };
 
 } // namespace DB
