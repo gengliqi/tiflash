@@ -19,7 +19,6 @@
 #include <Common/Exception.h>
 #include <Common/MemoryTrackerSetter.h>
 #include <Common/memcpySmall.h>
-#include <common/mem_utils_opt.h>
 #include <common/likely.h>
 #include <common/strong_typedef.h>
 #include <string.h>
@@ -724,8 +723,14 @@ using PODArrayWithStackMemory
 
 ALWAYS_INLINE inline void store_nontemp_64B(void * dst, void * src)
 {
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-    avx2_store_nontemp_64B(dst, src);
+#if defined(__AVX2__)
+    __m256i * d1 = (__m256i*) dst;
+    __m256i s1 = *((__m256i*) src);
+    __m256i * d2 = d1 + 1;
+    __m256i s2 = *(((__m256i*) src) + 1);
+
+    _mm256_stream_si256(d1, s1);
+    _mm256_stream_si256(d2, s2);
 #else
     memcpy(dst, src, 64);
 #endif
@@ -819,6 +824,7 @@ public:
 
     void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos)
     {
+#if defined(__AVX2__)
         reserve((c_end + buf_size - c_start) / element_size + pos.size(), align);
 
         assert(((uintptr_t)c_end & (align - 1)) == 0);
@@ -856,6 +862,9 @@ public:
             }
             pos[i] += element_size;
         }
+#else
+        RUNTIME_ASSERT(false, "not compile using -mavx2/-mavx512");
+#endif
     }
 
     void flushBuffer()

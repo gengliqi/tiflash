@@ -102,6 +102,8 @@ check_then_add_sources_compile_flag (
     src/Interpreters/Join.cpp
 )
 
+add_sources_compile_flag_avx2 (src/Interpreters/Join.cpp)
+
 list (APPEND tiflash_common_io_sources ${CONFIG_BUILD})
 list (APPEND tiflash_common_io_headers ${CONFIG_VERSION} ${CONFIG_COMMON})
 list (APPEND tiflash_common_io_headers ${fiu_include_dirs})
