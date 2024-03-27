@@ -822,7 +822,7 @@ public:
         }
     }
 
-    void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos)
+    void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos [[maybe_unused]])
     {
 #if defined(__AVX2__)
         reserve((c_end + buf_size - c_start) / element_size + pos.size(), align);
