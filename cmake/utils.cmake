@@ -32,3 +32,7 @@ endfunction ()
 function (add_sources_compile_flag_avx2)
     check_then_add_sources_compile_flag (TIFLASH_ENABLE_AVX_SUPPORT "-mavx2" ${ARGN})
 endfunction ()
+
+function (add_sources_compile_flag_avx512)
+    check_then_add_sources_compile_flag (TIFLASH_ENABLE_AVX512_SUPPORT "-mavx512bw;-mavx512vl;-mavx512f;-mavx512dq" ${ARGN})
+endfunction ()

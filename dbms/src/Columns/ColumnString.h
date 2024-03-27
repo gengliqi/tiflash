@@ -251,15 +251,25 @@ public:
         size_t char_size = chars.size();
         for (size_t i = 0; i < size; ++i)
         {
-            size_t str_size;
-            std::memcpy(&str_size, pos[i], sizeof(size_t));
-            pos[i] += sizeof(size_t);
+            if (pos[i] == nullptr)
+            {
+                chars.resize(char_size + 1);
+                std::memset(&chars[char_size], 0, 1);
+                char_size += 1;
+                offsets[prev_size + i] = char_size;
+            }
+            else
+            {
+                size_t str_size;
+                std::memcpy(&str_size, pos[i], sizeof(size_t));
+                pos[i] += sizeof(size_t);
 
-            chars.resize(char_size + str_size);
-            inline_memcpy(&chars[char_size], pos[i], str_size);
-            char_size += str_size;
-            offsets[prev_size + i] = char_size;
-            pos[i] += str_size;
+                chars.resize(char_size + str_size);
+                inline_memcpy(&chars[char_size], pos[i], str_size);
+                char_size += str_size;
+                offsets[prev_size + i] = char_size;
+                pos[i] += str_size;
+            }
         }
     }
 

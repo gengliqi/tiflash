@@ -162,8 +162,15 @@ public:
         size_t size = pos.size();
         for (size_t i = 0; i < size; ++i)
         {
-            std::memcpy(&data[prev_size + i], pos[i], sizeof(T));
-            pos[i] += sizeof(T);
+            if (pos[i] == nullptr)
+            {
+                std::memset(&data[prev_size + i], 0, sizeof(T));
+            }
+            else
+            {
+                std::memcpy(&data[prev_size + i], pos[i], sizeof(T));
+                pos[i] += sizeof(T);
+            }
         }
     }
 

@@ -102,6 +102,7 @@ struct ProbeProcessInfo
     bool all_rows_joined_finish;
     UInt64 cache_columns_threshold;
 
+    bool current_head_is_matched = false;
     char * new_hash_current_head = nullptr;
 
     /// these should be inited before probe each block

@@ -694,7 +694,7 @@ void convertBlockToRows(
             collators,                                                                                      \
             null_map,                                                                                       \
             probe_output_name_set,                                                                          \
-            partitioned_multiple_row_ptrs,                                                                                                \
+            partitioned_multiple_row_ptrs,                                                                  \
             worker_data);                                                                                   \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -727,7 +727,7 @@ void convertBlockToRowsType(
         collators,                                                                    \
         null_map,                                                                     \
         probe_output_name_set,                                                        \
-        partitioned_multiple_row_ptrs,                                                                              \
+        partitioned_multiple_row_ptrs,                                                \
         worker_data);
 
     if (null_map)
@@ -1666,7 +1666,7 @@ Block Join::doJoinBlockHash(ProbeProcessInfo & probe_process_info, const JoinBui
     return block;
 }
 
-template <typename Maps>
+template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename Maps>
 void probeBlockImpl(
     JoinMapMethod join_map_method,
     size_t rows,
@@ -1700,7 +1700,11 @@ void probeBlockImpl(
 #define M(METHOD)                                                                                           \
     case JoinMapMethod::METHOD:                                                                             \
         using KeyGetterType##METHOD = KeyGetterForType<JoinMapMethod::METHOD, typename Maps::METHOD##Type>; \
-        probeBlockImplType<typename KeyGetterType##METHOD::Type, typename KeyGetterType##METHOD::Hash>(     \
+        probeBlockImplType<                                                                                 \
+            KIND,                                                                                           \
+            STRICTNESS,                                                                                     \
+            typename KeyGetterType##METHOD::Type,                                                           \
+            typename KeyGetterType##METHOD::Hash>(                                                          \
             rows,                                                                                           \
             key_columns,                                                                                    \
             key_sizes,                                                                                      \
@@ -1712,8 +1716,8 @@ void probeBlockImpl(
             table,                                                                                          \
             enable_prefetch,                                                                                \
             prefetch_length,                                                                                \
-            insert_buffer_size,                                                                                                \
-            insert_enable_simd,                                                                                                \
+            insert_buffer_size,                                                                             \
+            insert_enable_simd,                                                                             \
             worker_data);                                                                                   \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -1724,7 +1728,7 @@ void probeBlockImpl(
     }
 }
 
-template <typename KeyGetter, typename Hash>
+template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Hash>
 void probeBlockImplType(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -1743,19 +1747,19 @@ void probeBlockImplType(
 {
     if (enable_prefetch)
     {
-#define CALL(has_null_map, simd)                                         \
-    probeBlockImplTypeCasePrefetch<KeyGetter, Hash, has_null_map, simd>( \
-        rows,                                                      \
-        key_columns,                                               \
-        key_sizes,                                                 \
-        added_columns,                                             \
-        num_columns_to_add,                                        \
-        null_map,                                                  \
-        collators,                                                 \
-        probe_process_info,                                        \
-        table,                                                     \
-        prefetch_length,                                           \
-        insert_buffer_size,                                                           \
+#define CALL(has_null_map, simd)                                                           \
+    probeBlockImplTypeCasePrefetch<KIND, STRICTNESS, KeyGetter, Hash, has_null_map, simd>( \
+        rows,                                                                              \
+        key_columns,                                                                       \
+        key_sizes,                                                                         \
+        added_columns,                                                                     \
+        num_columns_to_add,                                                                \
+        null_map,                                                                          \
+        collators,                                                                         \
+        probe_process_info,                                                                \
+        table,                                                                             \
+        prefetch_length,                                                                   \
+        insert_buffer_size,                                                                \
         worker_data);
 
         if (null_map)
@@ -1785,18 +1789,18 @@ void probeBlockImplType(
     }
     else
     {
-#define CALL(has_null_map, simd)                                 \
-    probeBlockImplTypeCase<KeyGetter, Hash, has_null_map, simd>( \
-        rows,                                              \
-        key_columns,                                       \
-        key_sizes,                                         \
-        added_columns,                                     \
-        num_columns_to_add,                                \
-        null_map,                                          \
-        collators,                                         \
-        probe_process_info,                                \
-        table,                                             \
-        insert_buffer_size,                                                   \
+#define CALL(has_null_map, simd)                                                   \
+    probeBlockImplTypeCase<KIND, STRICTNESS, KeyGetter, Hash, has_null_map, simd>( \
+        rows,                                                                      \
+        key_columns,                                                               \
+        key_sizes,                                                                 \
+        added_columns,                                                             \
+        num_columns_to_add,                                                        \
+        null_map,                                                                  \
+        collators,                                                                 \
+        probe_process_info,                                                        \
+        table,                                                                     \
+        insert_buffer_size,                                                        \
         worker_data);
 
         if (null_map)
@@ -1935,7 +1939,13 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
 
 #define PREFETCH_READ(ptr) __builtin_prefetch(ptr, 0 /* rw==read */, 3 /* locality */)
 
-template <typename KeyGetter, typename Hash, bool has_null_map, bool SIMD>
+template <
+    ASTTableJoin::Kind KIND,
+    ASTTableJoin::Strictness STRICTNESS,
+    typename KeyGetter,
+    typename Hash,
+    bool has_null_map,
+    bool SIMD>
 void NO_INLINE probeBlockImplTypeCasePrefetch(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -1982,6 +1992,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     struct PrefetchState
     {
         int8_t stage = 0;
+        bool is_matched = false;
         KetGetterType key_holder;
         size_t index;
         union
@@ -2001,10 +2012,15 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     size_t i = probe_process_info.start_row;
     size_t & k = worker_data.prefetch_iter;
     size_t current_offset = 0;
+    bool current_stage_is_empty;
     while (i < rows)
     {
         k = k == prefetch_length ? 0 : k;
         auto * state = &states[k];
+        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        {
+            current_stage_is_empty = state->stage == 0;
+        }
         if (state->stage == 2)
         {
             char * ptr = state->ptr;
@@ -2014,12 +2030,20 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                 state->ptr = next_ptr;
                 PREFETCH_READ(next_ptr + pointer_offset);
             }
+            else
+            {
+                state->stage = 0;
+            }
 
             auto key = keyHolderGetKey(state->key_holder);
             auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
 
             if (key == key2)
             {
+                if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                {
+                    state->is_matched = true;
+                }
                 size_t key_size = keyHolderGetKeySize(key2);
                 row_ptrs_buffer.push_back(ptr + key_offset + key_size);
                 selective_offsets.push_back(state->index);
@@ -2043,8 +2067,6 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                 ++k;
                 continue;
             }
-
-            state->stage = 0;
         }
         else if (state->stage == 1)
         {
@@ -2062,6 +2084,29 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         }
 
         assert(state->stage == 0);
+        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        {
+            if (!current_stage_is_empty && !state->is_matched)
+            {
+                row_ptrs_buffer.push_back(nullptr);
+                selective_offsets.push_back(state->index);
+                ++current_offset;
+                if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                {
+                    for (size_t j = 0; j < num_columns_to_add; ++j)
+                    {
+                        //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                        deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                    }
+                    row_ptrs_buffer.clear();
+                }
+                if unlikely (current_offset >= limit_count)
+                {
+                    break;
+                }
+            }
+        }
+
         if constexpr (has_null_map)
         {
             do
@@ -2080,6 +2125,10 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         size_t hash_value = Hash()(key);
         size_t bucket = table.getBucketNum(hash_value);
         state->index = i;
+        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        {
+            state->is_matched = false;
+        }
         state->pointer_ptr = table.pointer_table + bucket;
         state->stage = 1;
         PREFETCH_READ(state->pointer_ptr);
@@ -2119,6 +2168,10 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
 
                 if (key == key2)
                 {
+                    if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                    {
+                        state->is_matched = true;
+                    }
                     size_t key_size = keyHolderGetKeySize(key2);
                     row_ptrs_buffer.push_back(ptr + key_offset + key_size);
                     selective_offsets.push_back(state->index);
@@ -2149,6 +2202,29 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                 else
                 {
                     state->stage = 0;
+                }
+            }
+
+            if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+            {
+                if (state->stage == 0 && !state->is_matched)
+                {
+                    row_ptrs_buffer.push_back(nullptr);
+                    selective_offsets.push_back(state->index);
+                    ++current_offset;
+                    if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                    {
+                        for (size_t j = 0; j < num_columns_to_add; ++j)
+                        {
+                            //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                            deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                        }
+                        row_ptrs_buffer.clear();
+                    }
+                    if unlikely (current_offset >= limit_count)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -2183,7 +2259,13 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     probe_process_info.updateEndRow<false, true>(i, nullptr, till_end);
 }
 
-template <typename KeyGetter, typename Hash, bool has_null_map, bool SIMD>
+template <
+    ASTTableJoin::Kind KIND,
+    ASTTableJoin::Strictness STRICTNESS,
+    typename KeyGetter,
+    typename Hash,
+    bool has_null_map,
+    bool SIMD>
 void NO_INLINE probeBlockImplTypeCase(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -2247,12 +2329,20 @@ void NO_INLINE probeBlockImplTypeCase(
             size_t hash_value = Hash()(key);
             size_t bucket = table.getBucketNum(hash_value);
             head = table.pointer_table[bucket].load(std::memory_order_relaxed);
+            if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+            {
+                probe_process_info.current_head_is_matched = false;
+            }
         }
         while (head)
         {
             auto key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
             if (key == key2)
             {
+                if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                {
+                    probe_process_info.current_head_is_matched = true;
+                }
                 size_t key_size = keyHolderGetKeySize(key2);
                 row_ptrs_buffer.push_back(head + key_offset + key_size);
                 ++current_offset;
@@ -2276,11 +2366,41 @@ void NO_INLINE probeBlockImplTypeCase(
         offsets_to_replicate[i] = current_offset;
         if unlikely (current_offset >= limit_count)
         {
+            if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+            {
+                assert(probe_process_info.current_head_is_matched);
+            }
+
             if (head == nullptr)
                 ++i;
             else
                 current_head = head;
             break;
+        }
+        assert(head == nullptr);
+        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        {
+            if (!probe_process_info.current_head_is_matched)
+            {
+                row_ptrs_buffer.push_back(nullptr);
+                ++current_offset;
+                offsets_to_replicate[i] = current_offset;
+
+                if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                {
+                    for (size_t j = 0; j < num_columns_to_add; ++j)
+                    {
+                        //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                        deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                    }
+                    row_ptrs_buffer.clear();
+                }
+                if unlikely (current_offset >= limit_count)
+                {
+                    ++i;
+                    break;
+                }
+            }
         }
     }
     if (!row_ptrs_buffer.empty())
@@ -2373,22 +2493,35 @@ Block Join::doJoinBlockHashNew(
         kind == ASTTableJoin::Kind::Inner && strictness == ASTTableJoin::Strictness::All,
         "kind != inner && strictness != all");
 
-    probeBlockImpl<MapsAll>(
-        join_map_method,
-        rows,
-        probe_process_info.hash_join_data->key_columns,
-        key_sizes,
-        added_columns,
-        num_columns_to_add.size(),
-        probe_process_info.null_map,
-        collators,
-        probe_process_info,
-        table,
-        enable_prefetch,
-        prefetch_length,
-        insert_buffer_size,
-        insert_enable_simd,
+    using enum ASTTableJoin::Strictness;
+    using enum ASTTableJoin::Kind;
+
+#define CALL(KIND, STRICTNESS)                          \
+    probeBlockImpl<KIND, STRICTNESS, MapsAll>(          \
+        join_map_method,                                \
+        rows,                                           \
+        probe_process_info.hash_join_data->key_columns, \
+        key_sizes,                                      \
+        added_columns,                                  \
+        num_columns_to_add.size(),                      \
+        probe_process_info.null_map,                    \
+        collators,                                      \
+        probe_process_info,                             \
+        table,                                          \
+        enable_prefetch,                                \
+        prefetch_length,                                \
+        insert_buffer_size,                             \
+        insert_enable_simd,                             \
         *probe_workers_data[stream_index]);
+
+    if (kind == Inner && strictness == All)
+        CALL(Inner, All)
+    else if (kind == LeftOuter && strictness == All)
+        CALL(LeftOuter, All)
+    else
+        throw Exception("Logical error: unknown combination of JOIN", ErrorCodes::LOGICAL_ERROR);
+
+#undef CALL
 
     /*JoinPartition::probeBlock(
         partitions,

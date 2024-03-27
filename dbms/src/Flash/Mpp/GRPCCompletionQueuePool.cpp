@@ -25,7 +25,8 @@ GRPCCompletionQueuePool::GRPCCompletionQueuePool(size_t queue_count, size_t thre
 {
     for (size_t i = 0; i < queue_count; ++i)
         for (size_t j = 0; j < thread_per_queue; ++j)
-        workers.emplace_back(ThreadFactory::newThread(false, "GRPCComp", &GRPCCompletionQueuePool::thread, this, i));
+            workers.emplace_back(
+                ThreadFactory::newThread(false, "GRPCComp", &GRPCCompletionQueuePool::thread, this, i));
 }
 
 GRPCCompletionQueuePool::~GRPCCompletionQueuePool()

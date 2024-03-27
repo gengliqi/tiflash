@@ -322,10 +322,7 @@ public:
         return true;
     }
 
-    bool isWritable() const override
-    {
-        return local_request_handler.isWritable();
-    }
+    bool isWritable() const override { return local_request_handler.isWritable(); }
 
 private:
     friend class tests::TestMPPTunnel;

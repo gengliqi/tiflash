@@ -330,7 +330,7 @@ struct Settings
     M(SettingUInt64, new_hash_join_prefetch_length, 8, "") \
     M(SettingUInt64, connection_num_for_remote_tunnel, 1, "") \
     M(SettingUInt64, new_hash_join_insert_buffer, 64, "") \
-    M(SettingBool, new_hash_join_insert_enable_simd, true, "")
+    M(SettingBool, new_hash_join_insert_enable_simd, false, "")
 
 
 // clang-format on

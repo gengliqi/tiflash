@@ -724,13 +724,17 @@ template <typename T, size_t stack_size_in_bytes>
 using PODArrayWithStackMemory
     = PODArray<T, 0, AllocatorWithStackMemory<Allocator<false>, integerRoundUp(stack_size_in_bytes, sizeof(T))>>;
 
-ALWAYS_INLINE inline void store_nontemp_64B(void * dst, void * src)
+ALWAYS_INLINE inline void store_nontemp_64B(void * dst, const void * src)
 {
-#if defined(__AVX2__)
-    __m256i * d1 = (__m256i*) dst;
-    __m256i s1 = *((__m256i*) src);
+#if defined(__AVX512__)
+    __m512i * d1 = (__m512i *)dst;
+    __m512i s1 = *((__m512i *)src);
+    _mm512_stream_si512(d1, s1);
+#elif defined(__AVX2__)
+    __m256i * d1 = (__m256i *)dst;
+    __m256i s1 = *((__m256i *)src);
     __m256i * d2 = d1 + 1;
-    __m256i s2 = *(((__m256i*) src) + 1);
+    __m256i s2 = *(((__m256i *)src) + 1);
 
     _mm256_stream_si256(d1, s1);
     _mm256_stream_si256(d2, s2);
@@ -819,51 +823,66 @@ public:
         size_t size = pos.size();
         for (size_t i = 0; i < size; ++i)
         {
-            std::memcpy(c_end, pos[i], element_size);
+            if (pos[i] == nullptr)
+            {
+                std::memset(c_end, 0, element_size);
+            }
+            else
+            {
+                std::memcpy(c_end, pos[i], element_size);
+                pos[i] += element_size;
+            }
             c_end += element_size;
-            pos[i] += element_size;
         }
     }
 
     void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos [[maybe_unused]])
     {
-#if defined(__AVX2__)
+#if defined(__AVX2__) || defined(__AVX512__)
         reserve((c_end + buf_size - c_start) / element_size + pos.size(), align);
 
         assert(((uintptr_t)c_end & (align - 1)) == 0);
         size_t size = pos.size();
         for (size_t i = 0; i < size; ++i)
         {
+            const char * p = pos[i];
+            if (p == nullptr)
+            {
+                p = EmptyPODArray;
+            }
+            else
+            {
+                pos[i] += element_size;
+            }
             if (buf_size + element_size < align)
             {
-                std::memcpy(&buf[buf_size], pos[i], element_size);
+                std::memcpy(&buf[buf_size], p, element_size);
                 buf_size += element_size;
             }
             else
             {
                 size_t copy_size = align - buf_size;
-                std::memcpy(&buf[buf_size], pos[i], copy_size);
+                std::memcpy(&buf[buf_size], p, copy_size);
 
                 store_nontemp_64B(c_end, buf);
                 c_end += align;
 
                 while (copy_size + align <= element_size)
                 {
-                    store_nontemp_64B(c_end, pos[i] + copy_size);
+                    store_nontemp_64B(c_end, p + copy_size);
                     c_end += align;
                     copy_size += align;
                 }
                 if unlikely (copy_size < element_size)
                 {
                     buf_size = element_size - copy_size;
-                    std::memcpy(buf, pos[i] + copy_size, buf_size);
+                    std::memcpy(buf, p + copy_size, buf_size);
                 }
                 else
                 {
                     buf_size = 0;
                 }
             }
-            pos[i] += element_size;
         }
 #else
         RUNTIME_ASSERT(false, "not compile using -mavx2/-mavx512");

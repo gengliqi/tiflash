@@ -241,7 +241,10 @@ void MPPTunnel::connectSync(PacketWriter * writer)
     LOG_DEBUG(log, "Sync tunnel connected");
 }
 
-void MPPTunnel::connectLocalV2(size_t source_index, LocalRequestHandler & local_request_handler, bool has_remote_conn [[maybe_unused]])
+void MPPTunnel::connectLocalV2(
+    size_t source_index,
+    LocalRequestHandler & local_request_handler,
+    bool has_remote_conn [[maybe_unused]])
 {
     {
         std::unique_lock lk(mu);
@@ -253,12 +256,8 @@ void MPPTunnel::connectLocalV2(size_t source_index, LocalRequestHandler & local_
         RUNTIME_CHECK_MSG(mode == TunnelSenderMode::LOCAL, "{} should be a local tunnel", tunnel_id);
 
         LOG_TRACE(log, "ready to connect local tunnel version 2");
-        local_tunnel_v2 = std::make_shared<LocalTunnelSenderV2>(
-            source_index,
-            local_request_handler,
-            log,
-            mem_tracker,
-            tunnel_id);
+        local_tunnel_v2
+            = std::make_shared<LocalTunnelSenderV2>(source_index, local_request_handler, log, mem_tracker, tunnel_id);
         tunnel_sender = local_tunnel_v2;
 
         status = TunnelStatus::Connected;
@@ -300,8 +299,12 @@ void MPPTunnel::connectAsync(IAsyncCallData * call_data)
             }
             else
             {
-                async_tunnel_sender
-                    = std::make_shared<AsyncTunnelSender>(queue_limit, mem_tracker, log, tunnel_id, &data_size_in_queue);
+                async_tunnel_sender = std::make_shared<AsyncTunnelSender>(
+                    queue_limit,
+                    mem_tracker,
+                    log,
+                    tunnel_id,
+                    &data_size_in_queue);
             }
             tunnel_sender = async_tunnel_sender;
         }
