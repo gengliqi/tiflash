@@ -3825,26 +3825,24 @@ bool Join::buildPointerTable(size_t stream_index)
     while (true)
     {
         RowPtrs * row_ptrs = nullptr;
-        {
-            row_ptrs = partitioned_multiple_row_ptrs[worker_data->iter_index]->getNext();
-            if (row_ptrs == nullptr)
-            {
-                for (size_t i = 1; i < PARTITION_COUNT; ++i)
-                {
-                    size_t index = (worker_data->iter_index + i) % PARTITION_COUNT;
-                    row_ptrs = partitioned_multiple_row_ptrs[index]->getNext();
-                    if (row_ptrs != nullptr)
-                    {
-                        worker_data->iter_index = index;
-                        break;
-                    }
-                }
-            }
-        }
+        row_ptrs = partitioned_multiple_row_ptrs[worker_data->iter_index]->getNext();
         if (row_ptrs == nullptr)
         {
-            is_end = true;
-            break;
+            for (size_t i = 1; i < PARTITION_COUNT; ++i)
+            {
+                size_t index = (worker_data->iter_index + i) % PARTITION_COUNT;
+                row_ptrs = partitioned_multiple_row_ptrs[index]->getNext();
+                if (row_ptrs != nullptr)
+                {
+                    worker_data->iter_index = index;
+                    break;
+                }
+            }
+            if (row_ptrs == nullptr)
+            {
+                is_end = true;
+                break;
+            }
         }
         build_size += row_ptrs->size();
         for (char * row_ptr : *row_ptrs)

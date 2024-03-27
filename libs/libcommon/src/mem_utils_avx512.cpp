@@ -183,7 +183,7 @@ __attribute__((pure)) bool memoryIsByteAVX512(const void * data, size_t size, st
     return result;
 }
 
-__attribute__((always_inline, pure)) inline void avx512_store_nontemp_64B(void * dst, void * src)
+ALWAYS_INLINE inline void avx512_store_nontemp_64B(void * dst, void * src)
 {
     __m512i * d1 = (__m512i*) dst;
     __m512i s1 = *((__m512i*) src);
