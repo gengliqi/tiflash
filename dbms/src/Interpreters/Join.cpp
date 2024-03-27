@@ -448,6 +448,8 @@ void Join::initBuild(const Block & sample_block, size_t build_concurrency_)
 
     for (size_t i = 0; i < build_concurrency; ++i)
         build_workers_data.emplace_back(std::make_unique<BuildWorkerData>());
+    for (size_t i = 0; i < PARTITION_COUNT; ++i)
+        partitioned_multiple_row_ptrs.emplace_back(std::make_unique<MultipleRowPtrsWithLock>());
 }
 
 void Join::initProbe(const Block & sample_block, size_t probe_concurrency_)
@@ -670,6 +672,7 @@ void convertBlockToRows(
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
     const NameSet & probe_output_name_set,
+    std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> & partitioned_multiple_row_ptrs,
     BuildWorkerData & worker_data)
 {
     switch (join_map_method)
@@ -691,6 +694,7 @@ void convertBlockToRows(
             collators,                                                                                      \
             null_map,                                                                                       \
             probe_output_name_set,                                                                          \
+            partitioned_multiple_row_ptrs,                                                                                                \
             worker_data);                                                                                   \
         break;
         APPLY_FOR_JOIN_VARIANTS(M)
@@ -711,6 +715,7 @@ void convertBlockToRowsType(
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
     const NameSet & probe_output_name_set,
+    std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> & partitioned_multiple_row_ptrs,
     BuildWorkerData & worker_data)
 {
 #define CALL(has_null_map, need_record_null_rows)                                     \
@@ -722,6 +727,7 @@ void convertBlockToRowsType(
         collators,                                                                    \
         null_map,                                                                     \
         probe_output_name_set,                                                        \
+        partitioned_multiple_row_ptrs,                                                                              \
         worker_data);
 
     if (null_map)
@@ -751,6 +757,7 @@ void convertBlockToRowsTypeImpl(
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
     const NameSet & probe_output_name_set,
+    std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> & partitioned_multiple_row_ptrs,
     BuildWorkerData & worker_data)
 {
     Stopwatch watch;
@@ -801,7 +808,7 @@ void convertBlockToRowsTypeImpl(
         worker_data.row_sizes[i] += sizeof(size_t) + sizeof(char *) + keyHolderGetKeySize(key);
         worker_data.row_sizes[i] = (worker_data.row_sizes[i] + align - 1) / align * align;
         worker_data.hashes[i] = Hash()(key);
-        size_t part_num = worker_data.hashes[i] & PARTITION_MASK;
+        size_t part_num = getPartitionNum(worker_data.hashes[i]);
         partition_row_sizes[part_num] += worker_data.row_sizes[i];
         ++partition_row_count[part_num];
     }
@@ -845,7 +852,7 @@ void convertBlockToRowsTypeImpl(
             continue;
         }
 
-        size_t part_num = worker_data.hashes[i] & PARTITION_MASK;
+        size_t part_num = getPartitionNum(worker_data.hashes[i]);
         worker_data.row_ptrs[i] = partition_first_ptr[part_num];
         assert(((intptr_t)worker_data.row_ptrs[i] & (align - 1)) == 0);
 
@@ -874,10 +881,7 @@ void convertBlockToRowsTypeImpl(
     }
 
     for (size_t i = 0; i < PARTITION_COUNT; ++i)
-    {
-        worker_data.partitioned_row_counts[i] += partition_row_count[i];
-        worker_data.partitioned_multi_row_ptrs[i].emplace_back(std::move(partitioned_row_ptrs[i]));
-    }
+        partitioned_multiple_row_ptrs[i]->insert(std::move(partitioned_row_ptrs[i]), partition_row_count[i]);
 
     worker_data.convert_time += watch.elapsedMilliseconds();
 }
@@ -1003,6 +1007,7 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
                 collators,
                 null_map,
                 probe_output_name_set,
+                partitioned_multiple_row_ptrs,
                 *build_workers_data[stream_index]);
         }
         else
@@ -2073,7 +2078,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         state->key_holder = key_getter.getKeyHolder(i, &worker_data.pool, worker_data.sort_key_containers);
         auto key = keyHolderGetKey(state->key_holder);
         size_t hash_value = Hash()(key);
-        size_t bucket = hash_value & table.pointer_table_size_mask;
+        size_t bucket = table.getBucketNum(hash_value);
         state->index = i;
         state->pointer_ptr = table.pointer_table + bucket;
         state->stage = 1;
@@ -2240,7 +2245,7 @@ void NO_INLINE probeBlockImplTypeCase(
         else
         {
             size_t hash_value = Hash()(key);
-            size_t bucket = hash_value & table.pointer_table_size_mask;
+            size_t bucket = table.getBucketNum(hash_value);
             head = table.pointer_table[bucket].load(std::memory_order_relaxed);
         }
         while (head)
@@ -3096,8 +3101,13 @@ void Join::workAfterBuildFinish(size_t stream_index)
     if (enable_new_hash_join)
     {
         size_t all_row_count = 0;
+        size_t index = 0;
         for (size_t i = 0; i < build_concurrency; ++i)
+        {
             all_row_count += build_workers_data[i]->row_count;
+            build_workers_data[i]->iter_index = index;
+            index = (index + 1) % PARTITION_COUNT;
+        }
 
         Stopwatch watch;
         table.init(all_row_count);
@@ -3811,31 +3821,24 @@ bool Join::buildPointerTable(size_t stream_index)
     Stopwatch watch;
     size_t build_size = 0;
     bool is_end = false;
+    auto & worker_data = build_workers_data[stream_index];
     while (true)
     {
         RowPtrs * row_ptrs = nullptr;
         {
-            std::unique_lock lock(build_pointer_table_lock);
-            while (worker_data_index < build_concurrency)
+            row_ptrs = partitioned_multiple_row_ptrs[worker_data->iter_index]->getNext();
+            if (row_ptrs == nullptr)
             {
-                auto & worker_data = build_workers_data[worker_data_index];
-                while (worker_data_partition_index < PARTITION_COUNT)
+                for (size_t i = 1; i < PARTITION_COUNT; ++i)
                 {
-                    auto & multi_row_ptrs = worker_data->partitioned_multi_row_ptrs[worker_data_partition_index];
-                    if (worker_data_partition_iter_index < multi_row_ptrs.size())
+                    size_t index = (worker_data->iter_index + i) % PARTITION_COUNT;
+                    row_ptrs = partitioned_multiple_row_ptrs[index]->getNext();
+                    if (row_ptrs != nullptr)
                     {
-                        row_ptrs = &multi_row_ptrs[worker_data_partition_iter_index];
-                        ++worker_data_partition_iter_index;
+                        worker_data->iter_index = index;
                         break;
                     }
-                    ++worker_data_partition_index;
-                    worker_data_partition_iter_index = 0;
                 }
-                if (row_ptrs != nullptr)
-                    break;
-                ++worker_data_index;
-                worker_data_partition_index = 0;
-                worker_data_partition_iter_index = 0;
             }
         }
         if (row_ptrs == nullptr)
@@ -3847,7 +3850,7 @@ bool Join::buildPointerTable(size_t stream_index)
         for (char * row_ptr : *row_ptrs)
         {
             auto hash = unalignedLoad<size_t>(row_ptr);
-            size_t bucket = hash & table.pointer_table_size_mask;
+            size_t bucket = table.getBucketNum(hash);
             char * head;
             do
             {
@@ -3855,21 +3858,21 @@ bool Join::buildPointerTable(size_t stream_index)
                 unalignedStore<char *>(row_ptr + pointer_offset, head);
             } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
         }
-        if (build_size >= 8192 * 2)
+        if (build_size >= max_block_size)
         {
             break;
         }
     }
-    build_workers_data[stream_index]->build_pointer_table_size += build_size;
-    build_workers_data[stream_index]->build_pointer_table_time += watch.elapsedMilliseconds();
+    worker_data->build_pointer_table_size += build_size;
+    worker_data->build_pointer_table_time += watch.elapsedMilliseconds();
     if (is_end)
     {
         LOG_INFO(
             log,
             "{} build pointer table finish cost {}ms, build rows {}",
             stream_index,
-            build_workers_data[stream_index]->build_pointer_table_time,
-            build_workers_data[stream_index]->build_pointer_table_size);
+            worker_data->build_pointer_table_time,
+            worker_data->build_pointer_table_size);
         return false;
     }
     return true;

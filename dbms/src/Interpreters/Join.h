@@ -130,7 +130,12 @@ struct SimpleMutableColumn
 
 const size_t PARTITION_SHIFT = 4;
 const size_t PARTITION_COUNT = 1 << PARTITION_SHIFT;
-const size_t PARTITION_MASK = PARTITION_COUNT - 1;
+
+inline size_t getPartitionNum(size_t hash)
+{
+    const size_t PARTITION_MASK = (PARTITION_COUNT - 1) << (32 - PARTITION_SHIFT);
+    return (hash & PARTITION_MASK) >> (32 - PARTITION_SHIFT);
+}
 
 using RowPtrs = PaddedPODArray<char *>;
 using MultipleRowPtrs = std::vector<RowPtrs>;
@@ -142,14 +147,33 @@ void convertToSimpleMutableColumn(MutableColumnPtr & ptr, SimpleMutableColumn & 
 void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos);
 void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPtr & ptr);
 
+struct alignas(ABSL_CACHELINE_SIZE) MultipleRowPtrsWithLock
+{
+    std::mutex mu;
+    std::deque<RowPtrs> multi_row_ptrs;
+    size_t partitioned_row_counts = 0;
+    size_t build_table_index = 0;
+
+    void insert(RowPtrs && row_ptrs, size_t count)
+    {
+        std::unique_lock lock(mu);
+        multi_row_ptrs.push_back(std::move(row_ptrs));
+        partitioned_row_counts += count;
+    }
+
+    RowPtrs * getNext()
+    {
+        std::unique_lock lock(mu);
+        if (build_table_index >= multi_row_ptrs.size())
+            return nullptr;
+        return &multi_row_ptrs[build_table_index++];
+    }
+};
+
 class alignas(ABSL_CACHELINE_SIZE) BuildWorkerData
 {
 public:
-    BuildWorkerData()
-    {
-        partitioned_multi_row_ptrs.resize(PARTITION_COUNT);
-        partitioned_row_counts.resize(PARTITION_COUNT);
-    }
+    BuildWorkerData() = default;
     ~BuildWorkerData()
     {
         for (auto & c : row_memory)
@@ -159,8 +183,6 @@ public:
 
     Allocator<false> alloc;
     std::vector<std::pair<char *, size_t>> row_memory;
-    std::vector<MultipleRowPtrs> partitioned_multi_row_ptrs;
-    PaddedPODArray<size_t> partitioned_row_counts;
     size_t row_count = 0;
 
     char * null_rows_list_head = nullptr;
@@ -176,6 +198,8 @@ public:
 
     size_t build_pointer_table_time = 0;
     size_t build_pointer_table_size = 0;
+
+    size_t iter_index = 0;
 };
 
 class alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
@@ -205,6 +229,7 @@ public:
     }
 
     size_t pointer_table_size = 0;
+    size_t pointer_table_size_degree = 0;
     size_t pointer_table_size_mask = 0;
     std::atomic<char *> * pointer_table = nullptr;
     Allocator<true> alloc;
@@ -214,12 +239,24 @@ public:
     void init(size_t row_count)
     {
         pointer_table_size = pointerTableCapacity(row_count);
+        if (pointer_table_size > (1ULL << 32))
+        {
+            pointer_table_size = 1ULL << 32;
+        }
         RUNTIME_ASSERT(isPowerOfTwo(pointer_table_size));
+        pointer_table_size_degree = log2(pointer_table_size);
+        RUNTIME_ASSERT(1ULL << pointer_table_size_degree == pointer_table_size);
+        RUNTIME_ASSERT(pointer_table_size_degree <= 32);
 
-        pointer_table_size_mask = pointer_table_size - 1;
+        pointer_table_size_mask = (pointer_table_size - 1) << (32 - pointer_table_size_degree);
 
         pointer_table = reinterpret_cast<std::atomic<char *> *>(
             alloc.alloc(pointer_table_size * sizeof(std::atomic<char *>), sizeof(std::atomic<char *>)));
+    }
+
+    inline size_t getBucketNum(size_t hash) const
+    {
+        return (hash & pointer_table_size_mask) >> (32 - pointer_table_size_degree);
     }
 };
 
@@ -582,16 +619,12 @@ private:
     size_t insert_buffer_size;
     bool insert_enable_simd;
 
+    std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> partitioned_multiple_row_ptrs;
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;
 
     std::vector<std::unique_ptr<ProbeWorkerData>> probe_workers_data;
 
     JoinHashPointerTable table;
-
-    size_t worker_data_index = 0;
-    size_t worker_data_partition_index = 0;
-    size_t worker_data_partition_iter_index = 0;
-    std::mutex build_pointer_table_lock;
 
 private:
     /** Set information about structure of right hand of JOIN (joined data).
