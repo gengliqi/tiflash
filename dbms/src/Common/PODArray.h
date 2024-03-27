@@ -35,6 +35,9 @@
 #include <sys/mman.h>
 #endif
 
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 namespace DB
 {
