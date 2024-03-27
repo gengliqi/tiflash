@@ -19,7 +19,7 @@
 #include <Common/Exception.h>
 #include <Common/MemoryTrackerSetter.h>
 #include <Common/memcpySmall.h>
-#include <common/mem_utils.h>
+#include <common/mem_utils_opt.h>
 #include <common/likely.h>
 #include <common/strong_typedef.h>
 #include <string.h>
@@ -722,6 +722,15 @@ template <typename T, size_t stack_size_in_bytes>
 using PODArrayWithStackMemory
     = PODArray<T, 0, AllocatorWithStackMemory<Allocator<false>, integerRoundUp(stack_size_in_bytes, sizeof(T))>>;
 
+ALWAYS_INLINE inline void store_nontemp_64B(void * dst, void * src)
+{
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    avx2_store_nontemp_64B(dst, src);
+#else
+    memcpy(dst, src, 64);
+#endif
+}
+
 class SimplePaddedPODArray : public PODArrayBase<SimplePaddedPODArray, Allocator<false>>
 {
 public:
@@ -826,12 +835,12 @@ public:
                 size_t copy_size = align - buf_size;
                 std::memcpy(&buf[buf_size], pos[i], copy_size);
 
-                mem_utils::store_nontemp_64B(c_end, buf);
+                store_nontemp_64B(c_end, buf);
                 c_end += align;
 
                 while (copy_size + align <= element_size)
                 {
-                    mem_utils::store_nontemp_64B(c_end, pos[i] + copy_size);
+                    store_nontemp_64B(c_end, pos[i] + copy_size);
                     c_end += align;
                     copy_size += align;
                 }
