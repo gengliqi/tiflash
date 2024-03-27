@@ -823,7 +823,7 @@ public:
         size_t size = pos.size();
         for (size_t i = 0; i < size; ++i)
         {
-            if (pos[i] == nullptr)
+            /*if (pos[i] == nullptr)
             {
                 std::memset(c_end, 0, element_size);
             }
@@ -831,7 +831,9 @@ public:
             {
                 std::memcpy(c_end, pos[i], element_size);
                 pos[i] += element_size;
-            }
+            }*/
+            std::memcpy(c_end, pos[i], element_size);
+            pos[i] += element_size;
             c_end += element_size;
         }
     }
@@ -846,14 +848,15 @@ public:
         for (size_t i = 0; i < size; ++i)
         {
             const char * p = pos[i];
-            if (p == nullptr)
+            /*if (p == nullptr)
             {
                 p = EmptyPODArray;
             }
             else
             {
                 pos[i] += element_size;
-            }
+            }*/
+            pos[i] += element_size;
             if (buf_size + element_size < align)
             {
                 std::memcpy(&buf[buf_size], p, element_size);

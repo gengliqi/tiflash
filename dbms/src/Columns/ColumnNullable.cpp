@@ -290,7 +290,7 @@ void ColumnNullable::serializeToPos(PaddedPODArray<char *> & pos, size_t start, 
 
 void ColumnNullable::deserializeAndInsertFromPos(PaddedPODArray<char *> & pos)
 {
-    auto & map = getNullMapData();
+    /*auto & map = getNullMapData();
     size_t prev_size = map.size();
     map.resize(prev_size + pos.size());
 
@@ -306,8 +306,8 @@ void ColumnNullable::deserializeAndInsertFromPos(PaddedPODArray<char *> & pos)
             std::memcpy(&map[prev_size + i], pos[i], 1);
             pos[i] += 1;
         }
-    }
-    //getNullMapColumn().deserializeAndInsertFromPos(pos);
+    }*/
+    getNullMapColumn().deserializeAndInsertFromPos(pos);
     getNestedColumn().deserializeAndInsertFromPos(pos);
 }
 
