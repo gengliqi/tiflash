@@ -271,6 +271,17 @@ public:
         }
     }
 
+    void deserializeAndForwardPos(PaddedPODArray<char *> & pos) const override
+    {
+        size_t size = pos.size();
+        for (size_t i = 0; i < size; ++i)
+        {
+            size_t str_size;
+            std::memcpy(&str_size, pos[i], sizeof(size_t));
+            pos[i] += sizeof(size_t) + str_size;
+        }
+    }
+
     StringRef serializeValueIntoArena(
         size_t n,
         Arena & arena,

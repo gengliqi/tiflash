@@ -47,6 +47,7 @@ struct HashMethodOneNumber
 {
     using Self = HashMethodOneNumber<Value, Mapped, FieldType, use_cache>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, use_cache>;
+    using KeyType = FieldType;
 
     const FieldType * vec;
 
@@ -93,6 +94,7 @@ struct HashMethodString
 {
     using Self = HashMethodString<Value, Mapped, place_string_to_arena, use_cache>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, use_cache>;
+    using KeyType = StringRef;
 
     const IColumn::Offset * offsets;
     const UInt8 * chars;
@@ -146,6 +148,7 @@ struct HashMethodStringBin
 {
     using Self = HashMethodStringBin<Value, Mapped, padding>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, false>;
+    using KeyType = StringRef;
 
     const IColumn::Offset * offsets;
     const UInt8 * chars;
@@ -343,6 +346,7 @@ struct HashMethodFastPathTwoKeysSerialized
 {
     using Self = HashMethodFastPathTwoKeysSerialized<Key1Desc, Key2Desc, Value, Mapped>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, false>;
+    using KeyType = StringRef;
 
     Key1Desc key_1_desc;
     Key2Desc key_2_desc;
@@ -380,6 +384,7 @@ struct HashMethodFixedString
 {
     using Self = HashMethodFixedString<Value, Mapped, place_string_to_arena, use_cache>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, use_cache>;
+    using KeyType = StringRef;
 
     size_t n;
     const ColumnFixedString::Chars_t * chars;
@@ -437,6 +442,7 @@ struct HashMethodKeysFixed
     using Self = HashMethodKeysFixed<Value, Key, Mapped, has_nullable_keys_, use_cache>;
     using BaseHashed = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, use_cache>;
     using Base = columns_hashing_impl::BaseStateKeysFixed<Key, has_nullable_keys_>;
+    using KeyType = Key;
 
     static constexpr bool has_nullable_keys = has_nullable_keys_;
 
@@ -592,6 +598,7 @@ struct HashMethodSerialized
 {
     using Self = HashMethodSerialized<Value, Mapped>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, false>;
+    using KeyType = StringRef;
 
     ColumnRawPtrs key_columns;
     size_t keys_size;
@@ -628,6 +635,7 @@ struct HashMethodHashed
     using Key = UInt128;
     using Self = HashMethodHashed<Value, Mapped, use_cache>;
     using Base = columns_hashing_impl::HashMethodBase<Self, Value, Mapped, use_cache>;
+    using KeyType = Key;
 
     ColumnRawPtrs key_columns;
     TiDB::TiDBCollators collators;

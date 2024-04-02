@@ -104,6 +104,7 @@ public:
     void serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t end) const override;
 
     void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos) override;
+    void deserializeAndForwardPos(PaddedPODArray<char *> & pos) const override;
 
     ColumnPtr filter(const Filter & filt, ssize_t result_size_hint) const override;
     ColumnPtr permute(const Permutation & perm, size_t limit) const override;

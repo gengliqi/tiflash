@@ -190,6 +190,7 @@ public:
     }
 
     virtual void deserializeAndInsertFromPos(PaddedPODArray<char *> &) { RUNTIME_ASSERT(false, "not implemented"); }
+    virtual void deserializeAndForwardPos(PaddedPODArray<char *> &) const { RUNTIME_ASSERT(false, "not implemented"); }
 
     /** Serializes n-th element. Serialized element should be placed continuously inside Arena's memory.
       * Serialized value can be deserialized to reconstruct original object. Is used in aggregation.

@@ -217,14 +217,32 @@ ScanHashMapAfterProbeBlockInputStream::ScanHashMapAfterProbeBlockInputStream(
     }
 
     column_indices_right.reserve(parent.sample_block_without_keys.columns());
+    if (parent.enable_new_hash_join && parent.has_other_condition)
+        column_indices_right_new.reserve(parent.sample_block_without_keys.columns());
     /// Add columns from the right-side table to the block.
     for (size_t i = 0; i < parent.sample_block_without_keys.columns(); ++i)
     {
         const ColumnWithTypeAndName & src_column = parent.sample_block_without_keys.getByPosition(i);
-        if (parent.output_column_names_set_after_finalize.contains(src_column.name))
+        if (parent.enable_new_hash_join && parent.has_other_condition)
         {
-            result_sample_block.insert(src_column.cloneEmpty());
-            column_indices_right.push_back(i);
+            if (parent.output_columns_names_set_for_other_condition_after_finalize.contains(src_column.name))
+            {
+                bool finalize_contain = parent.output_column_names_set_after_finalize.contains(src_column.name);
+                column_indices_right_new.push_back(std::make_pair(finalize_contain, i));
+                if (finalize_contain)
+                {
+                    result_sample_block.insert(src_column.cloneEmpty());
+                    column_indices_right.push_back(i);
+                }
+            }
+        }
+        else
+        {
+            if (parent.output_column_names_set_after_finalize.contains(src_column.name))
+            {
+                result_sample_block.insert(src_column.cloneEmpty());
+                column_indices_right.push_back(i);
+            }
         }
     }
 
@@ -287,25 +305,50 @@ Block ScanHashMapAfterProbeBlockInputStream::readImpl()
     }
     assert(row_counter_column != nullptr);
 
-    while (current_partition_index < parent.getBuildConcurrency() && row_counter_column->size() < max_block_size)
+    if (parent.enable_new_hash_join)
     {
-        switch (parent.kind)
+        using enum ASTTableJoin::Kind;
+#define CALL(KIND, has_other_condition) fillColumnsNew<KIND, has_other_condition, MapsAll>(columns_left, columns_right);
+
+        if (parent.kind == RightOuter && parent.has_other_condition)
+            CALL(RightOuter, true)
+        else if (parent.kind == RightOuter && !parent.has_other_condition)
+            CALL(RightOuter, false)
+        else if (parent.kind == RightSemi && parent.has_other_condition)
+            CALL(RightSemi, true)
+        else if (parent.kind == RightSemi && !parent.has_other_condition)
+            CALL(RightSemi, false)
+        else if (parent.kind == RightAnti && parent.has_other_condition)
+            CALL(RightAnti, true)
+        else if (parent.kind == RightAnti && !parent.has_other_condition)
+            CALL(RightAnti, false)
+        else
+            throw Exception("Logical error: unknown combination of ScanHashMapAfterProbe", ErrorCodes::LOGICAL_ERROR);
+
+#undef CALL
+    }
+    else
+    {
+        while (current_partition_index < parent.getBuildConcurrency() && row_counter_column->size() < max_block_size)
         {
-        case ASTTableJoin::Kind::RightSemi:
-            if (parent.has_other_condition)
-                fillColumnsUsingCurrentPartition<true, true>(columns_left, columns_right, row_counter_column);
-            else
-                fillColumnsUsingCurrentPartition<false, true>(columns_left, columns_right, row_counter_column);
-            break;
-        case ASTTableJoin::Kind::RightAnti:
-        case ASTTableJoin::Kind::RightOuter:
-            if (parent.has_other_condition)
-                fillColumnsUsingCurrentPartition<true, false>(columns_left, columns_right, row_counter_column);
-            else
+            switch (parent.kind)
+            {
+            case ASTTableJoin::Kind::RightSemi:
+                if (parent.has_other_condition)
+                    fillColumnsUsingCurrentPartition<true, true>(columns_left, columns_right, row_counter_column);
+                else
+                    fillColumnsUsingCurrentPartition<false, true>(columns_left, columns_right, row_counter_column);
+                break;
+            case ASTTableJoin::Kind::RightAnti:
+            case ASTTableJoin::Kind::RightOuter:
+                if (parent.has_other_condition)
+                    fillColumnsUsingCurrentPartition<true, false>(columns_left, columns_right, row_counter_column);
+                else
+                    fillColumnsUsingCurrentPartition<false, false>(columns_left, columns_right, row_counter_column);
+                break;
+            default:
                 fillColumnsUsingCurrentPartition<false, false>(columns_left, columns_right, row_counter_column);
-            break;
-        default:
-            fillColumnsUsingCurrentPartition<false, false>(columns_left, columns_right, row_counter_column);
+            }
         }
     }
 
@@ -509,4 +552,143 @@ void ScanHashMapAfterProbeBlockInputStream::fillColumns(
     if (*it == end)
         advancedToNextPartition();
 }
+
+template <ASTTableJoin::Kind KIND, bool has_other_condition, typename Maps>
+void ScanHashMapAfterProbeBlockInputStream::fillColumnsNew(
+    MutableColumns & mutable_columns_left,
+    MutableColumns & mutable_columns_right)
+{
+    switch (parent.join_map_method)
+    {
+    case JoinMapMethod::EMPTY:
+        break;
+    case JoinMapMethod::CROSS:
+        break; /// Do nothing. We have already saved block, and it is enough.
+
+#define M(METHOD)                                                                                           \
+    case JoinMapMethod::METHOD:                                                                             \
+        using KeyGetterType##METHOD = KeyGetterForType<JoinMapMethod::METHOD, typename Maps::METHOD##Type>; \
+        fillColumnsNewImpl<KIND, has_other_condition, typename KeyGetterType##METHOD::Type::KeyType>(       \
+            mutable_columns_left,                                                                           \
+            mutable_columns_right);                                                                         \
+        break;
+        APPLY_FOR_JOIN_VARIANTS(M)
+#undef M
+
+    default:
+        throw Exception("Unknown JOIN keys variant.", ErrorCodes::UNKNOWN_SET_DATA_VARIANT);
+    }
+}
+
+template <ASTTableJoin::Kind KIND, bool has_other_condition, typename KeyType>
+void ScanHashMapAfterProbeBlockInputStream::fillColumnsNewImpl(
+    MutableColumns & mutable_columns_left,
+    MutableColumns & mutable_columns_right)
+{
+    using enum ASTTableJoin::Kind;
+    static_assert(KIND == RightOuter || KIND == RightSemi || KIND == RightAnti);
+
+    const size_t buffer_size = 256;
+    RowPtrs row_ptrs_buffer;
+    row_ptrs_buffer.reserve(buffer_size);
+    size_t added_rows = 0;
+    size_t num_columns_left = column_indices_left.size();
+    size_t num_columns_right = column_indices_right.size();
+    while (true)
+    {
+        if (current_ptrs == nullptr)
+        {
+            std::unique_lock lock(parent.build_scan_table_lock);
+            while (parent.scan_table_index < PARTITION_COUNT)
+            {
+                current_ptrs = parent.partitioned_multiple_row_ptrs[parent.scan_table_index]->getScanNext();
+                if (current_ptrs != nullptr)
+                {
+                    current_index = 0;
+                    break;
+                }
+                ++parent.scan_table_index;
+            }
+
+            if (current_ptrs == nullptr)
+                break;
+        }
+
+        size_t size = current_ptrs->size();
+
+        for (; current_index < size; ++current_index)
+        {
+            RowPtr ptr = (*current_ptrs)[current_index];
+            if constexpr (KIND == RightSemi)
+            {
+                if (!getRowPtrFlag(ptr))
+                    continue;
+            }
+            else
+            {
+                if (getRowPtrFlag(ptr))
+                    continue;
+            }
+
+            auto key = keyHolderDeserializeKey<KeyType>(ptr + key_offset);
+            size_t key_size = keyHolderGetKeySize(key);
+            row_ptrs_buffer.push_back(ptr + key_offset + key_size);
+            ++added_rows;
+            if unlikely (row_ptrs_buffer.size() >= buffer_size)
+            {
+                if constexpr (has_other_condition)
+                {
+                    size_t offset = 0;
+                    for (auto [finalize_contain, j] : column_indices_right_new)
+                    {
+                        if (finalize_contain)
+                            mutable_columns_right[offset++]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                        else
+                            parent.sample_block_without_keys.getByPosition(j).column->deserializeAndForwardPos(
+                                row_ptrs_buffer);
+                    }
+                }
+                else
+                {
+                    for (size_t j = 0; j < num_columns_right; ++j)
+                        mutable_columns_right[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                }
+                row_ptrs_buffer.clear();
+            }
+            if unlikely (added_rows >= max_block_size)
+            {
+                ++current_index;
+                break;
+            }
+        }
+        if (current_index >= size)
+            current_ptrs = nullptr;
+
+        if unlikely (added_rows >= max_block_size)
+            break;
+    }
+    if (!row_ptrs_buffer.empty())
+    {
+        if constexpr (has_other_condition)
+        {
+            size_t offset = 0;
+            for (auto [finalize_contain, j] : column_indices_right_new)
+            {
+                if (finalize_contain)
+                    mutable_columns_right[offset++]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                else
+                    parent.sample_block_without_keys.getByPosition(j).column->deserializeAndForwardPos(row_ptrs_buffer);
+            }
+        }
+        else
+        {
+            for (size_t j = 0; j < num_columns_right; ++j)
+                mutable_columns_right[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+        }
+        row_ptrs_buffer.clear();
+    }
+    for (size_t j = 0; j < num_columns_left; ++j)
+        mutable_columns_left[j]->insertManyDefaults(added_rows);
+}
+
 } // namespace DB

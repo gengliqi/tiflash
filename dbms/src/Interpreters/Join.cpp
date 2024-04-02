@@ -672,6 +672,7 @@ void convertBlockToRows(
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
     const NameSet & probe_output_name_set,
+    const Names & key_names_right,
     std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> & partitioned_multiple_row_ptrs,
     BuildWorkerData & worker_data)
 {
@@ -694,6 +695,7 @@ void convertBlockToRows(
             collators,                                                                                      \
             null_map,                                                                                       \
             probe_output_name_set,                                                                          \
+            key_names_right,                                                                                \
             partitioned_multiple_row_ptrs,                                                                  \
             worker_data);                                                                                   \
         break;
@@ -715,6 +717,7 @@ void convertBlockToRowsType(
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
     const NameSet & probe_output_name_set,
+    const Names & key_names_right,
     std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> & partitioned_multiple_row_ptrs,
     BuildWorkerData & worker_data)
 {
@@ -727,6 +730,7 @@ void convertBlockToRowsType(
         collators,                                                                    \
         null_map,                                                                     \
         probe_output_name_set,                                                        \
+        key_names_right,                                                              \
         partitioned_multiple_row_ptrs,                                                \
         worker_data);
 
@@ -757,6 +761,7 @@ void convertBlockToRowsTypeImpl(
     const TiDB::TiDBCollators & collators,
     ConstNullMapPtr null_map,
     const NameSet & probe_output_name_set,
+    const Names & key_names_right,
     std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> & partitioned_multiple_row_ptrs,
     BuildWorkerData & worker_data)
 {
@@ -773,12 +778,18 @@ void convertBlockToRowsTypeImpl(
 
     size_t columns = stored_block->columns();
     std::vector<size_t> added_indexes;
+    // TODO: optimize it, if the size is fixed, do not need to call `countSerializeLength`
     for (size_t i = 0; i < columns; ++i)
     {
-        if (probe_output_name_set.find(stored_block->getByPosition(i).name) != probe_output_name_set.end())
+        auto & name = stored_block->getByPosition(i).name;
+        if (probe_output_name_set.find(name) != probe_output_name_set.end())
         {
-            stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
-            added_indexes.push_back(i);
+            // TODO: this is strange. Do not copy the key column in the real implementation.
+            if (key_names_right.end() == std::find(key_names_right.begin(), key_names_right.end(), name))
+            {
+                stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
+                added_indexes.push_back(i);
+            }
         }
     }
 
@@ -787,15 +798,14 @@ void convertBlockToRowsTypeImpl(
     size_t part_count = need_record_null_rows ? PARTITION_COUNT + 1 : PARTITION_COUNT;
     std::vector<size_t> partition_row_sizes(part_count);
     std::vector<size_t> partition_row_count(PARTITION_COUNT);
-    const size_t align = 8;
     for (size_t i = 0; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
         {
             if constexpr (need_record_null_rows)
             {
-                worker_data.row_sizes[i] += sizeof(char *);
-                worker_data.row_sizes[i] = (worker_data.row_sizes[i] + align - 1) / align * align;
+                worker_data.row_sizes[i] += sizeof(RowPtr);
+                worker_data.row_sizes[i] = (worker_data.row_sizes[i] + row_align - 1) / row_align * row_align;
                 partition_row_sizes[PARTITION_COUNT] += worker_data.row_sizes[i];
             }
             continue;
@@ -805,21 +815,21 @@ void convertBlockToRowsTypeImpl(
 
         const auto & key = keyHolderGetKey(key_holder);
 
-        worker_data.row_sizes[i] += sizeof(size_t) + sizeof(char *) + keyHolderGetKeySize(key);
-        worker_data.row_sizes[i] = (worker_data.row_sizes[i] + align - 1) / align * align;
+        worker_data.row_sizes[i] += sizeof(size_t) + sizeof(RowPtr) + keyHolderGetKeySize(key);
+        worker_data.row_sizes[i] = (worker_data.row_sizes[i] + row_align - 1) / row_align * row_align;
         worker_data.hashes[i] = Hash()(key);
         size_t part_num = getPartitionNum(worker_data.hashes[i]);
         partition_row_sizes[part_num] += worker_data.row_sizes[i];
         ++partition_row_count[part_num];
     }
 
-    std::vector<char *> partition_first_ptr(part_count);
+    std::vector<RowPtr> partition_first_ptr(part_count);
     for (size_t i = 0; i < part_count; ++i)
     {
         if (partition_row_sizes[i] > 0)
         {
             //partition_first_ptr[i] = new char[partition_row_sizes[i]];
-            partition_first_ptr[i] = static_cast<char *>(worker_data.alloc.alloc(partition_row_sizes[i], align));
+            partition_first_ptr[i] = static_cast<RowPtr>(worker_data.alloc.alloc(partition_row_sizes[i], row_align));
             worker_data.row_memory.emplace_back(partition_first_ptr[i], partition_row_sizes[i]);
         }
     }
@@ -835,12 +845,12 @@ void convertBlockToRowsTypeImpl(
             if constexpr (need_record_null_rows)
             {
                 worker_data.row_ptrs[i] = partition_first_ptr[PARTITION_COUNT];
-                assert(((intptr_t)worker_data.row_ptrs[i] & (align - 1)) == 0);
+                assert(((intptr_t)worker_data.row_ptrs[i] & (row_align - 1)) == 0);
 
                 partition_first_ptr[PARTITION_COUNT] += worker_data.row_sizes[i];
 
                 /// Append to null rows list
-                unalignedStore<char *>(worker_data.row_ptrs[i], worker_data.null_rows_list_head);
+                unalignedStore<RowPtr>(worker_data.row_ptrs[i], worker_data.null_rows_list_head);
                 worker_data.null_rows_list_head = worker_data.row_ptrs[i];
 
                 worker_data.row_ptrs[i] += sizeof(size_t);
@@ -854,14 +864,15 @@ void convertBlockToRowsTypeImpl(
 
         size_t part_num = getPartitionNum(worker_data.hashes[i]);
         worker_data.row_ptrs[i] = partition_first_ptr[part_num];
-        assert(((intptr_t)worker_data.row_ptrs[i] & (align - 1)) == 0);
+        assert(((intptr_t)worker_data.row_ptrs[i] & (row_align - 1)) == 0);
 
         partition_first_ptr[part_num] += worker_data.row_sizes[i];
 
         partitioned_row_ptrs[part_num].push_back(worker_data.row_ptrs[i]);
+
         unalignedStore<size_t>(worker_data.row_ptrs[i], worker_data.hashes[i]);
-        unalignedStore<char *>(worker_data.row_ptrs[i] + sizeof(size_t), nullptr);
-        worker_data.row_ptrs[i] += sizeof(size_t) + sizeof(char *);
+        unalignedStore<RowPtr>(worker_data.row_ptrs[i] + sizeof(size_t), nullptr);
+        worker_data.row_ptrs[i] += sizeof(size_t) + sizeof(RowPtr);
 
         auto key_holder = key_getter.getKeyHolder(i, &worker_data.pool, sort_key_containers);
         SCOPE_EXIT(keyHolderDiscardKey(key_holder));
@@ -1007,6 +1018,7 @@ void Join::insertFromBlockInternal(Block * stored_block, size_t stream_index)
                 collators,
                 null_map,
                 probe_output_name_set,
+                key_names_right,
                 partitioned_multiple_row_ptrs,
                 *build_workers_data[stream_index]);
         }
@@ -1666,7 +1678,7 @@ Block Join::doJoinBlockHash(ProbeProcessInfo & probe_process_info, const JoinBui
     return block;
 }
 
-template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename Maps>
+template <ASTTableJoin::Kind KIND, bool right_family_has_other_condition, typename Maps>
 void probeBlockImpl(
     JoinMapMethod join_map_method,
     size_t rows,
@@ -1702,7 +1714,7 @@ void probeBlockImpl(
         using KeyGetterType##METHOD = KeyGetterForType<JoinMapMethod::METHOD, typename Maps::METHOD##Type>; \
         probeBlockImplType<                                                                                 \
             KIND,                                                                                           \
-            STRICTNESS,                                                                                     \
+            right_family_has_other_condition,                                                               \
             typename KeyGetterType##METHOD::Type,                                                           \
             typename KeyGetterType##METHOD::Hash>(                                                          \
             rows,                                                                                           \
@@ -1728,7 +1740,7 @@ void probeBlockImpl(
     }
 }
 
-template <ASTTableJoin::Kind KIND, ASTTableJoin::Strictness STRICTNESS, typename KeyGetter, typename Hash>
+template <ASTTableJoin::Kind KIND, bool right_family_has_other_condition, typename KeyGetter, typename Hash>
 void probeBlockImplType(
     size_t rows,
     const ColumnRawPtrs & key_columns,
@@ -1747,19 +1759,19 @@ void probeBlockImplType(
 {
     if (enable_prefetch)
     {
-#define CALL(has_null_map, simd)                                                           \
-    probeBlockImplTypeCasePrefetch<KIND, STRICTNESS, KeyGetter, Hash, has_null_map, simd>( \
-        rows,                                                                              \
-        key_columns,                                                                       \
-        key_sizes,                                                                         \
-        added_columns,                                                                     \
-        num_columns_to_add,                                                                \
-        null_map,                                                                          \
-        collators,                                                                         \
-        probe_process_info,                                                                \
-        table,                                                                             \
-        prefetch_length,                                                                   \
-        insert_buffer_size,                                                                \
+#define CALL(has_null_map, simd)                                                                                 \
+    probeBlockImplTypeCasePrefetch<KIND, right_family_has_other_condition, KeyGetter, Hash, has_null_map, simd>( \
+        rows,                                                                                                    \
+        key_columns,                                                                                             \
+        key_sizes,                                                                                               \
+        added_columns,                                                                                           \
+        num_columns_to_add,                                                                                      \
+        null_map,                                                                                                \
+        collators,                                                                                               \
+        probe_process_info,                                                                                      \
+        table,                                                                                                   \
+        prefetch_length,                                                                                         \
+        insert_buffer_size,                                                                                      \
         worker_data);
 
         if (null_map)
@@ -1789,18 +1801,18 @@ void probeBlockImplType(
     }
     else
     {
-#define CALL(has_null_map, simd)                                                   \
-    probeBlockImplTypeCase<KIND, STRICTNESS, KeyGetter, Hash, has_null_map, simd>( \
-        rows,                                                                      \
-        key_columns,                                                               \
-        key_sizes,                                                                 \
-        added_columns,                                                             \
-        num_columns_to_add,                                                        \
-        null_map,                                                                  \
-        collators,                                                                 \
-        probe_process_info,                                                        \
-        table,                                                                     \
-        insert_buffer_size,                                                        \
+#define CALL(has_null_map, simd)                                                                         \
+    probeBlockImplTypeCase<KIND, right_family_has_other_condition, KeyGetter, Hash, has_null_map, simd>( \
+        rows,                                                                                            \
+        key_columns,                                                                                     \
+        key_sizes,                                                                                       \
+        added_columns,                                                                                   \
+        num_columns_to_add,                                                                              \
+        null_map,                                                                                        \
+        collators,                                                                                       \
+        probe_process_info,                                                                              \
+        table,                                                                                           \
+        insert_buffer_size,                                                                              \
         worker_data);
 
         if (null_map)
@@ -1939,9 +1951,29 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
 
 #define PREFETCH_READ(ptr) __builtin_prefetch(ptr, 0 /* rw==read */, 3 /* locality */)
 
+template <ASTTableJoin::Kind KIND>
+inline RowPtr getNextRowPtr(const RowPtr ptr)
+{
+    using enum ASTTableJoin::Strictness;
+    using enum ASTTableJoin::Kind;
+    auto * next = reinterpret_cast<std::atomic<RowPtr> *>(ptr + pointer_offset)->load(std::memory_order_relaxed);
+    if constexpr (KIND == RightOuter || KIND == RightSemi || KIND == RightAnti)
+    {
+        next = reinterpret_cast<RowPtr>(reinterpret_cast<uintptr_t>(next) & (~static_cast<uintptr_t>(row_align - 1)));
+    }
+    return next;
+}
+
+template <ASTTableJoin::Kind KIND>
+inline constexpr bool isRightFamily()
+{
+    using enum ASTTableJoin::Kind;
+    return KIND == RightOuter || KIND == RightSemi || KIND == RightAnti;
+}
+
 template <
     ASTTableJoin::Kind KIND,
-    ASTTableJoin::Strictness STRICTNESS,
+    bool right_family_has_other_condition,
     typename KeyGetter,
     typename Hash,
     bool has_null_map,
@@ -1960,6 +1992,9 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     size_t buffer_size,
     ProbeWorkerData & worker_data)
 {
+    using enum ASTTableJoin::Strictness;
+    using enum ASTTableJoin::Kind;
+
     RUNTIME_ASSERT(probe_process_info.start_row <= rows);
 
     size_t limit_count = rows;
@@ -1984,6 +2019,13 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     //const size_t buffer_size = 32;
     auto & row_ptrs_buffer = worker_data.row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
+    PointerHelper::ColumnType * actual_row_ptrs_col = nullptr;
+    if constexpr (isRightFamily<KIND>() && right_family_has_other_condition)
+    {
+        assert(added_columns.size() > num_columns_to_add);
+        actual_row_ptrs_col = static_cast<PointerHelper::ColumnType *>(added_columns[num_columns_to_add].get());
+        actual_row_ptrs_col->reserve(limit_count);
+    }
     auto & selective_offsets = *probe_process_info.selective_offsets;
     selective_offsets.reserve(limit_count);
 
@@ -1997,8 +2039,8 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         size_t index;
         union
         {
-            char * ptr;
-            std::atomic<char *> * pointer_ptr;
+            RowPtr ptr;
+            std::atomic<RowPtr> * pointer_ptr;
         };
     };
     if (!worker_data.prefetch_states)
@@ -2023,8 +2065,8 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         }
         if (state->stage == 2)
         {
-            char * ptr = state->ptr;
-            char * next_ptr = unalignedLoad<char *>(ptr + pointer_offset);
+            RowPtr ptr = state->ptr;
+            RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
             if (next_ptr)
             {
                 state->ptr = next_ptr;
@@ -2035,31 +2077,53 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                 state->stage = 0;
             }
 
-            auto key = keyHolderGetKey(state->key_holder);
-            auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
-
-            if (key == key2)
+            bool need_check_key = true;
+            if constexpr (KIND == RightSemi || KIND == RightAnti)
             {
-                if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                need_check_key = !getRowPtrFlag(ptr);
+            }
+
+            if (need_check_key)
+            {
+                auto key = keyHolderGetKey(state->key_holder);
+                auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
+
+                if (key == key2)
                 {
-                    state->is_matched = true;
-                }
-                size_t key_size = keyHolderGetKeySize(key2);
-                row_ptrs_buffer.push_back(ptr + key_offset + key_size);
-                selective_offsets.push_back(state->index);
-                ++current_offset;
-                if unlikely (row_ptrs_buffer.size() >= buffer_size)
-                {
-                    for (size_t j = 0; j < num_columns_to_add; ++j)
+                    if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
                     {
-                        //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                        deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                        state->is_matched = true;
                     }
-                    row_ptrs_buffer.clear();
-                }
-                if unlikely (current_offset >= limit_count)
-                {
-                    break;
+                    if constexpr (isRightFamily<KIND>() && !right_family_has_other_condition)
+                    {
+                        setRowPtrFlag(ptr);
+                    }
+                    if constexpr (
+                        KIND == Inner || KIND == LeftOuter || KIND == RightOuter
+                        || ((KIND == RightSemi || KIND == RightAnti) && right_family_has_other_condition))
+                    {
+                        size_t key_size = keyHolderGetKeySize(key2);
+                        row_ptrs_buffer.push_back(ptr + key_offset + key_size);
+                        if constexpr (isRightFamily<KIND>() && right_family_has_other_condition)
+                        {
+                            actual_row_ptrs_col->insert(reinterpret_cast<intptr_t>(ptr));
+                        }
+                        selective_offsets.push_back(state->index);
+                        ++current_offset;
+                        if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                        {
+                            for (size_t j = 0; j < num_columns_to_add; ++j)
+                            {
+                                //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                                deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                            }
+                            row_ptrs_buffer.clear();
+                        }
+                        if unlikely (current_offset >= limit_count)
+                        {
+                            break;
+                        }
+                    }
                 }
             }
             if (next_ptr)
@@ -2070,7 +2134,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         }
         else if (state->stage == 1)
         {
-            char * ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+            RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
             if (ptr)
             {
                 state->ptr = ptr;
@@ -2150,8 +2214,8 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
             q.pop();
             if (state->stage == 2)
             {
-                char * ptr = state->ptr;
-                char * next_ptr = unalignedLoad<char *>(ptr + pointer_offset);
+                RowPtr ptr = state->ptr;
+                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
                 if (next_ptr)
                 {
                     state->ptr = next_ptr;
@@ -2163,35 +2227,59 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     state->stage = 0;
                 }
 
-                auto key = keyHolderGetKey(state->key_holder);
-                auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
-
-                if (key == key2)
+                bool need_check_key = true;
+                if constexpr (KIND == RightSemi || KIND == RightAnti)
                 {
-                    if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                    need_check_key = !getRowPtrFlag(ptr);
+                }
+
+                if (need_check_key)
+                {
+                    auto key = keyHolderGetKey(state->key_holder);
+                    auto key2 = keyHolderDeserializeKey<decltype(key)>(ptr + key_offset);
+
+                    if (key == key2)
                     {
-                        state->is_matched = true;
-                    }
-                    size_t key_size = keyHolderGetKeySize(key2);
-                    row_ptrs_buffer.push_back(ptr + key_offset + key_size);
-                    selective_offsets.push_back(state->index);
-                    ++current_offset;
-                    if unlikely (row_ptrs_buffer.size() >= buffer_size)
-                    {
-                        for (size_t j = 0; j < num_columns_to_add; ++j)
+                        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
                         {
-                            //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                            deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                            state->is_matched = true;
                         }
-                        row_ptrs_buffer.clear();
+                        if constexpr (isRightFamily<KIND>() && !right_family_has_other_condition)
+                        {
+                            setRowPtrFlag(ptr);
+                        }
+                        if constexpr (
+                            KIND == Inner || KIND == LeftOuter || KIND == RightOuter
+                            || ((KIND == RightSemi || KIND == RightAnti) && right_family_has_other_condition))
+                        {
+                            size_t key_size = keyHolderGetKeySize(key2);
+                            row_ptrs_buffer.push_back(ptr + key_offset + key_size);
+                            if constexpr (isRightFamily<KIND>() && right_family_has_other_condition)
+                            {
+                                actual_row_ptrs_col->insert(reinterpret_cast<intptr_t>(ptr));
+                            }
+                            selective_offsets.push_back(state->index);
+                            ++current_offset;
+                            if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                            {
+                                for (size_t j = 0; j < num_columns_to_add; ++j)
+                                {
+                                    //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                                    deserializeAndInsertFromPos<SIMD>(
+                                        worker_data.simple_added_columns[j],
+                                        row_ptrs_buffer);
+                                }
+                                row_ptrs_buffer.clear();
+                            }
+                            if unlikely (current_offset >= limit_count)
+                                break;
+                        }
                     }
-                    if unlikely (current_offset >= limit_count)
-                        break;
                 }
             }
             else if (state->stage == 1)
             {
-                char * ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+                RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
                 if (ptr)
                 {
                     state->ptr = ptr;
@@ -2261,7 +2349,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
 
 template <
     ASTTableJoin::Kind KIND,
-    ASTTableJoin::Strictness STRICTNESS,
+    bool right_family_has_other_condition,
     typename KeyGetter,
     typename Hash,
     bool has_null_map,
@@ -2279,6 +2367,8 @@ void NO_INLINE probeBlockImplTypeCase(
     size_t buffer_size,
     ProbeWorkerData & worker_data)
 {
+    using enum ASTTableJoin::Kind;
+
     RUNTIME_ASSERT(probe_process_info.start_row < rows);
 
     size_t limit_count = rows;
@@ -2300,26 +2390,33 @@ void NO_INLINE probeBlockImplTypeCase(
     worker_data.sort_key_containers.resize(key_columns.size());
 
     size_t i;
-    char * current_head = nullptr;
+    RowPtr current_head = nullptr;
     //const size_t buffer_size = 256;
     //const size_t buffer_size = 32;
     auto & row_ptrs_buffer = worker_data.row_ptrs_buffer;
     row_ptrs_buffer.clear();
     row_ptrs_buffer.reserve(buffer_size);
+    PointerHelper::ColumnType * actual_row_ptrs_col = nullptr;
+    if constexpr (isRightFamily<KIND>() && right_family_has_other_condition)
+    {
+        assert(added_columns.size() > num_columns_to_add);
+        actual_row_ptrs_col = static_cast<PointerHelper::ColumnType *>(added_columns[num_columns_to_add].get());
+        actual_row_ptrs_col->reserve(limit_count);
+    }
     size_t current_offset = 0;
     auto & offsets_to_replicate = *probe_process_info.offsets_to_replicate;
     for (i = probe_process_info.start_row; i < rows; ++i)
     {
         if (has_null_map && (*null_map)[i])
         {
-            // TODO: support outer/right-semi join
+            // TODO: support left outer join, add an all default rows.
             offsets_to_replicate[i] = current_offset;
             continue;
         }
         auto key_holder = key_getter.getKeyHolder(i, &worker_data.pool, worker_data.sort_key_containers);
         SCOPE_EXIT(keyHolderDiscardKey(key_holder));
         auto key = keyHolderGetKey(key_holder);
-        char * head;
+        RowPtr head;
         if unlikely (i == probe_process_info.start_row && probe_process_info.new_hash_current_head != nullptr)
         {
             head = probe_process_info.new_hash_current_head;
@@ -2329,39 +2426,60 @@ void NO_INLINE probeBlockImplTypeCase(
             size_t hash_value = Hash()(key);
             size_t bucket = table.getBucketNum(hash_value);
             head = table.pointer_table[bucket].load(std::memory_order_relaxed);
-            if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+            if constexpr (KIND == LeftOuter)
             {
                 probe_process_info.current_head_is_matched = false;
             }
         }
         while (head)
         {
+            if constexpr (KIND == RightSemi || KIND == RightAnti)
+            {
+                if (getRowPtrFlag(head))
+                {
+                    head = getNextRowPtr<KIND>(head);
+                    continue;
+                }
+            }
             auto key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
             if (key == key2)
             {
-                if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                if constexpr (KIND == LeftOuter)
                 {
                     probe_process_info.current_head_is_matched = true;
                 }
-                size_t key_size = keyHolderGetKeySize(key2);
-                row_ptrs_buffer.push_back(head + key_offset + key_size);
-                ++current_offset;
-                if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                if constexpr (isRightFamily<KIND>() && !right_family_has_other_condition)
                 {
-                    for (size_t j = 0; j < num_columns_to_add; ++j)
-                    {
-                        //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
-                        deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
-                    }
-                    row_ptrs_buffer.clear();
+                    setRowPtrFlag(head);
                 }
-                if unlikely (current_offset >= limit_count)
+                if constexpr (
+                    KIND == Inner || KIND == LeftOuter || KIND == RightOuter
+                    || ((KIND == RightSemi || KIND == RightAnti) && right_family_has_other_condition))
                 {
-                    head = unalignedLoad<char *>(head + pointer_offset);
-                    break;
+                    size_t key_size = keyHolderGetKeySize(key2);
+                    row_ptrs_buffer.push_back(head + key_offset + key_size);
+                    if constexpr (isRightFamily<KIND>() && right_family_has_other_condition)
+                    {
+                        actual_row_ptrs_col->insert(reinterpret_cast<intptr_t>(head));
+                    }
+                    ++current_offset;
+                    if unlikely (row_ptrs_buffer.size() >= buffer_size)
+                    {
+                        for (size_t j = 0; j < num_columns_to_add; ++j)
+                        {
+                            //added_columns[j]->deserializeAndInsertFromPos(row_ptrs_buffer);
+                            deserializeAndInsertFromPos<SIMD>(worker_data.simple_added_columns[j], row_ptrs_buffer);
+                        }
+                        row_ptrs_buffer.clear();
+                    }
+                    if unlikely (current_offset >= limit_count)
+                    {
+                        head = getNextRowPtr<KIND>(head);
+                        break;
+                    }
                 }
             }
-            head = unalignedLoad<char *>(head + pointer_offset);
+            head = getNextRowPtr<KIND>(head);
         }
         offsets_to_replicate[i] = current_offset;
         if unlikely (current_offset >= limit_count)
@@ -2480,44 +2598,48 @@ Block Join::doJoinBlockHashNew(
     bool use_row_flagged_hash_map = useRowFlaggedHashMap(kind, has_other_condition);
     if (use_row_flagged_hash_map)
     {
-        /// For RightSemi/RightAnti join with other conditions, using this column to record hash entries that matches keys
-        /// Note: this column will record map entry addresses, so should use it carefully and better limit its usage in this function only.
-        // todo figure out more accurate `rows`
         added_columns.push_back(flag_mapped_entry_helper_type->createColumn());
-        added_columns.back()->reserve(rows);
     }
 
     //IColumn::Offset current_offset = 0;
-    RUNTIME_CHECK_MSG(num_columns_to_skip == 0, "num_columns_to_skip != 0");
-    RUNTIME_CHECK_MSG(
-        kind == ASTTableJoin::Kind::Inner && strictness == ASTTableJoin::Strictness::All,
-        "kind != inner && strictness != all");
+    //RUNTIME_CHECK_MSG(num_columns_to_skip == 0, "num_columns_to_skip != 0");
 
-    using enum ASTTableJoin::Strictness;
     using enum ASTTableJoin::Kind;
 
-#define CALL(KIND, STRICTNESS)                          \
-    probeBlockImpl<KIND, STRICTNESS, MapsAll>(          \
-        join_map_method,                                \
-        rows,                                           \
-        probe_process_info.hash_join_data->key_columns, \
-        key_sizes,                                      \
-        added_columns,                                  \
-        num_columns_to_add.size(),                      \
-        probe_process_info.null_map,                    \
-        collators,                                      \
-        probe_process_info,                             \
-        table,                                          \
-        enable_prefetch,                                \
-        prefetch_length,                                \
-        insert_buffer_size,                             \
-        insert_enable_simd,                             \
+#define CALL(KIND, right_family_has_other_condition)                 \
+    probeBlockImpl<KIND, right_family_has_other_condition, MapsAll>( \
+        join_map_method,                                             \
+        rows,                                                        \
+        probe_process_info.hash_join_data->key_columns,              \
+        key_sizes,                                                   \
+        added_columns,                                               \
+        num_columns_to_add.size(),                                   \
+        probe_process_info.null_map,                                 \
+        collators,                                                   \
+        probe_process_info,                                          \
+        table,                                                       \
+        enable_prefetch,                                             \
+        prefetch_length,                                             \
+        insert_buffer_size,                                          \
+        insert_enable_simd,                                          \
         *probe_workers_data[stream_index]);
 
-    if (kind == Inner && strictness == All)
-        CALL(Inner, All)
-    else if (kind == LeftOuter && strictness == All)
-        CALL(LeftOuter, All)
+    if (kind == Inner)
+        CALL(Inner, false)
+    else if (kind == LeftOuter)
+        CALL(LeftOuter, false)
+    else if (kind == RightOuter && has_other_condition)
+        CALL(RightOuter, true)
+    else if (kind == RightOuter && !has_other_condition)
+        CALL(RightOuter, false)
+    else if (kind == RightSemi && has_other_condition)
+        CALL(RightSemi, true)
+    else if (kind == RightSemi && !has_other_condition)
+        CALL(RightSemi, false)
+    else if (kind == RightAnti && has_other_condition)
+        CALL(RightAnti, true)
+    else if (kind == RightAnti && !has_other_condition)
+        CALL(RightAnti, false)
     else
         throw Exception("Logical error: unknown combination of JOIN", ErrorCodes::LOGICAL_ERROR);
 
@@ -2538,7 +2660,7 @@ Block Join::doJoinBlockHashNew(
         probe_process_info);*/
     FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_join_prob_failpoint);
     /// For RIGHT_SEMI/RIGHT_ANTI join without other conditions, hash table has been marked already, just return empty build table header
-    if (isRightSemiFamily(kind) && !use_row_flagged_hash_map)
+    if (isRightSemiFamily(kind) && !has_other_condition)
     {
         return sample_block_without_keys;
     }
@@ -2548,6 +2670,7 @@ Block Join::doJoinBlockHashNew(
         const ColumnWithTypeAndName & sample_col = sample_block_without_keys.getByPosition(num_columns_to_add[index]);
         block.insert(ColumnWithTypeAndName(std::move(added_columns[index]), sample_col.type, sample_col.name));
     }
+
     if (use_row_flagged_hash_map)
         block.insert(ColumnWithTypeAndName(
             std::move(added_columns[num_columns_to_add.size()]),
@@ -2609,8 +2732,8 @@ Block Join::doJoinBlockHashNew(
             for (size_t i = 0; i < block.rows(); ++i)
             {
                 auto ptr_value = container[i];
-                auto * current = reinterpret_cast<RowRefListWithUsedFlag *>(ptr_value);
-                current->setUsed();
+                auto current = reinterpret_cast<RowPtr>(ptr_value);
+                setRowPtrFlag(current);
             }
 
             if (isRightSemiFamily(kind))
@@ -2789,6 +2912,8 @@ void Join::checkTypes(const Block & block) const
 
 Block Join::joinBlockNullAwareSemi(ProbeProcessInfo & probe_process_info) const
 {
+    RUNTIME_CHECK_MSG(!enable_new_hash_join, "original null-aware semi join can not use new hash join");
+
     probe_process_info.prepareForNullAware(key_names_left, non_equal_conditions.left_filter_column);
 
     Block block{};
@@ -2971,6 +3096,8 @@ Block Join::joinBlockNullAwareSemiImpl(const ProbeProcessInfo & probe_process_in
 
 Block Join::joinBlockSemi(ProbeProcessInfo & probe_process_info) const
 {
+    RUNTIME_CHECK_MSG(!enable_new_hash_join, "original semi join can not use new hash join");
+
     JoinBuildInfo join_build_info{
         enable_fine_grained_shuffle,
         fine_grained_shuffle_count,
@@ -3234,13 +3361,8 @@ void Join::workAfterBuildFinish(size_t stream_index)
     if (enable_new_hash_join)
     {
         size_t all_row_count = 0;
-        size_t index = 0;
         for (size_t i = 0; i < build_concurrency; ++i)
-        {
             all_row_count += build_workers_data[i]->row_count;
-            build_workers_data[i]->iter_index = index;
-            index = (index + 1) % PARTITION_COUNT;
-        }
 
         Stopwatch watch;
         table.init(all_row_count);
@@ -3958,19 +4080,25 @@ bool Join::buildPointerTable(size_t stream_index)
     while (true)
     {
         RowPtrs * row_ptrs = nullptr;
-        row_ptrs = partitioned_multiple_row_ptrs[worker_data->iter_index]->getNext();
+        if (worker_data->iter_index != -1)
+            row_ptrs = partitioned_multiple_row_ptrs[worker_data->iter_index]->getNext();
         if (row_ptrs == nullptr)
         {
-            for (size_t i = 1; i < PARTITION_COUNT; ++i)
             {
-                size_t index = (worker_data->iter_index + i) % PARTITION_COUNT;
-                row_ptrs = partitioned_multiple_row_ptrs[index]->getNext();
-                if (row_ptrs != nullptr)
+                std::unique_lock lock(build_scan_table_lock);
+                for (size_t i = 0; i < PARTITION_COUNT; ++i)
                 {
-                    worker_data->iter_index = index;
-                    break;
+                    build_table_index = (build_table_index + i) % PARTITION_COUNT;
+                    row_ptrs = partitioned_multiple_row_ptrs[build_table_index]->getNext();
+                    if (row_ptrs != nullptr)
+                    {
+                        worker_data->iter_index = build_table_index;
+                        build_table_index = (build_table_index + 1) % PARTITION_COUNT;
+                        break;
+                    }
                 }
             }
+
             if (row_ptrs == nullptr)
             {
                 is_end = true;
@@ -3978,15 +4106,17 @@ bool Join::buildPointerTable(size_t stream_index)
             }
         }
         build_size += row_ptrs->size();
-        for (char * row_ptr : *row_ptrs)
+        for (RowPtr row_ptr : *row_ptrs)
         {
+            assert(((intptr_t)row_ptr & (row_align - 1)) == 0);
+
             auto hash = unalignedLoad<size_t>(row_ptr);
             size_t bucket = table.getBucketNum(hash);
-            char * head;
+            RowPtr head;
             do
             {
                 head = table.pointer_table[bucket].load(std::memory_order_relaxed);
-                unalignedStore<char *>(row_ptr + pointer_offset, head);
+                unalignedStore<RowPtr>(row_ptr + pointer_offset, head);
             } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
         }
         if (build_size >= max_block_size)

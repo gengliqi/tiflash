@@ -65,6 +65,7 @@ private:
     /// Indices of columns in right sample block
     /// Order is significant: it is the same as the order of columns in the blocks of the right-side table that are saved in parent.blocks.
     ColumnNumbers column_indices_right;
+    std::vector<std::pair<bool, size_t>> column_indices_right_new;
     /// Columns of the current output block corresponding to column_indices_left.
     MutableColumns columns_left;
     /// Columns of the current output block corresponding to column_indices_right.
@@ -91,5 +92,14 @@ private:
         MutableColumns & mutable_columns_left,
         MutableColumns & mutable_columns_right,
         IColumn * row_counter_column);
+
+    template <ASTTableJoin::Kind KIND, bool has_other_conditions, typename Maps>
+    void fillColumnsNew(MutableColumns & mutable_columns_left, MutableColumns & mutable_columns_right);
+
+    template <ASTTableJoin::Kind KIND, bool has_other_conditions, typename KeyType>
+    void fillColumnsNewImpl(MutableColumns & mutable_columns_left, MutableColumns & mutable_columns_right);
+
+    RowPtrs * current_ptrs = nullptr;
+    size_t current_index = 0;
 };
 } // namespace DB

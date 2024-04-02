@@ -311,6 +311,12 @@ void ColumnNullable::deserializeAndInsertFromPos(PaddedPODArray<char *> & pos)
     getNestedColumn().deserializeAndInsertFromPos(pos);
 }
 
+void ColumnNullable::deserializeAndForwardPos(PaddedPODArray<char *> & pos) const
+{
+    getNullMapColumn().deserializeAndForwardPos(pos);
+    getNestedColumn().deserializeAndForwardPos(pos);
+}
+
 ColumnPtr ColumnNullable::filter(const Filter & filt, ssize_t result_size_hint) const
 {
     ColumnPtr filtered_data = getNestedColumn().filter(filt, result_size_hint);

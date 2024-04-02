@@ -133,15 +133,41 @@ const size_t PARTITION_COUNT = 1 << PARTITION_SHIFT;
 
 inline size_t getPartitionNum(size_t hash)
 {
-    const size_t PARTITION_MASK = (PARTITION_COUNT - 1) << (32 - PARTITION_SHIFT);
-    return (hash & PARTITION_MASK) >> (32 - PARTITION_SHIFT);
+    const size_t partition_mask = (PARTITION_COUNT - 1) << (32 - PARTITION_SHIFT);
+    return (hash & partition_mask) >> (32 - PARTITION_SHIFT);
 }
 
-using RowPtrs = PaddedPODArray<char *>;
+using RowPtr = char *;
+using RowPtrs = PaddedPODArray<RowPtr>;
 using MultipleRowPtrs = std::vector<RowPtrs>;
 
-const size_t pointer_offset = sizeof(size_t);
-const size_t key_offset = sizeof(size_t) + sizeof(char *);
+// TODO: change to UInt32
+constexpr size_t pointer_offset = sizeof(size_t);
+constexpr size_t key_offset = sizeof(size_t) + sizeof(RowPtr);
+
+constexpr size_t row_align = alignof(std::atomic<RowPtr>);
+
+inline bool getRowPtrFlag(RowPtr ptr)
+{
+    static_assert(row_align <= UINT8_MAX + 1);
+    auto * next = reinterpret_cast<std::atomic<RowPtr> *>(ptr + pointer_offset)->load(std::memory_order_relaxed);
+    auto flag = static_cast<UInt8>(reinterpret_cast<uintptr_t>(next) & static_cast<uintptr_t>(row_align - 1));
+    return flag & 0x01;
+}
+
+inline void setRowPtrFlag(RowPtr ptr)
+{
+    std::atomic<RowPtr> * atomic_next;
+    RowPtr next, new_next;
+    do
+    {
+        atomic_next = reinterpret_cast<std::atomic<RowPtr> *>(ptr + pointer_offset);
+        next = atomic_next->load(std::memory_order_relaxed);
+        new_next = reinterpret_cast<RowPtr>(reinterpret_cast<uintptr_t>(next) | 0x01);
+        if (new_next == next)
+            break;
+    } while (!std::atomic_compare_exchange_weak(atomic_next, &next, new_next));
+}
 
 void convertToSimpleMutableColumn(MutableColumnPtr & ptr, SimpleMutableColumn & simple_column);
 void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos);
@@ -150,9 +176,10 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
 struct alignas(ABSL_CACHELINE_SIZE) MultipleRowPtrsWithLock
 {
     std::mutex mu;
-    std::deque<RowPtrs> multi_row_ptrs;
+    std::vector<RowPtrs> multi_row_ptrs;
     size_t partitioned_row_counts = 0;
     size_t build_table_index = 0;
+    size_t scan_table_index = 0;
 
     void insert(RowPtrs && row_ptrs, size_t count)
     {
@@ -168,6 +195,14 @@ struct alignas(ABSL_CACHELINE_SIZE) MultipleRowPtrsWithLock
             return nullptr;
         return &multi_row_ptrs[build_table_index++];
     }
+
+    RowPtrs * getScanNext()
+    {
+        std::unique_lock lock(mu);
+        if (scan_table_index >= multi_row_ptrs.size())
+            return nullptr;
+        return &multi_row_ptrs[scan_table_index++];
+    }
 };
 
 class alignas(ABSL_CACHELINE_SIZE) BuildWorkerData
@@ -182,10 +217,10 @@ public:
     }
 
     Allocator<false> alloc;
-    std::vector<std::pair<char *, size_t>> row_memory;
+    std::vector<std::pair<RowPtr, size_t>> row_memory;
     size_t row_count = 0;
 
-    char * null_rows_list_head = nullptr;
+    RowPtr null_rows_list_head = nullptr;
 
     Arena pool;
     PaddedPODArray<size_t> row_sizes;
@@ -199,7 +234,7 @@ public:
     size_t build_pointer_table_time = 0;
     size_t build_pointer_table_size = 0;
 
-    size_t iter_index = 0;
+    ssize_t iter_index = -1;
 };
 
 class alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
@@ -225,13 +260,13 @@ public:
     ~JoinHashPointerTable()
     {
         if (pointer_table != nullptr)
-            alloc.free(reinterpret_cast<void *>(pointer_table), pointer_table_size * sizeof(std::atomic<char *>));
+            alloc.free(reinterpret_cast<void *>(pointer_table), pointer_table_size * sizeof(std::atomic<RowPtr>));
     }
 
     size_t pointer_table_size = 0;
     size_t pointer_table_size_degree = 0;
     size_t pointer_table_size_mask = 0;
-    std::atomic<char *> * pointer_table = nullptr;
+    std::atomic<RowPtr> * pointer_table = nullptr;
     Allocator<true> alloc;
 
     static size_t pointerTableCapacity(size_t count) { return std::max(roundUpToPowerOfTwoOrZero(count * 2), 1 << 10); }
@@ -250,8 +285,8 @@ public:
 
         pointer_table_size_mask = (pointer_table_size - 1) << (32 - pointer_table_size_degree);
 
-        pointer_table = reinterpret_cast<std::atomic<char *> *>(
-            alloc.alloc(pointer_table_size * sizeof(std::atomic<char *>), sizeof(std::atomic<char *>)));
+        pointer_table = reinterpret_cast<std::atomic<RowPtr> *>(
+            alloc.alloc(pointer_table_size * sizeof(std::atomic<RowPtr>), sizeof(std::atomic<RowPtr>)));
     }
 
     inline size_t getBucketNum(size_t hash) const
@@ -625,6 +660,10 @@ private:
     std::vector<std::unique_ptr<ProbeWorkerData>> probe_workers_data;
 
     JoinHashPointerTable table;
+
+    mutable std::mutex build_scan_table_lock;
+    size_t build_table_index = 0;
+    mutable size_t scan_table_index = 0;
 
 private:
     /** Set information about structure of right hand of JOIN (joined data).

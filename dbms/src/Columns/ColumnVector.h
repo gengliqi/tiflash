@@ -346,6 +346,13 @@ public:
         }
     }
 
+    void deserializeAndForwardPos(PaddedPODArray<char *> & pos) const override
+    {
+        size_t size = pos.size();
+        for (size_t i = 0; i < size; ++i)
+            pos[i] += sizeof(T);
+    }
+
     void swapFixedAndContiguousData(SimplePaddedPODArray & simple_data) override { simple_data.swap(data); }
 
     StringRef serializeValueIntoArena(
