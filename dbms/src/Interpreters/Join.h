@@ -147,7 +147,7 @@ constexpr size_t key_offset = sizeof(size_t) + sizeof(RowPtr);
 
 constexpr size_t row_align = alignof(std::atomic<RowPtr>);
 
-inline bool getRowPtrFlag(RowPtr ptr)
+ALWAYS_INLINE inline bool getRowPtrFlag(RowPtr ptr)
 {
     static_assert(row_align <= UINT8_MAX + 1);
     auto * next = reinterpret_cast<std::atomic<RowPtr> *>(ptr + pointer_offset)->load(std::memory_order_relaxed);
@@ -155,7 +155,7 @@ inline bool getRowPtrFlag(RowPtr ptr)
     return flag & 0x01;
 }
 
-inline void setRowPtrFlag(RowPtr ptr)
+ALWAYS_INLINE inline void setRowPtrFlag(RowPtr ptr)
 {
     std::atomic<RowPtr> * atomic_next;
     RowPtr next, new_next;

@@ -1952,16 +1952,15 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
 #define PREFETCH_READ(ptr) __builtin_prefetch(ptr, 0 /* rw==read */, 3 /* locality */)
 
 template <ASTTableJoin::Kind KIND>
-inline RowPtr getNextRowPtr(const RowPtr ptr)
+ALWAYS_INLINE inline RowPtr getNextRowPtr(const RowPtr ptr)
 {
-    using enum ASTTableJoin::Strictness;
     using enum ASTTableJoin::Kind;
-    auto * next = reinterpret_cast<std::atomic<RowPtr> *>(ptr + pointer_offset)->load(std::memory_order_relaxed);
     if constexpr (KIND == RightOuter || KIND == RightSemi || KIND == RightAnti)
     {
-        next = reinterpret_cast<RowPtr>(reinterpret_cast<uintptr_t>(next) & (~static_cast<uintptr_t>(row_align - 1)));
+        auto * next = reinterpret_cast<std::atomic<RowPtr> *>(ptr + pointer_offset)->load(std::memory_order_relaxed);
+        return reinterpret_cast<RowPtr>(reinterpret_cast<uintptr_t>(next) & (~static_cast<uintptr_t>(row_align - 1)));
     }
-    return next;
+    return unalignedLoad<RowPtr>(ptr + pointer_offset);
 }
 
 template <ASTTableJoin::Kind KIND>
