@@ -50,7 +50,7 @@ bool pushDownSelection(
     const String & executor_id,
     const tipb::Selection & selection)
 {
-    if (plan->tp() == PlanType::TableScan)
+    if (plan->tp() == PlanType::TableScan && unlikely(context.getSettingsRef().force_push_down_all_filters_to_scan))
     {
         auto physical_table_scan = std::static_pointer_cast<PhysicalTableScan>(plan);
         return physical_table_scan->setFilterConditions(executor_id, selection);
