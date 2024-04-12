@@ -200,6 +200,7 @@ PhysicalPlanNodePtr PhysicalJoin::build(
         settings.new_hash_join_prefetch_length,
         settings.new_hash_join_insert_buffer,
         settings.new_hash_join_insert_enable_simd,
+        settings.new_hash_join_enable_build_prefetch,
         runtime_filter_list);
 
     recordJoinExecuteInfo(dag_context, executor_id, build_plan->execId(), join_ptr);

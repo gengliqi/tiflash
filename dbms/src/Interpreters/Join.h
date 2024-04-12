@@ -378,6 +378,7 @@ public:
         size_t prefetch_length_,
         size_t insert_buffer_size_,
         bool insert_enable_simd_,
+        bool enable_build_prefetch_,
         const std::vector<RuntimeFilterPtr> & runtime_filter_list_ = dummy_runtime_filter_list);
 
     RestoreConfig restore_config;
@@ -653,6 +654,7 @@ private:
     bool enable_prefetch = false;
     size_t insert_buffer_size;
     bool insert_enable_simd;
+    bool enable_build_prefetch;
 
     std::vector<std::unique_ptr<MultipleRowPtrsWithLock>> partitioned_multiple_row_ptrs;
     std::vector<std::unique_ptr<BuildWorkerData>> build_workers_data;

@@ -136,6 +136,7 @@ Join::Join(
     size_t prefetch_length_,
     size_t insert_buffer_size_,
     bool insert_enable_simd_,
+    bool enable_build_prefetch_,
     const std::vector<RuntimeFilterPtr> & runtime_filter_list_)
     : restore_config(restore_config_)
     , match_helper_name(match_helper_name_)
@@ -164,10 +165,10 @@ Join::Join(
     , log(Logger::get(
           restore_config.restore_round == 0 ? join_req_id
                                             : fmt::format(
-                                                  "{}_round_{}_part_{}",
-                                                  join_req_id,
-                                                  restore_config.restore_round,
-                                                  restore_config.restore_partition_id)))
+                                                "{}_round_{}_part_{}",
+                                                join_req_id,
+                                                restore_config.restore_round,
+                                                restore_config.restore_partition_id)))
     , enable_fine_grained_shuffle(fine_grained_shuffle_count_ > 0)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
     , enable_new_hash_join(enable_new_hash_join_)
@@ -175,6 +176,7 @@ Join::Join(
     , prefetch_length(prefetch_length_)
     , insert_buffer_size(insert_buffer_size_)
     , insert_enable_simd(insert_enable_simd_)
+    , enable_build_prefetch(enable_build_prefetch_)
 {
     has_other_condition = non_equal_conditions.other_cond_expr != nullptr;
     bool is_semi = isSemiFamily(kind) || isLeftOuterSemiFamily(kind) || isNullAwareSemiFamily(kind);
@@ -399,7 +401,8 @@ std::shared_ptr<Join> Join::createRestoreJoin(size_t max_bytes_before_external_j
         prefetch_threshold,
         prefetch_length,
         insert_buffer_size,
-        insert_enable_simd);
+        insert_enable_simd,
+        enable_build_prefetch);
     /// init output names after finalize, the restored join don't need to finalize
     ret->output_columns_after_finalize = output_columns_after_finalize;
     ret->output_column_names_set_after_finalize = output_column_names_set_after_finalize;
@@ -2121,7 +2124,14 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                             row_ptrs_buffer.clear();
                         }
                         if unlikely (current_offset >= limit_count)
+                        {
+                            RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
+                            if (next_ptr)
+                                state->ptr = next_ptr;
+                            else
+                                state->stage = 0;
                             break;
+                        }
                     }
                 }
             }
@@ -2292,7 +2302,14 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                                 row_ptrs_buffer.clear();
                             }
                             if unlikely (current_offset >= limit_count)
+                            {
+                                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
+                                if (next_ptr)
+                                    state->ptr = next_ptr;
+                                else
+                                    state->stage = 0;
                                 break;
+                            }
                         }
                     }
                 }
@@ -4174,19 +4191,73 @@ bool Join::buildPointerTable(size_t stream_index)
             }
         }
         build_size += row_ptrs->size();
-        for (RowPtr row_ptr : *row_ptrs)
+        if (enable_prefetch && enable_build_prefetch)
         {
-            assert(((intptr_t)row_ptr & (row_align - 1)) == 0);
-
-            auto hash = unalignedLoad<size_t>(row_ptr);
-            size_t bucket = table.getBucketNum(hash);
-            RowPtr head;
-            do
+            size_t size = row_ptrs->size();
+            struct PrefetchState
             {
-                head = table.pointer_table[bucket].load(std::memory_order_relaxed);
-                unalignedStore<RowPtr>(row_ptr + pointer_offset, head);
-            } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
+                int8_t stage = 0;
+                size_t bucket;
+                RowPtr row_ptr;
+            };
+            std::vector<PrefetchState> states(prefetch_length);
+            size_t i = 0;
+            size_t k = 0;
+            while (i < size)
+            {
+                k = k == prefetch_length ? 0 : k;
+                auto * state = &states[k];
+                if (state->stage == 1)
+                {
+                    RowPtr head;
+                    do
+                    {
+                        head = table.pointer_table[state->bucket].load(std::memory_order_relaxed);
+                        unalignedStore<RowPtr>(state->row_ptr + pointer_offset, head);
+                    } while (
+                        !std::atomic_compare_exchange_weak(&table.pointer_table[state->bucket], &head, state->row_ptr));
+                }
+
+                auto hash = unalignedLoad<size_t>((*row_ptrs)[i]);
+                state->stage = 1;
+                state->bucket = table.getBucketNum(hash);
+                state->row_ptr = (*row_ptrs)[i];
+                ++i;
+
+                PREFETCH_READ(table.pointer_table + state->bucket);
+            }
+            for (i = 0; i < prefetch_length; ++i)
+            {
+                auto * state = &states[i];
+                if (state->stage == 1)
+                {
+                    RowPtr head;
+                    do
+                    {
+                        head = table.pointer_table[state->bucket].load(std::memory_order_relaxed);
+                        unalignedStore<RowPtr>(state->row_ptr + pointer_offset, head);
+                    } while (
+                        !std::atomic_compare_exchange_weak(&table.pointer_table[state->bucket], &head, state->row_ptr));
+                }
+            }
         }
+        else
+        {
+            for (RowPtr row_ptr : *row_ptrs)
+            {
+                assert(((intptr_t)row_ptr & (row_align - 1)) == 0);
+
+                auto hash = unalignedLoad<size_t>(row_ptr);
+                size_t bucket = table.getBucketNum(hash);
+                RowPtr head;
+                do
+                {
+                    head = table.pointer_table[bucket].load(std::memory_order_relaxed);
+                    unalignedStore<RowPtr>(row_ptr + pointer_offset, head);
+                } while (!std::atomic_compare_exchange_weak(&table.pointer_table[bucket], &head, row_ptr));
+            }
+        }
+
         if (build_size >= max_block_size)
         {
             break;
