@@ -2069,6 +2069,17 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         if (state->stage == 2)
         {
             RowPtr ptr = state->ptr;
+            RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
+            if constexpr (KIND != Semi && KIND != Anti)
+            {
+                if (next_ptr)
+                {
+                    state->ptr = next_ptr;
+                    PREFETCH_READ(next_ptr + pointer_offset);
+                }
+                else
+                    state->stage = 0;
+            }
 
             bool need_check_key = true;
             if constexpr (KIND == RightSemi || KIND == RightAnti)
@@ -2076,7 +2087,6 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                 need_check_key = !getRowPtrFlag(ptr);
             }
 
-            bool can_stop_for_semi_anti = false;
             if (need_check_key)
             {
                 auto key = keyHolderGetKey(state->key_holder);
@@ -2094,13 +2104,15 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     }
                     if constexpr (KIND == Anti)
                     {
-                        can_stop_for_semi_anti = true;
+                        state->stage = 0;
                     }
                     if constexpr (KIND == Semi)
                     {
                         selective_offsets.push_back(state->index);
                         ++current_offset;
-                        can_stop_for_semi_anti = true;
+                        state->stage = 0;
+                        if unlikely (current_offset >= limit_count)
+                            break;
                     }
                     if constexpr (
                         KIND == Inner || KIND == LeftOuter || KIND == RightOuter
@@ -2124,34 +2136,33 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                             row_ptrs_buffer.clear();
                         }
                         if unlikely (current_offset >= limit_count)
-                        {
-                            RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
-                            if (next_ptr)
-                                state->ptr = next_ptr;
-                            else
-                                state->stage = 0;
                             break;
-                        }
                     }
                 }
             }
 
-            if (can_stop_for_semi_anti)
+            if constexpr (KIND == Semi || KIND == Anti)
             {
-                state->stage = 0;
+                if (state->stage != 0)
+                {
+                    if (next_ptr)
+                    {
+                        state->ptr = next_ptr;
+                        PREFETCH_READ(next_ptr + pointer_offset);
+                        ++k;
+                        continue;
+                    }
+
+                    state->stage = 0;
+                }
             }
             else
             {
-                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
                 if (next_ptr)
                 {
-                    state->ptr = next_ptr;
-                    PREFETCH_READ(next_ptr + pointer_offset);
                     ++k;
                     continue;
                 }
-
-                state->stage = 0;
             }
         }
         else if (state->stage == 1)
@@ -2245,6 +2256,18 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
             if (state->stage == 2)
             {
                 RowPtr ptr = state->ptr;
+                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
+                if constexpr (KIND != Semi && KIND != Anti)
+                {
+                    if (next_ptr)
+                    {
+                        state->ptr = next_ptr;
+                        PREFETCH_READ(next_ptr + pointer_offset);
+                        q.push(state);
+                    }
+                    else
+                        state->stage = 0;
+                }
 
                 bool need_check_key = true;
                 if constexpr (KIND == RightSemi || KIND == RightAnti)
@@ -2252,7 +2275,6 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     need_check_key = !getRowPtrFlag(ptr);
                 }
 
-                bool can_stop_for_semi_anti = false;
                 if (need_check_key)
                 {
                     auto key = keyHolderGetKey(state->key_holder);
@@ -2270,13 +2292,15 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                         }
                         if constexpr (KIND == Anti)
                         {
-                            can_stop_for_semi_anti = true;
+                            state->stage = 0;
                         }
                         if constexpr (KIND == Semi)
                         {
                             selective_offsets.push_back(state->index);
                             ++current_offset;
-                            can_stop_for_semi_anti = true;
+                            state->stage = 0;
+                            if unlikely (current_offset >= limit_count)
+                                break;
                         }
                         if constexpr (
                             KIND == Inner || KIND == LeftOuter || KIND == RightOuter
@@ -2302,34 +2326,30 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                                 row_ptrs_buffer.clear();
                             }
                             if unlikely (current_offset >= limit_count)
-                            {
-                                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
-                                if (next_ptr)
-                                    state->ptr = next_ptr;
-                                else
-                                    state->stage = 0;
                                 break;
-                            }
                         }
                     }
                 }
 
-                if (can_stop_for_semi_anti)
+                if constexpr (KIND == Semi || KIND == Anti)
                 {
-                    state->stage = 0;
+                    if (state->stage != 0)
+                    {
+                        if (next_ptr)
+                        {
+                            state->ptr = next_ptr;
+                            PREFETCH_READ(next_ptr + pointer_offset);
+                            q.push(state);
+                            continue;
+                        }
+
+                        state->stage = 0;
+                    }
                 }
                 else
                 {
-                    RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
                     if (next_ptr)
-                    {
-                        state->ptr = next_ptr;
-                        PREFETCH_READ(next_ptr + pointer_offset);
-                        q.push(state);
                         continue;
-                    }
-
-                    state->stage = 0;
                 }
             }
             else if (state->stage == 1)
