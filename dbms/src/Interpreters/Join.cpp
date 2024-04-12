@@ -4162,6 +4162,13 @@ bool Join::buildPointerTable(size_t stream_index)
     size_t build_size = 0;
     bool is_end = false;
     auto & worker_data = build_workers_data[stream_index];
+    auto & states = worker_data->prefetch_states;
+    size_t k = 0;
+    bool prefetch = enable_prefetch && enable_build_prefetch;
+    if (prefetch)
+    {
+        states.resize(prefetch_length);
+    }
     while (true)
     {
         RowPtrs * row_ptrs = nullptr;
@@ -4191,18 +4198,10 @@ bool Join::buildPointerTable(size_t stream_index)
             }
         }
         build_size += row_ptrs->size();
-        if (enable_prefetch && enable_build_prefetch)
+        if (prefetch)
         {
             size_t size = row_ptrs->size();
-            struct PrefetchState
-            {
-                int8_t stage = 0;
-                size_t bucket;
-                RowPtr row_ptr;
-            };
-            std::vector<PrefetchState> states(prefetch_length);
             size_t i = 0;
-            size_t k = 0;
             while (i < size)
             {
                 k = k == prefetch_length ? 0 : k;
@@ -4226,20 +4225,6 @@ bool Join::buildPointerTable(size_t stream_index)
 
                 PREFETCH_READ(table.pointer_table + state->bucket);
             }
-            for (i = 0; i < prefetch_length; ++i)
-            {
-                auto * state = &states[i];
-                if (state->stage == 1)
-                {
-                    RowPtr head;
-                    do
-                    {
-                        head = table.pointer_table[state->bucket].load(std::memory_order_relaxed);
-                        unalignedStore<RowPtr>(state->row_ptr + pointer_offset, head);
-                    } while (
-                        !std::atomic_compare_exchange_weak(&table.pointer_table[state->bucket], &head, state->row_ptr));
-                }
-            }
         }
         else
         {
@@ -4261,6 +4246,24 @@ bool Join::buildPointerTable(size_t stream_index)
         if (build_size >= max_block_size)
         {
             break;
+        }
+    }
+    if (prefetch)
+    {
+        for (size_t i = 0; i < prefetch_length; ++i)
+        {
+            auto * state = &states[i];
+            if (state->stage == 1)
+            {
+                RowPtr head;
+                do
+                {
+                    head = table.pointer_table[state->bucket].load(std::memory_order_relaxed);
+                    unalignedStore<RowPtr>(state->row_ptr + pointer_offset, head);
+                } while (
+                    !std::atomic_compare_exchange_weak(&table.pointer_table[state->bucket], &head, state->row_ptr));
+            }
+            state->stage = 0;
         }
     }
     worker_data->build_pointer_table_size += build_size;

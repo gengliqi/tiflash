@@ -235,6 +235,14 @@ public:
     size_t build_pointer_table_size = 0;
 
     ssize_t iter_index = -1;
+
+    struct PrefetchState
+    {
+        int8_t stage = 0;
+        size_t bucket;
+        RowPtr row_ptr;
+    };
+    std::vector<PrefetchState> prefetch_states;
 };
 
 class alignas(ABSL_CACHELINE_SIZE) ProbeWorkerData
