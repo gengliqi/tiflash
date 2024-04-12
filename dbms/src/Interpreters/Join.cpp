@@ -164,10 +164,10 @@ Join::Join(
     , log(Logger::get(
           restore_config.restore_round == 0 ? join_req_id
                                             : fmt::format(
-                                                "{}_round_{}_part_{}",
-                                                join_req_id,
-                                                restore_config.restore_round,
-                                                restore_config.restore_partition_id)))
+                                                  "{}_round_{}_part_{}",
+                                                  join_req_id,
+                                                  restore_config.restore_round,
+                                                  restore_config.restore_partition_id)))
     , enable_fine_grained_shuffle(fine_grained_shuffle_count_ > 0)
     , fine_grained_shuffle_count(fine_grained_shuffle_count_)
     , enable_new_hash_join(enable_new_hash_join_)
@@ -785,6 +785,7 @@ void convertBlockToRowsTypeImpl(
         if (probe_output_name_set.find(name) != probe_output_name_set.end())
         {
             // TODO: this is strange. Do not copy the key column in the real implementation.
+            // TODO: Need to figure out why only with other condition output schema has copied key column name.
             if (key_names_right.end() == std::find(key_names_right.begin(), key_names_right.end(), name))
             {
                 stored_block->getByPosition(i).column->countSerializeLength(worker_data.row_sizes);
@@ -2058,23 +2059,13 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
     {
         k = k == prefetch_length ? 0 : k;
         auto * state = &states[k];
-        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        if constexpr (KIND == LeftOuter || KIND == Anti)
         {
             current_stage_is_empty = state->stage == 0;
         }
         if (state->stage == 2)
         {
             RowPtr ptr = state->ptr;
-            RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
-            if (next_ptr)
-            {
-                state->ptr = next_ptr;
-                PREFETCH_READ(next_ptr + pointer_offset);
-            }
-            else
-            {
-                state->stage = 0;
-            }
 
             bool need_check_key = true;
             if constexpr (KIND == RightSemi || KIND == RightAnti)
@@ -2082,6 +2073,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                 need_check_key = !getRowPtrFlag(ptr);
             }
 
+            bool can_stop_for_semi_anti = false;
             if (need_check_key)
             {
                 auto key = keyHolderGetKey(state->key_holder);
@@ -2089,13 +2081,23 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
 
                 if (key == key2)
                 {
-                    if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                    if constexpr (KIND == LeftOuter || KIND == Anti)
                     {
                         state->is_matched = true;
                     }
                     if constexpr (isRightFamily<KIND>() && !right_family_has_other_condition)
                     {
                         setRowPtrFlag(ptr);
+                    }
+                    if constexpr (KIND == Anti)
+                    {
+                        can_stop_for_semi_anti = true;
+                    }
+                    if constexpr (KIND == Semi)
+                    {
+                        selective_offsets.push_back(state->index);
+                        ++current_offset;
+                        can_stop_for_semi_anti = true;
                     }
                     if constexpr (
                         KIND == Inner || KIND == LeftOuter || KIND == RightOuter
@@ -2119,16 +2121,27 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                             row_ptrs_buffer.clear();
                         }
                         if unlikely (current_offset >= limit_count)
-                        {
                             break;
-                        }
                     }
                 }
             }
-            if (next_ptr)
+
+            if (can_stop_for_semi_anti)
             {
-                ++k;
-                continue;
+                state->stage = 0;
+            }
+            else
+            {
+                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
+                if (next_ptr)
+                {
+                    state->ptr = next_ptr;
+                    PREFETCH_READ(next_ptr + pointer_offset);
+                    ++k;
+                    continue;
+                }
+
+                state->stage = 0;
             }
         }
         else if (state->stage == 1)
@@ -2147,7 +2160,17 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         }
 
         assert(state->stage == 0);
-        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        if constexpr (KIND == Anti)
+        {
+            if (!current_stage_is_empty && !state->is_matched)
+            {
+                selective_offsets.push_back(state->index);
+                ++current_offset;
+                if unlikely (current_offset >= limit_count)
+                    break;
+            }
+        }
+        if constexpr (KIND == LeftOuter)
         {
             if (!current_stage_is_empty && !state->is_matched)
             {
@@ -2164,9 +2187,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     row_ptrs_buffer.clear();
                 }
                 if unlikely (current_offset >= limit_count)
-                {
                     break;
-                }
             }
         }
 
@@ -2188,7 +2209,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         size_t hash_value = Hash()(key);
         size_t bucket = table.getBucketNum(hash_value);
         state->index = i;
-        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        if constexpr (KIND == LeftOuter || KIND == Anti)
         {
             state->is_matched = false;
         }
@@ -2214,17 +2235,6 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
             if (state->stage == 2)
             {
                 RowPtr ptr = state->ptr;
-                RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
-                if (next_ptr)
-                {
-                    state->ptr = next_ptr;
-                    PREFETCH_READ(next_ptr + pointer_offset);
-                    q.push(state);
-                }
-                else
-                {
-                    state->stage = 0;
-                }
 
                 bool need_check_key = true;
                 if constexpr (KIND == RightSemi || KIND == RightAnti)
@@ -2232,6 +2242,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     need_check_key = !getRowPtrFlag(ptr);
                 }
 
+                bool can_stop_for_semi_anti = false;
                 if (need_check_key)
                 {
                     auto key = keyHolderGetKey(state->key_holder);
@@ -2239,13 +2250,23 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
 
                     if (key == key2)
                     {
-                        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+                        if constexpr (KIND == LeftOuter || KIND == Anti)
                         {
                             state->is_matched = true;
                         }
                         if constexpr (isRightFamily<KIND>() && !right_family_has_other_condition)
                         {
                             setRowPtrFlag(ptr);
+                        }
+                        if constexpr (KIND == Anti)
+                        {
+                            can_stop_for_semi_anti = true;
+                        }
+                        if constexpr (KIND == Semi)
+                        {
+                            selective_offsets.push_back(state->index);
+                            ++current_offset;
+                            can_stop_for_semi_anti = true;
                         }
                         if constexpr (
                             KIND == Inner || KIND == LeftOuter || KIND == RightOuter
@@ -2275,6 +2296,24 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                         }
                     }
                 }
+
+                if (can_stop_for_semi_anti)
+                {
+                    state->stage = 0;
+                }
+                else
+                {
+                    RowPtr next_ptr = getNextRowPtr<KIND>(ptr);
+                    if (next_ptr)
+                    {
+                        state->ptr = next_ptr;
+                        PREFETCH_READ(next_ptr + pointer_offset);
+                        q.push(state);
+                        continue;
+                    }
+
+                    state->stage = 0;
+                }
             }
             else if (state->stage == 1)
             {
@@ -2285,16 +2324,26 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                     state->stage = 2;
                     PREFETCH_READ(state->ptr + pointer_offset);
                     q.push(state);
+                    continue;
                 }
-                else
-                {
-                    state->stage = 0;
-                }
+
+                state->stage = 0;
             }
 
-            if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+            assert(state->stage == 0);
+            if constexpr (KIND == Anti)
             {
-                if (state->stage == 0 && !state->is_matched)
+                if (!state->is_matched)
+                {
+                    selective_offsets.push_back(state->index);
+                    ++current_offset;
+                    if unlikely (current_offset >= limit_count)
+                        break;
+                }
+            }
+            if constexpr (KIND == LeftOuter)
+            {
+                if (!state->is_matched)
                 {
                     row_ptrs_buffer.push_back(nullptr);
                     selective_offsets.push_back(state->index);
@@ -2309,9 +2358,7 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
                         row_ptrs_buffer.clear();
                     }
                     if unlikely (current_offset >= limit_count)
-                    {
                         break;
-                    }
                 }
             }
         }
@@ -2425,7 +2472,7 @@ void NO_INLINE probeBlockImplTypeCase(
             size_t hash_value = Hash()(key);
             size_t bucket = table.getBucketNum(hash_value);
             head = table.pointer_table[bucket].load(std::memory_order_relaxed);
-            if constexpr (KIND == LeftOuter)
+            if constexpr (KIND == LeftOuter || KIND == Anti)
             {
                 probe_process_info.current_head_is_matched = false;
             }
@@ -2443,13 +2490,24 @@ void NO_INLINE probeBlockImplTypeCase(
             auto key2 = keyHolderDeserializeKey<decltype(key)>(head + key_offset);
             if (key == key2)
             {
-                if constexpr (KIND == LeftOuter)
+                if constexpr (KIND == LeftOuter || KIND == Anti)
                 {
                     probe_process_info.current_head_is_matched = true;
                 }
                 if constexpr (isRightFamily<KIND>() && !right_family_has_other_condition)
                 {
                     setRowPtrFlag(head);
+                }
+                if constexpr (KIND == Anti)
+                {
+                    head = nullptr;
+                    break;
+                }
+                if constexpr (KIND == Semi)
+                {
+                    ++current_offset;
+                    head = nullptr;
+                    break;
                 }
                 if constexpr (
                     KIND == Inner || KIND == LeftOuter || KIND == RightOuter
@@ -2480,10 +2538,17 @@ void NO_INLINE probeBlockImplTypeCase(
             }
             head = getNextRowPtr<KIND>(head);
         }
+        if constexpr (KIND == Anti)
+        {
+            if (!probe_process_info.current_head_is_matched)
+            {
+                ++current_offset;
+            }
+        }
         offsets_to_replicate[i] = current_offset;
         if unlikely (current_offset >= limit_count)
         {
-            if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+            if constexpr (KIND == LeftOuter)
             {
                 assert(probe_process_info.current_head_is_matched);
             }
@@ -2495,7 +2560,7 @@ void NO_INLINE probeBlockImplTypeCase(
             break;
         }
         assert(head == nullptr);
-        if constexpr (KIND == ASTTableJoin::Kind::LeftOuter)
+        if constexpr (KIND == LeftOuter)
         {
             if (!probe_process_info.current_head_is_matched)
             {
@@ -2639,6 +2704,10 @@ Block Join::doJoinBlockHashNew(
         CALL(RightAnti, true)
     else if (kind == RightAnti && !has_other_condition)
         CALL(RightAnti, false)
+    else if (kind == Semi && !has_other_condition)
+        CALL(Semi, false)
+    else if (kind == Anti && !has_other_condition)
+        CALL(Anti, false)
     else
         throw Exception("Logical error: unknown combination of JOIN", ErrorCodes::LOGICAL_ERROR);
 
@@ -3627,7 +3696,7 @@ Block Join::joinBlock(ProbeProcessInfo & probe_process_info, size_t stream_index
         block = joinBlockCross(probe_process_info);
     else if (isNullAwareSemiFamily(kind))
         block = joinBlockNullAwareSemi(probe_process_info);
-    else if (isSemiFamily(kind) || isLeftOuterSemiFamily(kind))
+    else if (!enable_new_hash_join && (isSemiFamily(kind) || isLeftOuterSemiFamily(kind)))
         block = joinBlockSemi(probe_process_info);
     else
         block = joinBlockHash(probe_process_info, stream_index);

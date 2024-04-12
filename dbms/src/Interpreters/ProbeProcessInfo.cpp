@@ -51,7 +51,7 @@ void ProbeProcessInfo::prepareForHashProbe(
     const Names & key_names,
     const String & filter_column,
     ASTTableJoin::Kind kind,
-    ASTTableJoin::Strictness strictness,
+    ASTTableJoin::Strictness strictness [[maybe_unused]],
     bool need_compute_hash,
     const TiDB::TiDBCollators & collators,
     size_t restore_round)
@@ -90,16 +90,23 @@ void ProbeProcessInfo::prepareForHashProbe(
         }
     }
 
-    if (!offsets_to_replicate && !isSemiFamily(kind) && !isLeftOuterSemiFamily(kind)
-        && strictness == ASTTableJoin::Strictness::All)
+    if (!offsets_to_replicate)
         offsets_to_replicate = std::make_unique<IColumn::Offsets>(block.rows());
-
-    if (!selective_offsets && !isSemiFamily(kind) && !isLeftOuterSemiFamily(kind)
+    /*if (!offsets_to_replicate && !isSemiFamily(kind) && !isLeftOuterSemiFamily(kind)
         && strictness == ASTTableJoin::Strictness::All)
+        offsets_to_replicate = std::make_unique<IColumn::Offsets>(block.rows());*/
+
+    if (!selective_offsets)
     {
         selective_offsets = std::make_unique<IColumn::Offsets>();
         selective_offsets->reserve(block.rows());
     }
+    /*if (!selective_offsets && !isSemiFamily(kind) && !isLeftOuterSemiFamily(kind)
+        && strictness == ASTTableJoin::Strictness::All)
+    {
+        selective_offsets = std::make_unique<IColumn::Offsets>();
+        selective_offsets->reserve(block.rows());
+    }*/
 
     hash_join_data->hash_data = std::make_unique<WeakHash32>(0);
     if (need_compute_hash)
