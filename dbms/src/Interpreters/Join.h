@@ -398,7 +398,7 @@ public:
 
     void initProbe(const Block & sample_block, size_t probe_concurrency_ = 1);
 
-    void insertFromBlock(const Block & block, size_t stream_index);
+    void insertFromBlock(Block & block, size_t stream_index);
 
     /** Join data from the map (that was previously built by calls to insertFromBlock) to the block with data from "left" table.
       * Could be called from different threads in parallel.

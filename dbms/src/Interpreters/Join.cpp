@@ -556,7 +556,7 @@ void Join::checkAndMarkPartitionSpilledIfNeededInternal(
 }
 
 /// the block should be valid.
-void Join::insertFromBlock(const Block & block, size_t stream_index)
+void Join::insertFromBlock(Block & block, size_t stream_index)
 {
     if unlikely (block.rows() == 0)
         return;
@@ -574,6 +574,13 @@ void Join::insertFromBlock(const Block & block, size_t stream_index)
     if (!isEnableSpill())
     {
         Block * stored_block = nullptr;
+        Block tmp_block;
+        if (!isCrossJoin(kind) && enable_new_hash_join)
+        {
+            tmp_block = block;
+            stored_block = &tmp_block;
+        }
+        else
         {
             std::lock_guard lk(blocks_lock);
             blocks.push_back(block);
