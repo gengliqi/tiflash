@@ -197,7 +197,7 @@ void AggregatedDataVariants::convertToTwoLevel()
     case AggregationMethodType(NAME):                                                     \
     {                                                                                     \
         if (aggregator)                                                                   \
-            LOG_TRACE(                                                                    \
+            LOG_INFO(                                                                    \
                 aggregator->log,                                                          \
                 "Converting aggregation data type `{}` to `{}`.",                         \
                 getMethodName(AggregationMethodType(NAME)),                               \
