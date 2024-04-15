@@ -978,6 +978,8 @@ bool Aggregator::executeOnBlock(AggProcessInfo & agg_process_info, AggregatedDat
       */
     if (result.isConvertibleToTwoLevel() && worth_convert_to_two_level)
     {
+        LOG_INFO(log, "will convert to two level, size {}, bytes {}", result_size, result_size_bytes);
+
         result.convertToTwoLevel();
         result.setResizeCallbackIfNeeded(thread_num);
     }
