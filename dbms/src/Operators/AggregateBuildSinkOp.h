@@ -50,5 +50,6 @@ private:
     AggregateContextPtr agg_context;
 
     bool is_final_spill = false;
+    UInt64 process_time = 0;
 };
 } // namespace DB
