@@ -26,8 +26,9 @@ OperatorStatus AggregateBuildSinkOp::prepareImpl()
         if (agg_context->needSpill(index))
             return OperatorStatus::IO_OUT;
     }
+    auto ret = agg_context->isTaskMarkedForSpill(index) ? OperatorStatus::IO_OUT : OperatorStatus::NEED_INPUT;
     process_time += watch.elapsedFromLastTime();
-    return agg_context->isTaskMarkedForSpill(index) ? OperatorStatus::IO_OUT : OperatorStatus::NEED_INPUT;
+    return ret;
 }
 
 OperatorStatus AggregateBuildSinkOp::writeImpl(Block && block)
@@ -44,8 +45,9 @@ OperatorStatus AggregateBuildSinkOp::writeImpl(Block && block)
         return OperatorStatus::FINISHED;
     }
     agg_context->buildOnBlock(index, block);
+    auto ret = agg_context->needSpill(index) ? OperatorStatus::IO_OUT : OperatorStatus::NEED_INPUT;
     process_time += watch.elapsedFromLastTime();
-    return agg_context->needSpill(index) ? OperatorStatus::IO_OUT : OperatorStatus::NEED_INPUT;
+    return ret;
 }
 
 OperatorStatus AggregateBuildSinkOp::executeIOImpl()
@@ -57,7 +59,7 @@ OperatorStatus AggregateBuildSinkOp::executeIOImpl()
 void AggregateBuildSinkOp::operateSuffixImpl()
 {
     //LOG_DEBUG(log, "finish build with {} rows", agg_context->getTotalBuildRows(index));
-    LOG_INFO(log, "{} finish build with {} rows, cost {}ms", index, agg_context->getTotalBuildRows(index), process_time);
+    LOG_INFO(log, "{} finish build with {} rows, cost {}ns", index, agg_context->getTotalBuildRows(index), process_time);
 }
 
 } // namespace DB
