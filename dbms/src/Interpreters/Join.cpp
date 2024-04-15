@@ -2177,9 +2177,9 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
             RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
             if (ptr)
             {
+                PREFETCH_READ(ptr + pointer_offset);
                 state->ptr = ptr;
                 state->stage = 2;
-                PREFETCH_READ(state->ptr + pointer_offset);
                 ++k;
                 continue;
             }
@@ -2236,14 +2236,15 @@ void NO_INLINE probeBlockImplTypeCasePrefetch(
         auto key = keyHolderGetKey(state->key_holder);
         size_t hash_value = Hash()(key);
         size_t bucket = table.getBucketNum(hash_value);
+        state->pointer_ptr = table.pointer_table + bucket;
+        PREFETCH_READ(state->pointer_ptr);
+
         state->index = i;
         if constexpr (KIND == LeftOuter || KIND == Anti)
         {
             state->is_matched = false;
         }
-        state->pointer_ptr = table.pointer_table + bucket;
         state->stage = 1;
-        PREFETCH_READ(state->pointer_ptr);
         ++i;
         ++k;
     }
@@ -3472,12 +3473,11 @@ void Join::workAfterBuildFinish(size_t stream_index)
 {
     if (enable_new_hash_join)
     {
-        size_t all_row_count = 0;
         for (size_t i = 0; i < build_concurrency; ++i)
-            all_row_count += build_workers_data[i]->row_count;
+            all_build_row_count += build_workers_data[i]->row_count;
 
         Stopwatch watch;
-        table.init(all_row_count);
+        table.init(all_build_row_count);
 
         enable_prefetch = table.pointer_table_size >= prefetch_threshold;
 
@@ -3485,7 +3485,7 @@ void Join::workAfterBuildFinish(size_t stream_index)
             log,
             "allocate pointer table cost {}ms, rows {}, pointer table size {}, added column num {}, enable prefetch {}",
             watch.elapsedMilliseconds(),
-            all_row_count,
+            all_build_row_count,
             table.pointer_table_size,
             build_workers_data[stream_index]->column_num,
             enable_prefetch);
@@ -3545,7 +3545,10 @@ void Join::workAfterBuildFinish(size_t stream_index)
         // set rf is ready
         finalizeRuntimeFilter();
 
-        has_build_data_in_memory = !original_blocks.empty();
+        if (enable_new_hash_join)
+            has_build_data_in_memory = all_build_row_count > 0;
+        else
+            has_build_data_in_memory = !original_blocks.empty();
     }
 }
 

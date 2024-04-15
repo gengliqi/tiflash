@@ -669,6 +669,7 @@ private:
 
     std::vector<std::unique_ptr<ProbeWorkerData>> probe_workers_data;
 
+    size_t all_build_row_count = 0;
     JoinHashPointerTable table;
 
     mutable std::mutex build_scan_table_lock;
