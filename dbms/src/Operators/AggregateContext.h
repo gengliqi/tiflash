@@ -70,6 +70,8 @@ public:
 
     Block readForConvergent(size_t index);
 
+    void convertPendingDataToTwoLevel();
+
     Block getHeader() const;
 
     AggSpillContextPtr & getAggSpillContext() { return aggregator->getAggSpillContext(); }

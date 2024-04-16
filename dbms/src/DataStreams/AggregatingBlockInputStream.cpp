@@ -54,6 +54,7 @@ Block AggregatingBlockInputStream::readImpl()
             else
             {
                 RUNTIME_CHECK(1 == merging_buckets->getConcurrency());
+                merging_buckets->convertPendingDataToTwoLevel();
                 impl = std::make_unique<MergingAndConvertingBlockInputStream>(merging_buckets, 0, log->identifier());
             }
         }

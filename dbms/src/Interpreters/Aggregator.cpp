@@ -197,7 +197,7 @@ void AggregatedDataVariants::convertToTwoLevel()
     case AggregationMethodType(NAME):                                                     \
     {                                                                                     \
         if (aggregator)                                                                   \
-            LOG_INFO(                                                                    \
+            LOG_INFO(                                                                     \
                 aggregator->log,                                                          \
                 "Converting aggregation data type `{}` to `{}`.",                         \
                 getMethodName(AggregationMethodType(NAME)),                               \
@@ -1944,10 +1944,11 @@ MergingBucketsPtr Aggregator::mergeAndConvertToBlocks(
         }
     }
 
+    ManyAggregatedDataVariants wait_convert_two_level_data;
     if (has_at_least_one_two_level)
         for (auto & variant : non_empty_data)
             if (!variant->isTwoLevel())
-                variant->convertToTwoLevel();
+                wait_convert_two_level_data.push_back(variant);
 
     AggregatedDataVariantsPtr & first = non_empty_data[0];
 
@@ -1969,7 +1970,12 @@ MergingBucketsPtr Aggregator::mergeAndConvertToBlocks(
 
     // for single level merge, concurrency must be 1.
     size_t merge_concurrency = has_at_least_one_two_level ? std::max(max_threads, 1) : 1;
-    return std::make_shared<MergingBuckets>(*this, non_empty_data, final, merge_concurrency);
+    return std::make_shared<MergingBuckets>(
+        *this,
+        non_empty_data,
+        wait_convert_two_level_data,
+        final,
+        merge_concurrency);
 }
 
 template <typename Method, typename Table>
@@ -2406,6 +2412,7 @@ void Aggregator::setCancellationHook(CancellationHook cancellation_hook)
 MergingBuckets::MergingBuckets(
     const Aggregator & aggregator_,
     const ManyAggregatedDataVariants & data_,
+    const ManyAggregatedDataVariants & pending_convert_data_,
     bool final_,
     size_t concurrency_)
     : log(Logger::get(aggregator_.log ? aggregator_.log->identifier() : ""))
@@ -2413,11 +2420,13 @@ MergingBuckets::MergingBuckets(
     , data(data_)
     , final(final_)
     , concurrency(concurrency_)
+    , pending_convert_data(pending_convert_data_)
 {
     assert(concurrency > 0);
     if (!data.empty())
     {
-        is_two_level = data[0]->isTwoLevel();
+        // If pending_convert_data is not empty, it means some data is waiting for converting to two level.
+        is_two_level = data[0]->isTwoLevel() || !pending_convert_data.empty();
         if (is_two_level)
         {
             for (size_t i = 0; i < concurrency; ++i)
@@ -2448,12 +2457,38 @@ Block MergingBuckets::getData(size_t concurrency_index)
 {
     assert(concurrency_index < concurrency);
 
-    if (unlikely(data.empty()))
+    if unlikely (data.empty())
         return {};
+
+    if unlikely (getNextPendingConvertData() != nullptr)
+        throw Exception(
+            "Logical error: converting data does not finish before getting data.",
+            ErrorCodes::LOGICAL_ERROR);
 
     FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_aggregate_merge_failpoint);
 
     return is_two_level ? getDataForTwoLevel(concurrency_index) : getDataForSingleLevel();
+}
+
+void MergingBuckets::convertPendingDataToTwoLevel()
+{
+    while (true)
+    {
+        AggregatedDataVariantsPtr * wait_convert_data = getNextPendingConvertData();
+        if (wait_convert_data == nullptr)
+            break;
+        (*wait_convert_data)->convertToTwoLevel();
+    }
+}
+
+AggregatedDataVariantsPtr * MergingBuckets::getNextPendingConvertData()
+{
+    if (wait_convert_index.load(std::memory_order_relaxed) >= pending_convert_data.size())
+        return nullptr;
+    auto index = wait_convert_index.fetch_add(1, std::memory_order_relaxed);
+    if (index >= pending_convert_data.size())
+        return nullptr;
+    return &pending_convert_data[index];
 }
 
 Block MergingBuckets::getDataForSingleLevel()

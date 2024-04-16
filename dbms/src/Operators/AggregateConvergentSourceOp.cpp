@@ -31,6 +31,7 @@ AggregateConvergentSourceOp::AggregateConvergentSourceOp(
 
 OperatorStatus AggregateConvergentSourceOp::readImpl(Block & block)
 {
+    agg_context->convertPendingDataToTwoLevel();
     block = agg_context->readForConvergent(index);
     total_rows += block.rows();
     return OperatorStatus::HAS_OUTPUT;

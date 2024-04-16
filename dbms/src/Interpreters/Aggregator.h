@@ -986,6 +986,7 @@ public:
     MergingBuckets(
         const Aggregator & aggregator_,
         const ManyAggregatedDataVariants & data_,
+        const ManyAggregatedDataVariants & pending_convert_data_,
         bool final_,
         size_t concurrency_);
 
@@ -993,9 +994,13 @@ public:
 
     Block getData(size_t concurrency_index);
 
+    void convertPendingDataToTwoLevel();
+
     size_t getConcurrency() const { return concurrency; }
 
 private:
+    AggregatedDataVariantsPtr * getNextPendingConvertData();
+
     Block getDataForSingleLevel();
 
     Block getDataForTwoLevel(size_t concurrency_index);
@@ -1018,6 +1023,9 @@ private:
 
     std::atomic<Int32> current_bucket_num = 0;
     static constexpr Int32 NUM_BUCKETS = 256;
+
+    ManyAggregatedDataVariants pending_convert_data;
+    std::atomic<size_t> wait_convert_index = 0;
 };
 using MergingBucketsPtr = std::shared_ptr<MergingBuckets>;
 

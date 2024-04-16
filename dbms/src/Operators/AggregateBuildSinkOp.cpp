@@ -59,7 +59,12 @@ OperatorStatus AggregateBuildSinkOp::executeIOImpl()
 void AggregateBuildSinkOp::operateSuffixImpl()
 {
     //LOG_DEBUG(log, "finish build with {} rows", agg_context->getTotalBuildRows(index));
-    LOG_INFO(log, "{} finish build with {} rows, cost {}ns", index, agg_context->getTotalBuildRows(index), process_time);
+    LOG_INFO(
+        log,
+        "{} finish build with {} rows, cost {}ns",
+        index,
+        agg_context->getTotalBuildRows(index),
+        process_time);
 }
 
 } // namespace DB
