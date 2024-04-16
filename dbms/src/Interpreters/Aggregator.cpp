@@ -1965,12 +1965,7 @@ MergingBucketsPtr Aggregator::mergeAndConvertToBlocks(
 
     // for single level merge, concurrency must be 1.
     size_t merge_concurrency = has_at_least_one_two_level ? std::max(max_threads, 1) : 1;
-    return std::make_shared<MergingBuckets>(
-        *this,
-        non_empty_data,
-        pending_convert_data,
-        final,
-        merge_concurrency);
+    return std::make_shared<MergingBuckets>(*this, non_empty_data, pending_convert_data, final, merge_concurrency);
 }
 
 template <typename Method, typename Table>
@@ -2455,7 +2450,7 @@ Block MergingBuckets::getData(size_t concurrency_index)
     if unlikely (data.empty())
         return {};
 
-    if unlikely (getNextPendingConvertData() != nullptr)
+    if unlikely (!isAllConvertFinish())
         throw Exception(
             "Logical error: converting data does not finish before getting data.",
             ErrorCodes::LOGICAL_ERROR);
@@ -2486,6 +2481,7 @@ void MergingBuckets::convertPendingDataToTwoLevel()
         if (convert_data == nullptr)
             break;
         (*convert_data)->convertToTwoLevel();
+        finished_convert_count.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

@@ -996,6 +996,11 @@ public:
 
     void convertPendingDataToTwoLevel();
 
+    inline bool isAllConvertFinish()
+    {
+        return finished_convert_count.load(std::memory_order_relaxed) == pending_convert_data.size();
+    }
+
     size_t getConcurrency() const { return concurrency; }
 
 private:
@@ -1026,6 +1031,7 @@ private:
 
     ManyAggregatedDataVariants pending_convert_data;
     std::atomic<size_t> pending_convert_index = 0;
+    std::atomic<size_t> finished_convert_count = 0;
 
     std::atomic<bool> is_type_checked = false;
 };
