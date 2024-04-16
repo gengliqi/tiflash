@@ -1025,7 +1025,9 @@ private:
     static constexpr Int32 NUM_BUCKETS = 256;
 
     ManyAggregatedDataVariants pending_convert_data;
-    std::atomic<size_t> wait_convert_index = 0;
+    std::atomic<size_t> pending_convert_index = 0;
+
+    std::atomic<bool> is_type_checked = false;
 };
 using MergingBucketsPtr = std::shared_ptr<MergingBuckets>;
 

@@ -1944,21 +1944,16 @@ MergingBucketsPtr Aggregator::mergeAndConvertToBlocks(
         }
     }
 
-    ManyAggregatedDataVariants wait_convert_two_level_data;
+    ManyAggregatedDataVariants pending_convert_data;
     if (has_at_least_one_two_level)
         for (auto & variant : non_empty_data)
             if (!variant->isTwoLevel())
-                wait_convert_two_level_data.push_back(variant);
+                pending_convert_data.push_back(variant);
 
     AggregatedDataVariantsPtr & first = non_empty_data[0];
 
     for (size_t i = 1, size = non_empty_data.size(); i < size; ++i)
     {
-        if (unlikely(first->type != non_empty_data[i]->type))
-            throw Exception(
-                "Cannot merge different aggregated data variants.",
-                ErrorCodes::CANNOT_MERGE_DIFFERENT_AGGREGATED_DATA_VARIANTS);
-
         /** Elements from the remaining sets can be moved to the first data set.
           * Therefore, it must own all the arenas of all other sets.
           */
@@ -1973,7 +1968,7 @@ MergingBucketsPtr Aggregator::mergeAndConvertToBlocks(
     return std::make_shared<MergingBuckets>(
         *this,
         non_empty_data,
-        wait_convert_two_level_data,
+        pending_convert_data,
         final,
         merge_concurrency);
 }
@@ -2465,6 +2460,19 @@ Block MergingBuckets::getData(size_t concurrency_index)
             "Logical error: converting data does not finish before getting data.",
             ErrorCodes::LOGICAL_ERROR);
 
+    if unlikely (!is_type_checked.load(std::memory_order_acquire))
+    {
+        AggregatedDataVariantsPtr & first = data[0];
+        for (size_t i = 1, size = data.size(); i < size; ++i)
+        {
+            if unlikely (first->type != data[i]->type)
+                throw Exception(
+                    "Cannot merge different aggregated data variants.",
+                    ErrorCodes::CANNOT_MERGE_DIFFERENT_AGGREGATED_DATA_VARIANTS);
+        }
+        is_type_checked.store(true, std::memory_order_release);
+    }
+
     FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::random_aggregate_merge_failpoint);
 
     return is_two_level ? getDataForTwoLevel(concurrency_index) : getDataForSingleLevel();
@@ -2474,18 +2482,18 @@ void MergingBuckets::convertPendingDataToTwoLevel()
 {
     while (true)
     {
-        AggregatedDataVariantsPtr * wait_convert_data = getNextPendingConvertData();
-        if (wait_convert_data == nullptr)
+        AggregatedDataVariantsPtr * convert_data = getNextPendingConvertData();
+        if (convert_data == nullptr)
             break;
-        (*wait_convert_data)->convertToTwoLevel();
+        (*convert_data)->convertToTwoLevel();
     }
 }
 
 AggregatedDataVariantsPtr * MergingBuckets::getNextPendingConvertData()
 {
-    if (wait_convert_index.load(std::memory_order_relaxed) >= pending_convert_data.size())
+    if (pending_convert_index.load(std::memory_order_relaxed) >= pending_convert_data.size())
         return nullptr;
-    auto index = wait_convert_index.fetch_add(1, std::memory_order_relaxed);
+    auto index = pending_convert_index.fetch_add(1, std::memory_order_relaxed);
     if (index >= pending_convert_data.size())
         return nullptr;
     return &pending_convert_data[index];
