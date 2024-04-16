@@ -996,7 +996,7 @@ public:
 
     void convertPendingDataToTwoLevel();
 
-    inline bool isAllConvertFinish()
+    inline bool isAllConvertFinished()
     {
         return finished_convert_count.load(std::memory_order_relaxed) == pending_convert_data.size();
     }

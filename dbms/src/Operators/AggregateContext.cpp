@@ -210,12 +210,12 @@ void AggregateContext::convertPendingDataToTwoLevel()
     merging_buckets->convertPendingDataToTwoLevel();
 }
 
-bool AggregateContext::isAllConvertFinish()
+bool AggregateContext::isAllConvertFinished()
 {
     assert(status.load() == AggStatus::convergent);
     if unlikely (!merging_buckets)
         return true;
-    return merging_buckets->isAllConvertFinish();
+    return merging_buckets->isAllConvertFinished();
 }
 
 } // namespace DB

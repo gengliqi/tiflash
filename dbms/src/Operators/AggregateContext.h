@@ -71,7 +71,7 @@ public:
     Block readForConvergent(size_t index);
 
     void convertPendingDataToTwoLevel();
-    bool isAllConvertFinish();
+    bool isAllConvertFinished();
 
     Block getHeader() const;
 

@@ -2450,7 +2450,7 @@ Block MergingBuckets::getData(size_t concurrency_index)
     if unlikely (data.empty())
         return {};
 
-    if unlikely (!isAllConvertFinish())
+    if unlikely (!isAllConvertFinished())
         throw Exception(
             "Logical error: converting data does not finish before getting data.",
             ErrorCodes::LOGICAL_ERROR);
