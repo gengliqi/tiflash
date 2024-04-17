@@ -54,11 +54,7 @@ public:
         , send_queue(std::forward<Args>(args)...)
     {}
 
-    ~GRPCSendQueue()
-    {
-        //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
-        RUNTIME_ASSERT(tags.empty(), log, "tags are not empty");
-    }
+    ~GRPCSendQueue() { RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr"); }
 
     /// For test usage only.
     void setKickFuncForTest(GRPCKickFunc && func) { test_kick_func = std::move(func); }
@@ -67,7 +63,6 @@ public:
     MPMCQueueResult push(T && data)
     {
         auto ret = send_queue.push(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: sender push queue, size {}", send_queue.size());
         if (ret == MPMCQueueResult::OK)
             kickOneTag(true);
 
@@ -78,7 +73,6 @@ public:
     MPMCQueueResult forcePush(T && data)
     {
         auto ret = send_queue.forcePush(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: sender force push queue, size {}", send_queue.size());
         if (ret == MPMCQueueResult::OK)
             kickOneTag(true);
 
@@ -110,14 +104,10 @@ public:
             res = send_queue.tryPop(data);
             if (res == MPMCQueueResult::EMPTY)
             {
-                //RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
-                //tag = new_tag;
-                tags.push(new_tag);
-                LOG_DEBUG(log, "ExchangeLog: sender queue is empty");
+                RUNTIME_ASSERT(tag == nullptr, log, "tag is not nullptr");
+                tag = new_tag;
             }
         }
-        if (res == MPMCQueueResult::OK)
-            LOG_DEBUG(log, "ExchangeLog: sender pop queue, size {}", send_queue.size());
         return res;
     }
 
@@ -128,7 +118,7 @@ public:
     {
         auto ret = send_queue.cancelWith(reason);
         if (ret)
-            kickAllTagsWithFailure();
+            kickOneTag(false);
 
         return ret;
     }
@@ -142,8 +132,8 @@ public:
     {
         auto ret = send_queue.finish();
         if (ret)
-            kickAllTagsWithFailure();
-        LOG_DEBUG(log, "ExchangeLog: sender queue finish");
+            kickOneTag(false);
+
         return ret;
     }
 
@@ -157,32 +147,14 @@ private:
         GRPCKickTag * t;
         {
             std::lock_guard lock(mu);
-            /*if (tag == nullptr)
+            if (tag == nullptr)
                 return;
             t = tag;
-            tag = nullptr;*/
-            if (tags.empty())
-                return;
-            t = tags.front();
-            tags.pop();
-            LOG_DEBUG(log, "ExchangeLog: sender kick one tag");
+            tag = nullptr;
         }
 
         t->setStatus(status);
         t->kick(test_kick_func);
-    }
-
-    void kickAllTagsWithFailure()
-    {
-        std::lock_guard lock(mu);
-        while (!tags.empty())
-        {
-            GRPCKickTag * t = tags.front();
-            tags.pop();
-            t->setStatus(false);
-            t->kick(test_kick_func);
-        }
-        LOG_DEBUG(log, "ExchangeLog: sender kick all tags");
     }
 
     const LoggerPtr log;
@@ -204,9 +176,7 @@ private:
     std::mutex mu;
 
     GRPCKickFunc test_kick_func;
-    std::queue<GRPCKickTag *> tags;
-
-    //GRPCKickTag * tag = nullptr;
+    GRPCKickTag * tag = nullptr;
 };
 
 /// A multi-producer-multi-consumer queue dedicated to async grpc streaming receive work.
@@ -229,7 +199,6 @@ public:
     explicit GRPCRecvQueue(const LoggerPtr & log_, Args &&... args)
         : log(log_)
         , recv_queue(std::forward<Args>(args)...)
-        , local_queue(std::forward<Args>(args)...)
     {}
 
     ~GRPCRecvQueue() { RUNTIME_ASSERT(data_tags.empty(), log, "data_tags is not empty"); }
@@ -242,14 +211,7 @@ public:
     {
         auto ret = recv_queue.pop(data);
         if (ret == MPMCQueueResult::OK)
-        {
             kickOneTagWithSuccess();
-            LOG_DEBUG(log, "ExchangeLog: receiver pop grpc queue, size {}", recv_queue.size());
-            return ret;
-        }
-        ret = local_queue.pop(data);
-        if (ret == MPMCQueueResult::OK)
-            LOG_DEBUG(log, "ExchangeLog: receiver pop local queue, size {}", local_queue.size());
         return ret;
     }
 
@@ -258,14 +220,7 @@ public:
     {
         auto ret = recv_queue.tryPop(data);
         if (ret == MPMCQueueResult::OK)
-        {
             kickOneTagWithSuccess();
-            LOG_DEBUG(log, "ExchangeLog: receiver try pop grpc queue, size {}", recv_queue.size());
-            return ret;
-        }
-        ret = local_queue.tryPop(data);
-        if (ret == MPMCQueueResult::OK)
-            LOG_DEBUG(log, "ExchangeLog: receiver try pop local queue, size {}", local_queue.size());
         return ret;
     }
 
@@ -274,11 +229,8 @@ public:
     {
         auto ret = recv_queue.tryDequeue();
         if (ret == MPMCQueueResult::OK)
-        {
             kickOneTagWithSuccess();
-            return ret;
-        }
-        return local_queue.tryDequeue();
+        return ret;
     }
 
     /// Non-blocking push the data from the remote node in grpc thread.
@@ -305,31 +257,16 @@ public:
             std::lock_guard<std::mutex> lock(mu);
             res = recv_queue.tryPush(data);
             if (res == MPMCQueueResult::FULL)
-            {
                 data_tags.push_back(std::make_pair(std::move(data), new_tag));
-                LOG_DEBUG(log, "ExchangeLog: receiver grpc queue is full");
-            }
         }
-        if (res == MPMCQueueResult::OK)
-            LOG_DEBUG(log, "ExchangeLog: receiver push grpc queue, size {}", recv_queue.size());
         return res;
     }
 
     /// Blocking push the data from the local node.
-    MPMCQueueResult push(T && data)
-    {
-        auto ret = local_queue.push(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: receiver push local queue, size {}", local_queue.size());
-        return ret;
-    }
+    MPMCQueueResult push(T && data) { return recv_queue.push(std::move(data)); }
 
     /// Non-blocking force to push the data from the local node.
-    MPMCQueueResult forcePush(T && data)
-    {
-        auto ret = local_queue.forcePush(std::move(data));
-        LOG_DEBUG(log, "ExchangeLog: receiver force push local queue, size {}", local_queue.size());
-        return ret;
-    }
+    MPMCQueueResult forcePush(T && data) { return recv_queue.forcePush(std::move(data)); }
 
     MPMCQueueStatus getStatus() const { return recv_queue.getStatus(); }
 
@@ -342,7 +279,7 @@ public:
         auto ret = recv_queue.cancelWith(reason);
         if (ret)
             kickAllTagsWithFailure();
-        local_queue.cancelWith(reason);
+
         return ret;
     }
 
@@ -355,18 +292,10 @@ public:
         auto ret = recv_queue.finish();
         if (ret)
             kickAllTagsWithFailure();
-        local_queue.finish();
-        LOG_DEBUG(log, "ExchangeLog: receiver queue finish");
-
         return ret;
     }
 
-    bool isWritable(bool is_local) const
-    {
-        if (is_local)
-            return local_queue.isWritable();
-        return recv_queue.isWritable();
-    }
+    bool isWritable() const { return recv_queue.isWritable(); }
 
 private:
     friend class tests::TestGRPCRecvQueue;
@@ -383,8 +312,6 @@ private:
                 return;
             t = data_tags.front().second;
             data_tags.pop_front();
-
-            LOG_DEBUG(log, "ExchangeLog: receiver kick one tag");
         }
 
         t->setStatus(true);
@@ -401,13 +328,11 @@ private:
             t->setStatus(false);
             t->kick(test_kick_func);
         }
-        LOG_DEBUG(log, "ExchangeLog: receiver kick all tags");
     }
 
     const LoggerPtr log;
 
     LooseBoundedMPMCQueue<T> recv_queue;
-    LooseBoundedMPMCQueue<T> local_queue;
 
     /// The mutex is used to protect data_tags and avoid LOST NOTIFICATION like the one in GRPCSendQueue.
     ///
