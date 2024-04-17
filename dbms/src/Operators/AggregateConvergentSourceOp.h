@@ -43,5 +43,6 @@ private:
     AggregateContextPtr agg_context;
     uint64_t total_rows{};
     const size_t index;
+    UInt64 convergence_time = 0;
 };
 } // namespace DB

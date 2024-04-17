@@ -31,11 +31,13 @@ AggregateConvergentSourceOp::AggregateConvergentSourceOp(
 
 OperatorStatus AggregateConvergentSourceOp::readImpl(Block & block)
 {
+    Stopwatch watch;
     agg_context->convertPendingDataToTwoLevel();
     if (!agg_context->isAllConvertFinished())
         return OperatorStatus::WAITING;
 
     block = agg_context->readForConvergent(index);
+    convergence_time += watch.elapsedFromLastTime();
     total_rows += block.rows();
     return OperatorStatus::HAS_OUTPUT;
 }
@@ -47,7 +49,7 @@ OperatorStatus AggregateConvergentSourceOp::awaitImpl()
 
 void AggregateConvergentSourceOp::operateSuffixImpl()
 {
-    LOG_DEBUG(log, "finish read {} rows from aggregate context", total_rows);
+    LOG_INFO(log, "finish read {} rows from aggregate context, cost {}ns", total_rows, convergence_time);
 }
 
 } // namespace DB

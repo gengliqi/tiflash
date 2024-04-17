@@ -41,6 +41,8 @@ protected:
 
     void transformHeaderImpl(Block & header_) override;
 
+    void operateSuffixImpl() override;
+
 private:
     OperatorStatus tryFromBuildToSpill();
 
@@ -75,5 +77,9 @@ private:
     LocalAggStatus status{LocalAggStatus::build};
 
     LocalAggregateRestorerPtr restorer;
+
+    size_t total_rows = 0;
+    UInt64 build_time = 0;
+    UInt64 convergence_time = 0;
 };
 } // namespace DB

@@ -108,6 +108,7 @@ OperatorStatus LocalAggregateTransform::tryFromBuildToSpill()
 
 OperatorStatus LocalAggregateTransform::tryOutputImpl(Block & block)
 {
+    Stopwatch watch;
     switch (status)
     {
     case LocalAggStatus::build:
@@ -117,9 +118,12 @@ OperatorStatus LocalAggregateTransform::tryOutputImpl(Block & block)
             if (tryFromBuildToSpill() == OperatorStatus::IO_OUT)
                 return OperatorStatus::IO_OUT;
         }
+        build_time += watch.elapsedFromLastTime();
         return agg_context.isTaskMarkedForSpill(task_index) ? tryFromBuildToSpill() : OperatorStatus::NEED_INPUT;
     case LocalAggStatus::convergent:
         block = agg_context.readForConvergent(task_index);
+        total_rows += block.rows();
+        convergence_time += watch.elapsedFromLastTime();
         return OperatorStatus::HAS_OUTPUT;
     case LocalAggStatus::restore:
         return restorer->tryPop(block) ? OperatorStatus::HAS_OUTPUT : OperatorStatus::IO_IN;
@@ -160,4 +164,16 @@ void LocalAggregateTransform::transformHeaderImpl(Block & header_)
 {
     header_ = agg_context.getHeader();
 }
+
+void LocalAggregateTransform::operateSuffixImpl()
+{
+    LOG_INFO(
+        log,
+        "local aggregate transform, build {} rows, read {} rows, build cost {}ns, convergence cost {}ns",
+        agg_context.getTotalBuildRows(task_index),
+        total_rows,
+        build_time,
+        convergence_time);
+}
+
 } // namespace DB
