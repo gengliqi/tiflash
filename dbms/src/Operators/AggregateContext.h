@@ -75,6 +75,8 @@ public:
 
     Block getHeader() const;
 
+    Block getSourceHeader() const;
+
     AggSpillContextPtr & getAggSpillContext() { return aggregator->getAggSpillContext(); }
 
     bool hasLocalDataToBuild(size_t task_index);

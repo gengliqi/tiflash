@@ -44,15 +44,14 @@
 #include <Flash/ResourceControl/LocalAdmissionController.h>
 #include <Functions/registerFunctions.h>
 #include <IO/BaseFile/RateLimiter.h>
-#include <IO/Buffer/createReadBufferFromFileBase.h>
 #include <IO/Encryption/DataKeyManager.h>
 #include <IO/Encryption/KeyspacesKeyManager.h>
 #include <IO/Encryption/MockKeyManager.h>
-#include <IO/FileProvider.h>
+#include <IO/FileProvider/FileProvider.h>
 #include <IO/HTTPCommon.h>
 #include <IO/IOThreadPools.h>
+#include <IO/ReadHelpers.h>
 #include <IO/UseSSL.h>
-#include <IO/Util/ReadHelpers.h>
 #include <Interpreters/AsynchronousMetrics.h>
 #include <Interpreters/ProcessList.h>
 #include <Interpreters/SharedContexts/Disagg.h>
@@ -78,6 +77,7 @@
 #include <Storages/DeltaMerge/ReadThread/ColumnSharingCache.h>
 #include <Storages/DeltaMerge/ReadThread/SegmentReadTaskScheduler.h>
 #include <Storages/DeltaMerge/ReadThread/SegmentReader.h>
+#include <Storages/DeltaMerge/ScanContext.h>
 #include <Storages/FormatVersion.h>
 #include <Storages/IManageableStorage.h>
 #include <Storages/KVStore/FFI/FileEncryption.h>
@@ -950,6 +950,8 @@ int Server::main(const std::vector<std::string> & /*args*/)
 
     TiFlashErrorRegistry::instance(); // This invocation is for initializing
 
+    DM::ScanContext::initCurrentInstanceId(config(), log);
+
     const auto disaggregated_mode = getDisaggregatedMode(config());
     const auto use_autoscaler = useAutoScaler(config());
 
@@ -1029,6 +1031,12 @@ int Server::main(const std::vector<std::string> & /*args*/)
     {
         LOG_INFO(log, "UniPS is not enabled for proxy, page_version={}", STORAGE_FORMAT_CURRENT.page);
     }
+
+#ifdef USE_JEMALLOC
+    LOG_INFO(log, "Using Jemalloc for TiFlash");
+#else
+    LOG_INFO(log, "Not using Jemalloc for TiFlash");
+#endif
 
     RaftStoreProxyRunner proxy_runner(RaftStoreProxyRunner::RunRaftStoreProxyParms{&helper, proxy_conf}, log);
 
@@ -1709,6 +1717,8 @@ int Server::main(const std::vector<std::string> & /*args*/)
                 LOG_ERROR(log, "Current status of engine-store is NOT Running, should not happen");
                 exit(-1);
             }
+            LOG_INFO(log, "Stop collecting thread alloc metrics");
+            tmt_context.getKVStore()->stopThreadAllocInfo();
             LOG_INFO(log, "Set store context status Stopping");
             tmt_context.setStatusStopping();
             {
@@ -1776,7 +1786,7 @@ int Server::main(const std::vector<std::string> & /*args*/)
                 // Workload will not be throttled when LAC is stopped.
                 // It's ok because flash service has already been destructed, so throllting is meaningless.
                 assert(LocalAdmissionController::global_instance);
-                LocalAdmissionController::global_instance->stop();
+                LocalAdmissionController::global_instance->safeStop();
             }
         });
 
@@ -1796,11 +1806,11 @@ int Server::main(const std::vector<std::string> & /*args*/)
             // Stop LAC for AutoScaler managed CN before FlashGrpcServerHolder is destructed.
             // Because AutoScaler it will kill tiflash process when port of flash_server_addr is down.
             // And we want to make sure LAC is cleanedup.
-            // The effects are there will be no resource control during [lac.stop(), FlashGrpcServer destruct done],
+            // The effects are there will be no resource control during [lac.safeStop(), FlashGrpcServer destruct done],
             // but it's basically ok, that duration is small(normally 100-200ms).
             if (global_context->getSharedContextDisagg()->isDisaggregatedComputeMode() && use_autoscaler
                 && LocalAdmissionController::global_instance)
-                LocalAdmissionController::global_instance->stop();
+                LocalAdmissionController::global_instance->safeStop();
         });
 
         tmt_context.setStatusRunning();

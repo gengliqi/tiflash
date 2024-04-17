@@ -16,9 +16,10 @@
 
 #include <Common/nocopyable.h>
 #include <Core/Block.h>
-#include <IO/Util/WriteHelpers.h>
+#include <IO/WriteHelpers.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileDataProvider_fwd.h>
 #include <Storages/DeltaMerge/DMContext_fwd.h>
+#include <Storages/DeltaMerge/ReadMode.h>
 #include <Storages/DeltaMerge/RowKeyRange.h>
 #include <Storages/DeltaMerge/StoragePool/StoragePool_fwd.h>
 #include <Storages/Page/PageDefinesBase.h>
@@ -177,6 +178,8 @@ public:
 
     /// Create a new reader from current reader with different columns to read.
     virtual ColumnFileReaderPtr createNewReader(const ColumnDefinesPtr & col_defs) = 0;
+
+    virtual void setReadTag(ReadTag /*read_tag*/) {}
 };
 
 std::pair<size_t, size_t> copyColumnsData(

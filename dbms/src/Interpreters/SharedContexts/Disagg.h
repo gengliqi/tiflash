@@ -15,7 +15,7 @@
 #pragma once
 
 #include <Core/TiFlashDisaggregatedMode.h>
-#include <IO/FileProvider_fwd.h>
+#include <IO/FileProvider/FileProvider_fwd.h>
 #include <Interpreters/Context_fwd.h>
 #include <Interpreters/SharedContexts/Disagg_fwd.h>
 #include <Storages/DeltaMerge/Remote/DataStore/DataStore_fwd.h>
@@ -78,6 +78,8 @@ struct SharedContextDisagg : private boost::noncopyable
     explicit SharedContextDisagg(Context & global_context_)
         : global_context(global_context_)
     {}
+
+    ~SharedContextDisagg();
 
     void initReadNodePageCache(const PathPool & path_pool, const String & cache_dir, size_t cache_capacity);
 

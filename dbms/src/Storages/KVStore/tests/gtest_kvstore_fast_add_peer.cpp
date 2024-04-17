@@ -121,7 +121,7 @@ public:
     {
         auto & global_context = TiFlashTestEnv::getGlobalContext();
         KVStoreTestBase::TearDown();
-        global_context.getSharedContextDisagg()->fap_context.reset();
+        global_context.getSharedContextDisagg()->fap_context->shutdown();
         if (!already_initialize_data_store)
         {
             global_context.getSharedContextDisagg()->remote_data_store = nullptr;
@@ -414,8 +414,8 @@ CheckpointRegionInfoAndData RegionKVStoreTestFAP::prepareForRestart(FAPTestOpt o
     CheckpointRegionInfoAndData mock_data = std::make_tuple(
         checkpoint_info,
         kv_region,
-        kv_region->mutMeta().clonedApplyState(),
-        kv_region->mutMeta().clonedRegionState());
+        kv_region->getMeta().clonedApplyState(),
+        kv_region->getMeta().clonedRegionState());
     return mock_data;
 }
 
