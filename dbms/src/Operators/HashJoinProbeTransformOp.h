@@ -125,6 +125,8 @@ private:
 
     size_t joined_rows = 0;
     size_t scan_hash_map_rows = 0;
+    size_t probe_count = 0;
+    size_t scan_count = 0;
 
     ProbeStatus status{ProbeStatus::PROBE};
 };

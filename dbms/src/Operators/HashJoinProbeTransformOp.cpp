@@ -65,11 +65,13 @@ void HashJoinProbeTransformOp::operateSuffixImpl()
 {
     LOG_INFO(
         log,
-        "Finish join probe, total output rows {}, joined rows {}, scan hash map rows {}, scan total rows {}",
+        "Finish join probe, total output rows {}, joined rows {}, scan hash map rows {}, scan total rows {}, probe count {}, scan count {}",
         joined_rows + scan_hash_map_rows,
         joined_rows,
         scan_hash_map_rows,
-        probe_transform->getScanHashMapTotalScanRows());
+        probe_transform->getScanHashMapTotalScanRows(),
+        probe_count,
+        scan_count);
 }
 
 OperatorStatus HashJoinProbeTransformOp::onOutput(Block & block)
@@ -88,6 +90,7 @@ OperatorStatus HashJoinProbeTransformOp::onOutput(Block & block)
                     return ret;
             }
         case ProbeStatus::PROBE:
+            ++probe_count;
             // For the probe/restore_probe phase, probe_process_info has been filled,
             // if all_rows_joined_finish is still true here, it means that there is no input block.
             if unlikely (probe_process_info.all_rows_joined_finish)
@@ -113,6 +116,7 @@ OperatorStatus HashJoinProbeTransformOp::onOutput(Block & block)
         case ProbeStatus::PROBE_FINAL_SPILL:
             return OperatorStatus::IO_OUT;
         case ProbeStatus::READ_SCAN_HASH_MAP_DATA:
+            ++scan_count;
             block = probe_transform->scanHashMapAfterProbe();
             if unlikely (!block)
             {
