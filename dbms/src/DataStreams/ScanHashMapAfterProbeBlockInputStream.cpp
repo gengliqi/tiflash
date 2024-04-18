@@ -591,7 +591,7 @@ void ScanHashMapAfterProbeBlockInputStream::fillColumnsNewImpl(
     const size_t buffer_size = 256;
     RowPtrs row_ptrs_buffer;
     row_ptrs_buffer.reserve(buffer_size);
-    size_t added_rows = 0;
+    size_t added_rows = 0, scan_rows = 0;
     size_t num_columns_left = column_indices_left.size();
     size_t num_columns_right = column_indices_right.size();
     while (true)
@@ -615,7 +615,7 @@ void ScanHashMapAfterProbeBlockInputStream::fillColumnsNewImpl(
         }
 
         size_t size = current_ptrs->size();
-
+        size_t prev_index = current_index;
         for (; current_index < size; ++current_index)
         {
             RowPtr ptr = (*current_ptrs)[current_index];
@@ -664,7 +664,8 @@ void ScanHashMapAfterProbeBlockInputStream::fillColumnsNewImpl(
         if (current_index >= size)
             current_ptrs = nullptr;
 
-        if unlikely (added_rows >= max_block_size)
+        scan_rows += current_index - prev_index;
+        if unlikely (added_rows >= max_block_size || scan_rows >= max_block_size * 8)
             break;
     }
     if (!row_ptrs_buffer.empty())
