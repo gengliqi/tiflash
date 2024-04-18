@@ -747,11 +747,11 @@ using PODArrayWithStackMemory
 
 ALWAYS_INLINE inline void store_nontemp_64B(void * dst, const void * src)
 {
-#if defined(__AVX512__)
-    __m512i * d1 = (__m512i *)dst;
-    __m512i s1 = *((__m512i *)src);
-    _mm512_stream_si512(d1, s1);
-#elif defined(__AVX2__)
+//#if defined(__AVX512__)
+//    __m512i * d1 = (__m512i *)dst;
+//    __m512i s1 = *((__m512i *)src);
+//    _mm512_stream_si512(d1, s1);
+#if defined(__AVX2__)
     __m256i * d1 = (__m256i *)dst;
     __m256i s1 = *((__m256i *)src);
     __m256i * d2 = d1 + 1;
@@ -861,7 +861,7 @@ public:
 
     void deserializeAndInsertFromPosSIMD(PaddedPODArray<char *> & pos [[maybe_unused]])
     {
-#if defined(__AVX2__) || defined(__AVX512__)
+#if defined(__AVX2__)
         reserve((c_end + buf_size - c_start) / element_size + pos.size(), align);
 
         assert(((uintptr_t)c_end & (align - 1)) == 0);
