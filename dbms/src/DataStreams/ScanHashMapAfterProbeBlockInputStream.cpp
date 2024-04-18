@@ -665,7 +665,7 @@ void ScanHashMapAfterProbeBlockInputStream::fillColumnsNewImpl(
             current_ptrs = nullptr;
 
         scan_rows += current_index - prev_index;
-        total_scan_rows += scan_rows;
+        total_scan_rows += current_index - prev_index;
         if unlikely (added_rows >= max_block_size || (added_rows > 0 && scan_rows >= max_block_size * 8))
             break;
     }
