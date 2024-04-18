@@ -63,12 +63,13 @@ void HashJoinProbeTransformOp::transformHeaderImpl(Block & header_)
 
 void HashJoinProbeTransformOp::operateSuffixImpl()
 {
-    LOG_DEBUG(
+    LOG_INFO(
         log,
-        "Finish join probe, total output rows {}, joined rows {}, scan hash map rows {}",
+        "Finish join probe, total output rows {}, joined rows {}, scan hash map rows {}, scan total rows {}",
         joined_rows + scan_hash_map_rows,
         joined_rows,
-        scan_hash_map_rows);
+        scan_hash_map_rows,
+        probe_transform->getScanHashMapTotalScanRows());
 }
 
 OperatorStatus HashJoinProbeTransformOp::onOutput(Block & block)

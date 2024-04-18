@@ -17,6 +17,7 @@
 #include <Flash/Executor/ResultQueue.h>
 #include <Interpreters/Join.h>
 #include <Operators/Operator.h>
+#include <DataStreams/ScanHashMapAfterProbeBlockInputStream.h>
 
 namespace DB
 {
@@ -57,6 +58,12 @@ public:
         scan_hash_map_after_probe_stream->readSuffix();
         join->finishOneNonJoin(op_index);
         scan_hashmap_after_probe_finished = true;
+    }
+    size_t getScanHashMapTotalScanRows()
+    {
+        if (scan_hash_map_after_probe_stream != nullptr)
+            return std::dynamic_pointer_cast<ScanHashMapAfterProbeBlockInputStream>(scan_hash_map_after_probe_stream)->getTotalScanRows();
+        return 0;
     }
 
     // For probe stage

@@ -37,6 +37,7 @@ public:
 
     size_t getIndex() const { return index; }
 
+    size_t getTotalScanRows() const { return total_scan_rows; }
 
 protected:
     Block readImpl() override;
@@ -101,5 +102,6 @@ private:
 
     RowPtrs * current_ptrs = nullptr;
     size_t current_index = 0;
+    size_t total_scan_rows = 0;
 };
 } // namespace DB
