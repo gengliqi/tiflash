@@ -191,7 +191,7 @@ private:
         : data(n, x)
     {}
     ColumnVector(const ColumnVector & src)
-        : data(src.data.begin(), src.data.end()){};
+        : data(src.data.begin(), src.data.end()) {};
 
     /// Sugar constructor.
     ColumnVector(std::initializer_list<T> il)
@@ -433,6 +433,8 @@ public:
     size_t sizeOfValueIfFixed() const override { return sizeof(T); }
 
     StringRef getRawData() const override { return StringRef(reinterpret_cast<const char *>(data.data()), byteSize()); }
+
+    void swapFixedAndContiguousData(SimplePaddedPODArray & simple_data) override { simple_data.swap(data); }
 
     /** More efficient methods of manipulation - to manipulate with data directly. */
     Container & getData() { return data; }

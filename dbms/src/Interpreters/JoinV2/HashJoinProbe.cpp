@@ -101,6 +101,106 @@ void JoinProbeContext::prepareForHashProbe(
 
 #define PREFETCH_READ(ptr) __builtin_prefetch((ptr), 0 /* rw==read */, 3 /* locality */)
 
+void convertToSimpleMutableColumn(MutableColumnPtr & column_ptr, SimpleMutableColumn & simple_column)
+{
+    IColumn * column = column_ptr.get();
+    if (column->isColumnNullable())
+    {
+        auto * nullable_column = typeid_cast<ColumnNullable *>(column);
+        simple_column.null_map = &nullable_column->getNullMapColumn();
+        column = &nullable_column->getNestedColumn();
+    }
+    if (column->isFixedAndContiguous())
+    {
+        // There is a bug for ColumnFixedString though it's not used for now.
+        size_t fixed_size = column->sizeOfValueIfFixed();
+        RUNTIME_ASSERT(column->size() == 0);
+        simple_column.pod_array = std::make_unique<SimplePaddedPODArray>(fixed_size);
+        simple_column.type = SimpleColumnType::Fixed;
+    }
+    else if (typeid_cast<ColumnString *>(column))
+    {
+        simple_column.other_data = static_cast<void *>(column);
+        simple_column.type = SimpleColumnType::String;
+    }
+    else
+    {
+        RUNTIME_ASSERT(false);
+        simple_column.other_data = static_cast<void *>(column);
+        simple_column.type = SimpleColumnType::Other;
+    }
+}
+
+void reserveSimpleMutableColumn(SimpleMutableColumn & simple_column, size_t n)
+{
+    if (simple_column.null_map)
+    {
+        simple_column.null_map->reserve(n);
+    }
+    switch (simple_column.type)
+    {
+    case SimpleColumnType::Fixed:
+    {
+        simple_column.pod_array->reserve(n, SimplePaddedPODArray::align);
+        break;
+    }
+    case SimpleColumnType::String:
+    {
+        auto * column = static_cast<ColumnString *>(simple_column.other_data);
+        column->reserve(n);
+        break;
+    }
+    case SimpleColumnType::Other:
+    {
+        auto * column = static_cast<IColumn *>(simple_column.other_data);
+        column->reserve(n);
+        break;
+    }
+    }
+}
+
+template <bool judge_null_map>
+inline void deserializeAndInsertFromPos(SimpleMutableColumn & simple_column, RowPtrs & pos)
+{
+    if constexpr (judge_null_map)
+    {
+        if (simple_column.null_map)
+            simple_column.null_map->deserializeAndInsertFromPos(pos);
+    }
+    switch (simple_column.type)
+    {
+    case SimpleColumnType::Fixed:
+    {
+        simple_column.pod_array->deserializeAndInsertFromPos(pos);
+        break;
+    }
+    case SimpleColumnType::String:
+    {
+        auto * column = static_cast<ColumnString *>(simple_column.other_data);
+        column->deserializeAndInsertFromPos(pos);
+        break;
+    }
+    case SimpleColumnType::Other:
+    {
+        auto * column = static_cast<IColumn *>(simple_column.other_data);
+        column->deserializeAndInsertFromPos(pos);
+        break;
+    }
+    }
+}
+
+void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPtr & column_ptr)
+{
+    IColumn * column = column_ptr.get();
+    if (column->isColumnNullable())
+        column = &typeid_cast<ColumnNullable *>(column)->getNestedColumn();
+
+    if (column->isFixedAndContiguous())
+    {
+        column->swapFixedAndContiguousData(*simple_column.pod_array);
+    }
+}
+
 template <typename KeyGetter, bool has_null_map, bool key_all_raw>
 class JoinProbeBlockHelper
 {
@@ -144,6 +244,17 @@ public:
         }
         else
             wd.offsets_to_replicate.resize(context.rows);
+
+        wd.simple_added_columns.clear();
+
+        size_t limit_count = std::min(settings.max_block_size, context.rows);
+        for (size_t i = 0; i < added_columns.size(); ++i)
+        {
+            wd.simple_added_columns.emplace_back();
+            auto & last_simple_column = wd.simple_added_columns.back();
+            convertToSimpleMutableColumn(added_columns[i], last_simple_column);
+            reserveSimpleMutableColumn(last_simple_column, limit_count);
+        }
     }
 
     void joinProbeBlockImpl();
@@ -196,17 +307,21 @@ private:
         }
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
-            IColumn * column = added_columns[column_index].get();
-            if (has_null_map && is_nullable)
-                column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-            column->deserializeAndInsertFromPos(wd.insert_batch);
+            deserializeAndInsertFromPos<false>(wd.simple_added_columns[column_index], wd.insert_batch);
+
+            //IColumn * column = added_columns[column_index].get();
+            //if (has_null_map && is_nullable)
+            //    column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+            //column->deserializeAndInsertFromPos(wd.insert_batch);
         }
         for (auto [column_index, _] : row_layout.other_required_column_indexes)
         {
             if constexpr (key_all_raw)
-                added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch);
+                deserializeAndInsertFromPos<true>(wd.simple_added_columns[column_index], wd.insert_batch);
+            //added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch);
             else
-                added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other);
+                deserializeAndInsertFromPos<true>(wd.simple_added_columns[column_index], wd.insert_batch_other);
+            //added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other);
         }
 
         wd.insert_batch.clear();
@@ -276,12 +391,16 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw>::joinP
         {
             if (is_nullable)
             {
-                auto & null_map_vec
-                    = static_cast<ColumnNullable &>(*added_columns[column_index]).getNullMapColumn().getData();
+                //auto & null_map_vec
+                //    = static_cast<ColumnNullable &>(*added_columns[column_index]).getNullMapColumn().getData();
+                auto & null_map_vec = wd.simple_added_columns[column_index].null_map->getData();
                 null_map_vec.resize_fill(null_map_vec.size() + current_offset, 0);
             }
         }
     }
+
+    for (size_t j = 0; j < added_columns.size(); ++j)
+        convertToMutableColumn(wd.simple_added_columns[j], added_columns[j]);
 }
 
 template <typename KeyGetter, bool has_null_map, bool key_all_raw>
@@ -375,6 +494,23 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw>::joinP
     }
 
     FlushBatchIfNecessary<true>();
+
+    if constexpr (has_null_map)
+    {
+        for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+        {
+            if (is_nullable)
+            {
+                //auto & null_map_vec
+                //    = static_cast<ColumnNullable &>(*added_columns[column_index]).getNullMapColumn().getData();
+                auto & null_map_vec = wd.simple_added_columns[column_index].null_map->getData();
+                null_map_vec.resize_fill(null_map_vec.size() + current_offset, 0);
+            }
+        }
+    }
+
+    for (size_t j = 0; j < added_columns.size(); ++j)
+        convertToMutableColumn(wd.simple_added_columns[j], added_columns[j]);
 }
 
 template <typename KeyGetter, bool has_null_map, bool key_all_raw>

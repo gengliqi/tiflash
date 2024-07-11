@@ -139,6 +139,8 @@ public:
         return StringRef(reinterpret_cast<const char *>(data.data()), byteSize());
     }
 
+    void swapFixedAndContiguousData(SimplePaddedPODArray & simple_data) override { simple_data.swap(data); }
+
     StringRef serializeValueIntoArena(
         size_t n,
         Arena & arena,

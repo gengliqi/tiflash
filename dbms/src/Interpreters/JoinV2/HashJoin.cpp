@@ -465,7 +465,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
 
     RUNTIME_ASSERT(rows >= context.start_row_idx);
     size_t start = context.start_row_idx;
-    size_t remain_rows = rows - context.start_row_idx;
+    //size_t remain_rows = rows - context.start_row_idx + 1;
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
         const ColumnWithTypeAndName & src_column = right_sample_block_pruned.getByPosition(i);
@@ -475,11 +475,11 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
             src_column.name);
 
         added_columns.push_back(src_column.column->cloneEmpty());
-        if (src_column.type && src_column.type->haveMaximumSizeOfValue())
+        /*if (src_column.type && src_column.type->haveMaximumSizeOfValue())
         {
             // todo figure out more accurate `rows`
             added_columns.back()->reserve(remain_rows);
-        }
+        }*/
     }
 
     auto & wd = probe_workers_data[stream_index];

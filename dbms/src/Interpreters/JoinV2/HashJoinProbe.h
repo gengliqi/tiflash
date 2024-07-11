@@ -74,6 +74,21 @@ struct ProbePrefetchState
     };
 };
 
+enum class SimpleColumnType
+{
+    Fixed,
+    String,
+    Other,
+};
+
+struct SimpleMutableColumn
+{
+    SimpleColumnType type;
+    ColumnUInt8 * null_map;
+    std::unique_ptr<SimplePaddedPODArray> pod_array;
+    void * other_data;
+};
+
 struct alignas(ABSL_CACHELINE_SIZE) JoinProbeWorkerData
 {
     size_t prefetch_iter = 0;
@@ -82,6 +97,7 @@ struct alignas(ABSL_CACHELINE_SIZE) JoinProbeWorkerData
     IColumn::Offsets selective_offsets;
     IColumn::Offsets offsets_to_replicate;
 
+    std::vector<SimpleMutableColumn> simple_added_columns;
     RowPtrs insert_batch;
     RowPtrs insert_batch_other;
 
