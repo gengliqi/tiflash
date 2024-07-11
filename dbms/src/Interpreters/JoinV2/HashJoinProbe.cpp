@@ -201,6 +201,26 @@ void convertToMutableColumn(SimpleMutableColumn & simple_column, MutableColumnPt
     }
 }
 
+enum class ProbePrefetchStage : UInt8
+{
+    None,
+    FindHeader,
+    FindNext,
+};
+template <typename T>
+struct ProbePrefetchState
+{
+    ProbePrefetchStage stage = ProbePrefetchStage::None;
+    bool is_matched = false;
+    typename T::KeyType key;
+    size_t index;
+    union
+    {
+        RowPtr ptr;
+        std::atomic<RowPtr> * pointer_ptr;
+    };
+};
+
 template <typename KeyGetter, bool has_null_map, bool key_all_raw>
 class JoinProbeBlockHelper
 {
@@ -240,7 +260,12 @@ public:
         {
             wd.selective_offsets.clear();
             wd.selective_offsets.reserve(context.rows);
-            wd.prefetch_states.resize(settings.probe_prefetch_step);
+            if (!wd.prefetch_states)
+            {
+                wd.prefetch_states = decltype(wd.prefetch_states)(
+                    static_cast<void *>(new ProbePrefetchState<typename KeyGetter::Type>[settings.probe_prefetch_step]),
+                    [](void * ptr) { delete reinterpret_cast<ProbePrefetchState<typename KeyGetter::Type> *>(ptr); });
+            }
         }
         else
             wd.offsets_to_replicate.resize(context.rows);
@@ -413,10 +438,12 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw>::joinP
     size_t & active_states = context.prefetch_active_states;
     size_t & k = wd.prefetch_iter;
     size_t current_offset = 0;
+    auto * states = reinterpret_cast<ProbePrefetchState<typename KeyGetter::Type> *>(wd.prefetch_states.get());
+
     while (idx < context.rows || active_states > 0)
     {
         k = k == settings.probe_prefetch_step ? 0 : k;
-        auto * state = &wd.prefetch_states[k];
+        auto * state = &states[k];
         if (state->stage == ProbePrefetchStage::FindNext)
         {
             RowPtr ptr = state->ptr;
@@ -427,7 +454,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw>::joinP
                 PREFETCH_READ(next_ptr + row_layout.next_pointer_offset);
             }
 
-            const auto & key = key_getter.getJoinKey(state->index);
+            const auto & key = state->key;
             const auto & key2 = key_getter.deserializeJoinKey(ptr + row_layout.key_offset);
             if (key_getter.joinKeyIsEqual(key, key2))
             {
@@ -437,6 +464,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw>::joinP
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
+
             if (next_ptr)
             {
                 ++k;
@@ -486,6 +514,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw>::joinP
         state->pointer_ptr = pointer_table.getPointerTable() + bucket;
         PREFETCH_READ(state->pointer_ptr);
 
+        state->key = key;
         state->index = idx;
         state->stage = ProbePrefetchStage::FindHeader;
         ++active_states;
