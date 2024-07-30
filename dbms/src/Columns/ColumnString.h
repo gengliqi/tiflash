@@ -279,8 +279,10 @@ public:
 
     void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end) override
     {
+        if unlikely (start >= end)
+            return;
         size_t prev_size = offsets.size();
-        offsets.resize(prev_size + pos.size());
+        offsets.resize(prev_size + end - start);
 
         size_t char_size = chars.size();
         for (size_t i = start; i < end; ++i)

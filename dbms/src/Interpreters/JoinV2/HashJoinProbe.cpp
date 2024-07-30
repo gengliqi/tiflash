@@ -297,8 +297,6 @@ private:
             }
         }
 
-
-
         wd.insert_batch.clear();
         if constexpr (!key_all_raw)
             wd.insert_batch_other.clear();
