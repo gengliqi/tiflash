@@ -407,8 +407,14 @@ bool HashJoin::finishOneBuild(size_t stream_index)
 bool HashJoin::finishOneProbe(size_t stream_index)
 {
     auto & wd = probe_workers_data[stream_index];
-    LOG_INFO(log, "{} probe cost {}ms(hash_table {}ms + insert {}ms)", stream_index, wd.probe_time / 1000000UL,
-        wd.probe_hash_table_time / 1000000UL, wd.insert_time / 1000000UL);
+    LOG_INFO(
+        log,
+        "{} probe handle {} rows, cost {}ms(hash_table {}ms + insert {}ms)",
+        stream_index,
+        wd.probe_handle_rows,
+        wd.probe_time / 1000000UL,
+        wd.probe_hash_table_time / 1000000UL,
+        wd.insert_time / 1000000UL);
     return active_probe_worker.fetch_sub(1) == 1;
 }
 
@@ -509,8 +515,12 @@ Block HashJoin::joinBlock(JoinProbeContext & context, size_t stream_index)
         /// exit the while loop if
         /// 1. probe_process_info.all_rows_joined_finish is true, which means all the rows in current block is processed
         /// 2. the block may be expanded after join and result_rows exceeds the min_result_block_size
-        if (context.isCurrentProbeFinished()
-            || (may_probe_side_expanded_after_join && result_rows >= min_result_block_size))
+        if (context.isCurrentProbeFinished())
+        {
+            probe_workers_data[stream_index].probe_handle_rows += context.rows;
+            break;
+        }
+        if (may_probe_side_expanded_after_join && result_rows >= min_result_block_size)
             break;
     }
     assert(!result_blocks.empty());

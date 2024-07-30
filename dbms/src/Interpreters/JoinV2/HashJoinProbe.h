@@ -67,6 +67,7 @@ struct alignas(ABSL_CACHELINE_SIZE) JoinProbeWorkerData
     RowPtrs insert_batch;
     RowPtrs insert_batch_other;
 
+    size_t probe_handle_rows = 0;
     size_t probe_time = 0;
     size_t probe_hash_table_time = 0;
     size_t insert_time = 0;
