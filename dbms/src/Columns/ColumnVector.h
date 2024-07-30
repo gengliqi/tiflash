@@ -362,7 +362,8 @@ public:
 
         for (size_t i = start; i < end; ++i)
         {
-            std::memcpy(&data[prev_size + i], pos[i], sizeof(T));
+            std::memcpy(&data[prev_size], pos[i], sizeof(T));
+            prev_size += sizeof(T);
             pos[i] += sizeof(T);
         }
     }

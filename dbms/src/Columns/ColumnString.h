@@ -294,7 +294,8 @@ public:
             chars.resize(char_size + str_size);
             inline_memcpy(&chars[char_size], pos[i], str_size);
             char_size += str_size;
-            offsets[prev_size + i] = char_size;
+            offsets[prev_size] = char_size;
+            ++prev_size;
             pos[i] += str_size;
         }
     }
