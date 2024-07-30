@@ -185,11 +185,11 @@ public:
         , added_columns(added_columns)
     {
         wd.insert_batch.clear();
-        wd.insert_batch.reserve(settings.probe_insert_batch_size);
+        wd.insert_batch.reserve(settings.max_block_size);
         if constexpr (!key_all_raw)
         {
             wd.insert_batch_other.clear();
-            wd.insert_batch_other.reserve(settings.probe_insert_batch_size);
+            wd.insert_batch_other.reserve(settings.max_block_size);
         }
 
         if (pointer_table.enableProbePrefetch())
@@ -338,6 +338,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
     auto & offsets_to_replicate = wd.offsets_to_replicate;
     size_t & idx = context.start_row_idx;
     RowPtr & ptr = context.current_probe_row_ptr;
+    Stopwatch watch;
     for (; idx < context.rows; ++idx)
     {
         if (has_null_map && (*context.null_map)[idx])
@@ -412,7 +413,9 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
             break;
         }
     }
+    wd.probe_hash_table_time += watch.elapsedFromLastTime();
     FlushBatchIfNecessary<true>();
+    wd.insert_time += watch.elapsedFromLastTime();
     FillNullMap(current_offset);
 }
 
@@ -427,6 +430,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
     size_t & active_states = context.prefetch_active_states;
     size_t & k = wd.prefetch_iter;
     size_t current_offset = 0;
+    Stopwatch watch;
     while (idx < context.rows || active_states > 0)
     {
         k = k == settings.probe_prefetch_step ? 0 : k;
@@ -539,8 +543,9 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
         ++idx;
         ++k;
     }
-
+    wd.probe_hash_table_time += watch.elapsedFromLastTime();
     FlushBatchIfNecessary<true>();
+    wd.insert_time += watch.elapsedFromLastTime();
     FillNullMap(current_offset);
 }
 

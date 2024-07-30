@@ -385,7 +385,7 @@ void HashJoin::insertFromBlock(const Block & b, size_t stream_index)
             build_workers_data[stream_index]);
     }
 
-    build_workers_data[stream_index].build_time += watch.elapsedMilliseconds();
+    build_workers_data[stream_index].build_time += watch.elapsedFromLastTime();
 }
 
 bool HashJoin::finishOneBuild(size_t stream_index)
@@ -394,7 +394,7 @@ bool HashJoin::finishOneBuild(size_t stream_index)
         log,
         "{} insert block to row containers cost {}ms, row count {}",
         stream_index,
-        build_workers_data[stream_index].build_time,
+        build_workers_data[stream_index].build_time / 1000000UL,
         build_workers_data[stream_index].row_count);
     if (active_build_worker.fetch_sub(1) == 1)
     {
@@ -406,7 +406,9 @@ bool HashJoin::finishOneBuild(size_t stream_index)
 
 bool HashJoin::finishOneProbe(size_t stream_index)
 {
-    LOG_INFO(log, "{} probe cost {}ms", stream_index, probe_workers_data[stream_index].probe_time);
+    auto & wd = probe_workers_data[stream_index];
+    LOG_INFO(log, "{} probe cost {}ms(hash_table {}ms + insert {}ms)", stream_index, wd.probe_time / 1000000UL,
+        wd.probe_hash_table_time / 1000000UL, wd.insert_time / 1000000UL);
     return active_probe_worker.fetch_sub(1) == 1;
 }
 
@@ -513,7 +515,7 @@ Block HashJoin::joinBlock(JoinProbeContext & context, size_t stream_index)
     }
     assert(!result_blocks.empty());
     auto && ret = vstackBlocks(std::move(result_blocks));
-    probe_workers_data[stream_index].probe_time += watch.elapsedMilliseconds();
+    probe_workers_data[stream_index].probe_time += watch.elapsedFromLastTime();
     return std::move(ret);
 }
 
