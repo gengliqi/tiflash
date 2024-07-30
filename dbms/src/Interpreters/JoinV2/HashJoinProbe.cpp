@@ -260,7 +260,7 @@ private:
         {
             wd.insert_batch_other.push_back(row_ptr + key_size);
         }
-        FlushBatchIfNecessary<false>();
+        //FlushBatchIfNecessary<false>();
     }
 
     template <bool force>
@@ -271,20 +271,33 @@ private:
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
                 return;
         }
-        for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+        if (!row_layout.raw_required_key_column_indexes.empty() || !row_layout.other_required_column_indexes.empty())
         {
-            IColumn * column = added_columns[column_index].get();
-            if (has_null_map && is_nullable)
-                column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-            column->deserializeAndInsertFromPos(wd.insert_batch);
+            size_t step = settings.probe_insert_batch_size;
+            size_t rows = wd.insert_batch.size();
+            for (size_t i = 0; i < rows; i += step)
+            {
+                size_t start = i;
+                size_t end = i + step > rows ? rows : i + step;
+                for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+                {
+                    IColumn * column = added_columns[column_index].get();
+                    if (has_null_map && is_nullable)
+                        column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+                    column->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+                }
+
+                for (auto [column_index, _] : row_layout.other_required_column_indexes)
+                {
+                    if constexpr (key_all_raw)
+                        added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+                    else
+                        added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, start, end);
+                }
+            }
         }
-        for (auto [column_index, _] : row_layout.other_required_column_indexes)
-        {
-            if constexpr (key_all_raw)
-                added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch);
-            else
-                added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other);
-        }
+
+
 
         wd.insert_batch.clear();
         if constexpr (!key_all_raw)

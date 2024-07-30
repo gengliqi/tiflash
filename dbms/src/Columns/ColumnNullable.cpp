@@ -234,10 +234,10 @@ void ColumnNullable::serializeToPos(PaddedPODArray<UInt8 *> & pos, size_t start,
     getNestedColumn().serializeToPos(pos, start, end, has_null);
 }
 
-void ColumnNullable::deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos)
+void ColumnNullable::deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end)
 {
-    getNullMapColumn().deserializeAndInsertFromPos(pos);
-    getNestedColumn().deserializeAndInsertFromPos(pos);
+    getNullMapColumn().deserializeAndInsertFromPos(pos, start, end);
+    getNestedColumn().deserializeAndInsertFromPos(pos, start, end);
 }
 
 void ColumnNullable::insertRangeFrom(const IColumn & src, size_t start, size_t length)

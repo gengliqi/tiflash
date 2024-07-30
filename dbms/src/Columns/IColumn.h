@@ -243,7 +243,7 @@ public:
         throw Exception("Method serializeToPos is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);
     }
 
-    virtual void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & /* pos */)
+    virtual void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & /* pos */, size_t /* start */, size_t /* end */)
     {
         throw Exception(
             "Method deserializeAndInsertFromPos is not supported for " + getName(),

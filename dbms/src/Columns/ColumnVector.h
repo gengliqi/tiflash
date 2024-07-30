@@ -353,13 +353,12 @@ public:
         }
     }
 
-    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos) override
+    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end) override
     {
         size_t prev_size = data.size();
         data.resize(prev_size + pos.size());
 
-        size_t size = pos.size();
-        for (size_t i = 0; i < size; ++i)
+        for (size_t i = start; i < end; ++i)
         {
             std::memcpy(&data[prev_size + i], pos[i], sizeof(T));
             pos[i] += sizeof(T);
