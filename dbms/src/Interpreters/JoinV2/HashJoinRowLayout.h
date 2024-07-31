@@ -75,6 +75,15 @@ struct alignas(ABSL_CACHELINE_SIZE) MultipleRowContainer
     }
 };
 
+enum class AddRowType
+{
+    KeyAllRawNeeded,
+    KeyRawNeededOnly,
+    OtherColumnNeededOnly,
+    AllNeeded,
+    NoNeeded,
+};
+
 /// Row Layout
 /// 1. No-null join key row: <Hash Value> <Next Pointer> <Raw Required Join Keys> <Other Join Keys> <Other Required Columns>
 /// 1. Null join key row(For right anti/outer join): <All Required Columns>
@@ -90,12 +99,44 @@ struct HashJoinRowLayout
     size_t key_column_fixed_size = 0;
     size_t other_column_fixed_size = 0;
     bool key_all_raw_required;
+    AddRowType add_row_type;
 
     ALWAYS_INLINE RowPtr getNextRowPtr(const RowPtr ptr) const
     {
         return unalignedLoad<RowPtr>(ptr + next_pointer_offset);
     }
 };
+
+inline AddRowType getAddRowType(const HashJoinRowLayout & row_layout)
+{
+    if (row_layout.key_all_raw_required)
+    {
+        if (row_layout.other_required_column_indexes.empty())
+            return AddRowType::KeyRawNeededOnly;
+        return AddRowType::KeyAllRawNeeded;
+    }
+    if (!row_layout.raw_required_key_column_indexes.empty())
+    {
+        if (row_layout.other_required_column_indexes.empty())
+            return AddRowType::KeyRawNeededOnly;
+        return AddRowType::AllNeeded;
+    }
+    if (!row_layout.other_required_column_indexes.empty())
+        return AddRowType::OtherColumnNeededOnly;
+    return AddRowType::NoNeeded;
+}
+
+template <AddRowType type>
+constexpr bool needRawKeyPtr()
+{
+    return type == AddRowType::KeyAllRawNeeded || type == AddRowType::KeyRawNeededOnly || type == AddRowType::AllNeeded;
+}
+
+template <AddRowType type>
+constexpr bool needOtherColumnPtr()
+{
+    return type == AddRowType::OtherColumnNeededOnly || type == AddRowType::AllNeeded;
+}
 
 constexpr size_t ROW_PTR_TAG_BITS = 16;
 constexpr size_t ROW_PTR_TAG_MASK = (1 << ROW_PTR_TAG_BITS) - 1;

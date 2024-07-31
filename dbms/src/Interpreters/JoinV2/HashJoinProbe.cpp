@@ -154,8 +154,7 @@ struct ProbePrefetchState<KeyGetter, false>
     ALWAYS_INLINE KeyType getJoinKey(KeyGetterType &) { return key; }
 };
 
-
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
 class JoinProbeBlockHelper
 {
 public:
@@ -184,9 +183,12 @@ public:
         , row_layout(row_layout)
         , added_columns(added_columns)
     {
-        wd.insert_batch.clear();
-        wd.insert_batch.reserve(settings.max_block_size);
-        if constexpr (!key_all_raw)
+        if constexpr (needRawKeyPtr<add_row_type>())
+        {
+            wd.insert_batch.clear();
+            wd.insert_batch.reserve(settings.max_block_size);
+        }
+        if constexpr (needOtherColumnPtr<add_row_type>())
         {
             wd.insert_batch_other.clear();
             wd.insert_batch_other.reserve(settings.max_block_size);
@@ -255,11 +257,10 @@ private:
 
     void ALWAYS_INLINE insertRowToBatch(RowPtr row_ptr, size_t key_size) const
     {
-        wd.insert_batch.push_back(row_ptr);
-        if constexpr (!key_all_raw)
-        {
+        if constexpr (needRawKeyPtr<add_row_type>())
+            wd.insert_batch.push_back(row_ptr);
+        if constexpr (needOtherColumnPtr<add_row_type>())
             wd.insert_batch_other.push_back(row_ptr + key_size);
-        }
         //FlushBatchIfNecessary<false>();
     }
 
@@ -271,35 +272,46 @@ private:
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
                 return;
         }
-        if (!row_layout.raw_required_key_column_indexes.empty() || !row_layout.other_required_column_indexes.empty())
+        if constexpr (add_row_type != AddRowType::NoNeeded)
         {
             size_t step = settings.probe_insert_batch_size;
-            size_t rows = wd.insert_batch.size();
+            size_t rows;
+            if constexpr (needRawKeyPtr<add_row_type>())
+                rows = wd.insert_batch.size();
+            else
+                rows = wd.insert_batch_other.size();
             for (size_t i = 0; i < rows; i += step)
             {
                 size_t start = i;
                 size_t end = i + step > rows ? rows : i + step;
-                for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+                if constexpr (needRawKeyPtr<add_row_type>())
                 {
-                    IColumn * column = added_columns[column_index].get();
-                    if (has_null_map && is_nullable)
-                        column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-                    column->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+                    for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+                    {
+                        IColumn * column = added_columns[column_index].get();
+                        if (has_null_map && is_nullable)
+                            column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+                        column->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+                    }
                 }
 
-                for (auto [column_index, _] : row_layout.other_required_column_indexes)
+                if constexpr (add_row_type == AddRowType::KeyAllRawNeeded || needOtherColumnPtr<add_row_type>())
                 {
-                    if constexpr (key_all_raw)
-                        added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, start, end);
-                    else
-                        added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, start, end);
+                    for (auto [column_index, _] : row_layout.other_required_column_indexes)
+                    {
+                        if constexpr (add_row_type == AddRowType::KeyAllRawNeeded)
+                            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+                        else
+                            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, start, end);
+                    }
                 }
             }
-        }
 
-        wd.insert_batch.clear();
-        if constexpr (!key_all_raw)
-            wd.insert_batch_other.clear();
+            if constexpr (needRawKeyPtr<add_row_type>())
+                wd.insert_batch.clear();
+            if constexpr (needOtherColumnPtr<add_row_type>())
+                wd.insert_batch_other.clear();
+        }
     }
 
     void ALWAYS_INLINE FillNullMap(size_t size) const
@@ -330,8 +342,8 @@ private:
     MutableColumns & added_columns;
 };
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockInner()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockInner()
 {
     auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
     size_t current_offset = 0;
@@ -419,8 +431,9 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
     FillNullMap(current_offset);
 }
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockInnerPrefetch()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE
+JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockInnerPrefetch()
 {
     auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
     auto & selective_offsets = wd.selective_offsets;
@@ -549,66 +562,66 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
     FillNullMap(current_offset);
 }
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockLeftOuter()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockLeftOuter()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
 void NO_INLINE
-JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockLeftOuterPrefetch()
+JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockLeftOuterPrefetch()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockSemi()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockSemi()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockSemiPrefetch()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockSemiPrefetch()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockAnti()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockAnti()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockAntiPrefetch()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockAntiPrefetch()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
 template <bool has_other_condition>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockRightOuter()
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockRightOuter()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-template <bool has_other_condition>
-void NO_INLINE
-JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockRightOuterPrefetch()
-{}
-
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-template <bool has_other_condition>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockRightSemi()
-{}
-
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
 template <bool has_other_condition>
 void NO_INLINE
-JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockRightSemiPrefetch()
+JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockRightOuterPrefetch()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
 template <bool has_other_condition>
-void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockRightAnti()
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockRightSemi()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
 template <bool has_other_condition>
 void NO_INLINE
-JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockRightAntiPrefetch()
+JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockRightSemiPrefetch()
 {}
 
-template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
-void JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockImpl()
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+template <bool has_other_condition>
+void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockRightAnti()
+{}
+
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+template <bool has_other_condition>
+void NO_INLINE
+JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockRightAntiPrefetch()
+{}
+
+template <typename KeyGetter, bool has_null_map, AddRowType add_row_type, bool tagged_pointer>
+void JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joinProbeBlockImpl()
 {
 #define CALL(JoinType)                        \
     if (pointer_table.enableProbePrefetch())  \
@@ -693,14 +706,29 @@ void joinProbeBlock(
         CALL(KeyGetter, has_null_map, key_all_row, false); \
     }
 
-#define CALL2(KeyGetter, has_null_map)         \
-    if (row_layout.key_all_raw_required)       \
-    {                                          \
-        CALL3(KeyGetter, has_null_map, true);  \
-    }                                          \
-    else                                       \
-    {                                          \
-        CALL3(KeyGetter, has_null_map, false); \
+#define CALL2(KeyGetter, has_null_map)                                     \
+    switch (row_layout.add_row_type)                                       \
+    {                                                                      \
+    case AddRowType::KeyAllRawNeeded:                                      \
+    {                                                                      \
+        CALL3(KeyGetter, has_null_map, AddRowType::KeyAllRawNeeded);       \
+    }                                                                      \
+    case AddRowType::KeyRawNeededOnly:                                     \
+    {                                                                      \
+        CALL3(KeyGetter, has_null_map, AddRowType::KeyRawNeededOnly);      \
+    }                                                                      \
+    case AddRowType::OtherColumnNeededOnly:                                \
+    {                                                                      \
+        CALL3(KeyGetter, has_null_map, AddRowType::OtherColumnNeededOnly); \
+    }                                                                      \
+    case AddRowType::AllNeeded:                                            \
+    {                                                                      \
+        CALL3(KeyGetter, has_null_map, AddRowType::AllNeeded);             \
+    }                                                                      \
+    case AddRowType::NoNeeded:                                             \
+    {                                                                      \
+        CALL3(KeyGetter, has_null_map, AddRowType::NoNeeded);              \
+    }                                                                      \
     }
 
 #define CALL1(KeyGetter)         \

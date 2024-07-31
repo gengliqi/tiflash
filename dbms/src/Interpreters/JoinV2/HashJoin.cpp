@@ -246,7 +246,6 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
 
     row_layout.next_pointer_offset = getHashValueByteSize(method);
     row_layout.key_offset = row_layout.next_pointer_offset + sizeof(RowPtr);
-    row_layout.key_all_raw_required = row_layout.raw_required_key_column_indexes.size() == keys_size;
 
     for (size_t i = 0; i < keys_size; ++i)
     {
@@ -275,6 +274,9 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
             row_layout.other_required_column_indexes.push_back({i, false});
         }
     }
+
+    row_layout.key_all_raw_required = row_layout.raw_required_key_column_indexes.size() == keys_size;
+    row_layout.add_row_type = getAddRowType(row_layout);
 }
 
 void HashJoin::initBuild(const Block & sample_block, size_t build_concurrency_)
@@ -438,14 +440,14 @@ void HashJoin::workAfterBuildFinish()
     LOG_INFO(
         log,
         "allocate pointer table cost {}ms, rows {}, pointer table size {}, added column num {}, enable prefetch {}, "
-        "enable tagged pointer {}, key_all_raw_required {}",
+        "enable tagged pointer {}, add_row_type {}",
         watch.elapsedMilliseconds(),
         all_build_row_count,
         pointer_table.getPointerTableSize(),
         right_sample_block_pruned.columns(),
         pointer_table.enableProbePrefetch(),
         pointer_table.enableTaggedPointer(),
-        row_layout.key_all_raw_required);
+        static_cast<int>(row_layout.add_row_type));
 }
 
 bool HashJoin::buildPointerTable(size_t stream_index)
