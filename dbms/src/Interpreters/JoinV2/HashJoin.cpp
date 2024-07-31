@@ -438,13 +438,14 @@ void HashJoin::workAfterBuildFinish()
     LOG_INFO(
         log,
         "allocate pointer table cost {}ms, rows {}, pointer table size {}, added column num {}, enable prefetch {}, "
-        "enable tagged pointer {}",
+        "enable tagged pointer {}, key_all_raw_required {}",
         watch.elapsedMilliseconds(),
         all_build_row_count,
         pointer_table.getPointerTableSize(),
         right_sample_block_pruned.columns(),
         pointer_table.enableProbePrefetch(),
-        pointer_table.enableTaggedPointer());
+        pointer_table.enableTaggedPointer(),
+        row_layout.key_all_raw_required);
 }
 
 bool HashJoin::buildPointerTable(size_t stream_index)
