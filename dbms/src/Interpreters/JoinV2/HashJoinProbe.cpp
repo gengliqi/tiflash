@@ -404,6 +404,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             }
         }
         offsets_to_replicate[idx] = current_offset;
+        if (idx > 70000)
+        {
+            wd.probe_hash_table_time += 1;
+        }
         if unlikely (ptr != nullptr)
         {
             ptr = row_layout.getNextRowPtr(ptr);
@@ -424,6 +428,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             }
             break;
         }
+    }
+    if (context.rows > 70000)
+    {
+        wd.probe_hash_table_time += 1;
     }
     wd.probe_hash_table_time += watch.elapsedFromLastTime();
     FlushBatchIfNecessary<true>();
@@ -683,27 +691,27 @@ void joinProbeBlock(
     case HashJoinKeyMethod::Cross:
         break;
 
-#define CALL(KeyGetter, has_null_map, key_all_row, tagged_pointer)              \
-    JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_row, tagged_pointer>( \
-        context,                                                                \
-        wd,                                                                     \
-        method,                                                                 \
-        kind,                                                                   \
-        non_equal_conditions,                                                   \
-        settings,                                                               \
-        pointer_table,                                                          \
-        row_layout,                                                             \
-        added_columns)                                                          \
+#define CALL(KeyGetter, has_null_map, add_row_type, tagged_pointer)              \
+    JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>( \
+        context,                                                                 \
+        wd,                                                                      \
+        method,                                                                  \
+        kind,                                                                    \
+        non_equal_conditions,                                                    \
+        settings,                                                                \
+        pointer_table,                                                           \
+        row_layout,                                                              \
+        added_columns)                                                           \
         .joinProbeBlockImpl();
 
-#define CALL3(KeyGetter, has_null_map, key_all_row)        \
-    if (pointer_table.enableTaggedPointer())               \
-    {                                                      \
-        CALL(KeyGetter, has_null_map, key_all_row, true);  \
-    }                                                      \
-    else                                                   \
-    {                                                      \
-        CALL(KeyGetter, has_null_map, key_all_row, false); \
+#define CALL3(KeyGetter, has_null_map, add_row_type)        \
+    if (pointer_table.enableTaggedPointer())                \
+    {                                                       \
+        CALL(KeyGetter, has_null_map, add_row_type, true);  \
+    }                                                       \
+    else                                                    \
+    {                                                       \
+        CALL(KeyGetter, has_null_map, add_row_type, false); \
     }
 
 #define CALL2(KeyGetter, has_null_map)                                     \
@@ -712,22 +720,27 @@ void joinProbeBlock(
     case AddRowType::KeyAllRawNeeded:                                      \
     {                                                                      \
         CALL3(KeyGetter, has_null_map, AddRowType::KeyAllRawNeeded);       \
+        break;                                                             \
     }                                                                      \
     case AddRowType::KeyRawNeededOnly:                                     \
     {                                                                      \
         CALL3(KeyGetter, has_null_map, AddRowType::KeyRawNeededOnly);      \
+        break;                                                             \
     }                                                                      \
     case AddRowType::OtherColumnNeededOnly:                                \
     {                                                                      \
         CALL3(KeyGetter, has_null_map, AddRowType::OtherColumnNeededOnly); \
+        break;                                                             \
     }                                                                      \
     case AddRowType::AllNeeded:                                            \
     {                                                                      \
         CALL3(KeyGetter, has_null_map, AddRowType::AllNeeded);             \
+        break;                                                             \
     }                                                                      \
     case AddRowType::NoNeeded:                                             \
     {                                                                      \
         CALL3(KeyGetter, has_null_map, AddRowType::NoNeeded);              \
+        break;                                                             \
     }                                                                      \
     }
 
