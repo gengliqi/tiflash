@@ -293,7 +293,7 @@ private:
                         ptr = wd.insert_batch[j];
                     else
                         ptr = wd.insert_batch_other[j];
-                    __builtin_prefetch((ptr), 0 /* rw==read */, 2 /* locality */);
+                    __builtin_prefetch((ptr), 0 /* rw==read */, 1 /* locality */);
                 }
                 if constexpr (needRawKeyPtr<add_row_type>())
                 {
@@ -415,10 +415,6 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             }
         }
         offsets_to_replicate[idx] = current_offset;
-        if (idx > 70000)
-        {
-            wd.probe_hash_table_time += 1;
-        }
         if unlikely (ptr != nullptr)
         {
             ptr = row_layout.getNextRowPtr(ptr);
@@ -439,10 +435,6 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             }
             break;
         }
-    }
-    if (context.rows > 70000)
-    {
-        wd.probe_hash_table_time += 1;
     }
     wd.probe_hash_table_time += watch.elapsedFromLastTime();
     FlushBatchIfNecessary<true>();
