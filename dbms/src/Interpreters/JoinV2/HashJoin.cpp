@@ -339,14 +339,14 @@ void HashJoin::insertFromBlock(const Block & b, size_t stream_index)
     Block block = b;
     size_t rows = block.rows();
 
-    assertBlocksHaveEqualStructure(block, right_sample_block, "Join Build");
-
     /// Rare case, when keys are constant. To avoid code bloat, simply materialize them.
     /// Note: this variable can't be removed because it will take smart pointers' lifecycle to the end of this function.
     Columns materialized_columns;
     ColumnRawPtrs key_columns = extractAndMaterializeKeyColumns(block, materialized_columns, key_names_right);
     /// Some useless columns maybe key columns so they must be removed after extracting key columns.
     removeUselessColumn(block);
+
+    assertBlocksHaveEqualStructure(block, right_sample_block_pruned, "Join Build");
 
     /// We will insert to the map only keys, where all components are not NULL.
     ColumnPtr null_map_holder;

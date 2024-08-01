@@ -285,7 +285,8 @@ private:
                 size_t start = i;
                 size_t end = i + step > rows ? rows : i + step;
 
-                for (size_t j = start; j < end; ++j)
+                size_t next_end = end + step > rows ? rows : end + step;
+                for (size_t j = end; j < next_end; ++j)
                 {
                     RowPtr ptr;
                     if constexpr (needRawKeyPtr<add_row_type>())

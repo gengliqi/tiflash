@@ -62,6 +62,8 @@ struct alignas(ABSL_CACHELINE_SIZE) JoinBuildWorkerData
     ssize_t build_pointer_table_iter = -1;
 
     bool enable_tagged_pointer = true;
+
+    std::vector<size_t> var_column_size;
 };
 
 void insertBlockToRowContainers(
