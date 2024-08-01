@@ -284,6 +284,16 @@ private:
             {
                 size_t start = i;
                 size_t end = i + step > rows ? rows : i + step;
+
+                for (size_t j = start; j < end; ++j)
+                {
+                    RowPtr ptr;
+                    if constexpr (needRawKeyPtr<add_row_type>())
+                        ptr = wd.insert_batch[j];
+                    else
+                        ptr = wd.insert_batch_other[j];
+                    __builtin_prefetch((ptr), 0 /* rw==read */, 2 /* locality */);
+                }
                 if constexpr (needRawKeyPtr<add_row_type>())
                 {
                     for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
