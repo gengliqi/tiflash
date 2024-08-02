@@ -394,13 +394,15 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
         while (true)
         {
             const auto & key2 = key_getter.deserializeJoinKey(ptr + row_layout.key_offset);
-            if (joinKeyIsEqual(key_getter, key, key2, hash, ptr))
+            bool is_equal = joinKeyIsEqual(key_getter, key, key2, hash, ptr);
+            if (is_equal)
             {
                 ++current_offset;
                 insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
+            wd.collision += !is_equal;
             ptr = row_layout.getNextRowPtr(ptr);
             if (ptr == nullptr)
                 break;
@@ -487,7 +489,8 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
 
             const auto & key = state->getJoinKey(key_getter);
             const auto & key2 = key_getter.deserializeJoinKey(ptr + row_layout.key_offset);
-            if (joinKeyIsEqual(key_getter, key, key2, state->hash, ptr))
+            bool is_equal = joinKeyIsEqual(key_getter, key, key2, state->hash, ptr);
+            if (is_equal)
             {
                 ++current_offset;
                 selective_offsets.push_back(state->index);
@@ -495,10 +498,7 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
-            else
-            {
-                ++wd.collision;
-            }
+            wd.collision += !is_equal;
             if (next_ptr)
             {
                 ++k;
