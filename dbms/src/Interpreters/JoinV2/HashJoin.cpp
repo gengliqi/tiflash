@@ -411,12 +411,13 @@ bool HashJoin::finishOneProbe(size_t stream_index)
     auto & wd = probe_workers_data[stream_index];
     LOG_INFO(
         log,
-        "{} probe handle {} rows, cost {}ms(hash_table {}ms + insert {}ms)",
+        "{} probe handle {} rows, cost {}ms(hash_table {}ms + insert {}ms), collision {}",
         stream_index,
         wd.probe_handle_rows,
         wd.probe_time / 1000000UL,
         wd.probe_hash_table_time / 1000000UL,
-        wd.insert_time / 1000000UL);
+        wd.insert_time / 1000000UL,
+        wd.collision);
     return active_probe_worker.fetch_sub(1) == 1;
 }
 

@@ -495,6 +495,10 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
+            else
+            {
+                ++wd.collision;
+            }
             if (next_ptr)
             {
                 ++k;
