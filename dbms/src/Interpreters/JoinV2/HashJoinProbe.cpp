@@ -526,7 +526,14 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
                 selective_offsets.push_back(state->index);
                 insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
                 if unlikely (current_offset >= settings.max_block_size)
+                {
+                    if (!next_ptr)
+                    {
+                        state->stage = ProbePrefetchStage::None;
+                        --active_states;
+                    }
                     break;
+                }
             }
             wd.collision += !is_equal;
             if (next_ptr)
