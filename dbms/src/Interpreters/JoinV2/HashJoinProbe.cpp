@@ -257,20 +257,15 @@ private:
         return key_getter.joinKeyIsEqual(key1, key2);
     }
 
-    template <bool ENABLE_PREFETCH>
     void ALWAYS_INLINE insertRowToBatch(RowPtr row_ptr, size_t key_size) const
     {
         if constexpr (needRawKeyPtr<add_row_type>())
         {
             wd.insert_batch.push_back(row_ptr);
-            if constexpr (ENABLE_PREFETCH)
-                PREFETCH_READ(row_ptr);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {
             wd.insert_batch_other.push_back(row_ptr + key_size);
-            if constexpr (ENABLE_PREFETCH)
-                PREFETCH_READ(row_ptr + key_size);
         }
         FlushBatchIfNecessary<false>();
     }
@@ -432,7 +427,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             if (is_equal)
             {
                 ++current_offset;
-                insertRowToBatch<false>(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
+                insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
@@ -528,7 +523,7 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
             {
                 ++current_offset;
                 selective_offsets.push_back(state->index);
-                insertRowToBatch<true>(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
+                insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
