@@ -186,12 +186,14 @@ public:
         if constexpr (needRawKeyPtr<add_row_type>())
         {
             wd.insert_batch.clear();
-            wd.insert_batch.reserve(settings.max_block_size);
+            wd.insert_batch.reserve(settings.probe_insert_batch_size);
+            //wd.insert_batch.reserve(settings.max_block_size);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {
             wd.insert_batch_other.clear();
-            wd.insert_batch_other.reserve(settings.max_block_size);
+            wd.insert_batch_other.reserve(settings.probe_insert_batch_size);
+            //wd.insert_batch_other.reserve(settings.max_block_size);
         }
 
         if (pointer_table.enableProbePrefetch())
@@ -255,13 +257,22 @@ private:
         return key_getter.joinKeyIsEqual(key1, key2);
     }
 
+    template <bool ENABLE_PREFETCH>
     void ALWAYS_INLINE insertRowToBatch(RowPtr row_ptr, size_t key_size) const
     {
         if constexpr (needRawKeyPtr<add_row_type>())
+        {
             wd.insert_batch.push_back(row_ptr);
+            if constexpr (ENABLE_PREFETCH)
+                PREFETCH_READ(row_ptr);
+        }
         if constexpr (needOtherColumnPtr<add_row_type>())
+        {
             wd.insert_batch_other.push_back(row_ptr + key_size);
-        //FlushBatchIfNecessary<false>();
+            if constexpr (ENABLE_PREFETCH)
+                PREFETCH_READ(row_ptr + key_size);
+        }
+        FlushBatchIfNecessary<false>();
     }
 
     template <bool force>
@@ -274,49 +285,72 @@ private:
         }
         if constexpr (add_row_type != AddRowType::NoNeeded)
         {
-            size_t step = settings.probe_insert_batch_size;
             size_t rows;
             if constexpr (needRawKeyPtr<add_row_type>())
                 rows = wd.insert_batch.size();
             else
                 rows = wd.insert_batch_other.size();
-            for (size_t i = 0; i < rows; i += step)
+
+            if constexpr (needRawKeyPtr<add_row_type>())
             {
-                size_t start = i;
-                size_t end = i + step > rows ? rows : i + step;
-
-                size_t next_end = end + step > rows ? rows : end + step;
-                for (size_t j = end; j < next_end; ++j)
+                for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
                 {
-                    RowPtr ptr;
-                    if constexpr (needRawKeyPtr<add_row_type>())
-                        ptr = wd.insert_batch[j];
-                    else
-                        ptr = wd.insert_batch_other[j];
-                    __builtin_prefetch((ptr), 0 /* rw==read */, 1 /* locality */);
-                }
-                if constexpr (needRawKeyPtr<add_row_type>())
-                {
-                    for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
-                    {
-                        IColumn * column = added_columns[column_index].get();
-                        if (has_null_map && is_nullable)
-                            column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-                        column->deserializeAndInsertFromPos(wd.insert_batch, start, end);
-                    }
-                }
-
-                if constexpr (add_row_type == AddRowType::KeyAllRawNeeded || needOtherColumnPtr<add_row_type>())
-                {
-                    for (auto [column_index, _] : row_layout.other_required_column_indexes)
-                    {
-                        if constexpr (add_row_type == AddRowType::KeyAllRawNeeded)
-                            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, start, end);
-                        else
-                            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, start, end);
-                    }
+                    IColumn * column = added_columns[column_index].get();
+                    if (has_null_map && is_nullable)
+                        column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+                    column->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
                 }
             }
+
+            if constexpr (add_row_type == AddRowType::KeyAllRawNeeded || needOtherColumnPtr<add_row_type>())
+            {
+                for (auto [column_index, _] : row_layout.other_required_column_indexes)
+                {
+                    if constexpr (add_row_type == AddRowType::KeyAllRawNeeded)
+                        added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+                    else
+                        added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, 0, rows);
+                }
+            }
+
+            //size_t step = settings.probe_insert_batch_size;
+            //for (size_t i = 0; i < rows; i += step)
+            //{
+            //    size_t start = i;
+            //    size_t end = i + step > rows ? rows : i + step;
+
+            //    size_t next_end = end + step > rows ? rows : end + step;
+            //    for (size_t j = end; j < next_end; ++j)
+            //    {
+            //        RowPtr ptr;
+            //        if constexpr (needRawKeyPtr<add_row_type>())
+            //            ptr = wd.insert_batch[j];
+            //        else
+            //            ptr = wd.insert_batch_other[j];
+            //        __builtin_prefetch((ptr), 0 /* rw==read */, 1 /* locality */);
+            //    }
+            //    if constexpr (needRawKeyPtr<add_row_type>())
+            //    {
+            //        for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+            //        {
+            //            IColumn * column = added_columns[column_index].get();
+            //            if (has_null_map && is_nullable)
+            //                column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+            //            column->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+            //        }
+            //    }
+
+            //    if constexpr (add_row_type == AddRowType::KeyAllRawNeeded || needOtherColumnPtr<add_row_type>())
+            //    {
+            //        for (auto [column_index, _] : row_layout.other_required_column_indexes)
+            //        {
+            //            if constexpr (add_row_type == AddRowType::KeyAllRawNeeded)
+            //                added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, start, end);
+            //            else
+            //                added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, start, end);
+            //        }
+            //    }
+            //}
 
             if constexpr (needRawKeyPtr<add_row_type>())
                 wd.insert_batch.clear();
@@ -398,7 +432,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             if (is_equal)
             {
                 ++current_offset;
-                insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
+                insertRowToBatch<false>(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
@@ -494,7 +528,7 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
             {
                 ++current_offset;
                 selective_offsets.push_back(state->index);
-                insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
+                insertRowToBatch<true>(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
                 if unlikely (current_offset >= settings.max_block_size)
                     break;
             }
