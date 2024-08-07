@@ -616,9 +616,9 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
     wd.row_count += block.rows();
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
-        if (checkAndGetColumn<ColumnString>(added_columns.back().get()))
+        if (const auto * col = checkAndGetColumn<ColumnString>(block.getByPosition(existing_columns + i).column.get()))
         {
-            wd.var_size[i] += static_cast<ColumnString*>(added_columns.back().get())->stringByteSize();
+            wd.var_size[i] += col->stringByteSize();
         }
     }
 
