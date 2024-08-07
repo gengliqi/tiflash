@@ -188,13 +188,13 @@ public:
         {
             wd.insert_batch.clear();
             wd.insert_batch.reserve(settings.probe_insert_batch_size);
-            //wd.insert_batch.reserve(settings.max_block_size);
+            //wd.insert_batch.reserve(context.rows);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {
             wd.insert_batch_other.clear();
             wd.insert_batch_other.reserve(settings.probe_insert_batch_size);
-            //wd.insert_batch_other.reserve(settings.max_block_size);
+            //wd.insert_batch_other.reserve(context.rows);
         }
 
         if (pointer_table.enableProbePrefetch())
@@ -287,7 +287,7 @@ private:
             else
                 rows = wd.insert_batch_other.size();
 
-            if constexpr (needRawKeyPtr<add_row_type>())
+            /*if constexpr (needRawKeyPtr<add_row_type>())
             {
                 for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
                 {
@@ -307,8 +307,16 @@ private:
                     else
                         added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, 0, rows);
                 }
-            }
-
+            }*/
+            static_cast<ColumnVector<Int64>*>(added_columns[0].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnVector<Int64>*>(added_columns[1].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnString*>(added_columns[2].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnDecimal<Decimal64>*>(added_columns[3].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnVector<UInt64>*>(added_columns[4].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnString*>(added_columns[5].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnString*>(added_columns[6].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnVector<Int64>*>(added_columns[7].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            static_cast<ColumnString*>(added_columns[8].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
             //size_t step = settings.probe_insert_batch_size;
             //for (size_t i = 0; i < rows; i += step)
             //{
@@ -429,7 +437,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagge
             {
                 ++current_offset;
                 insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
-                if unlikely (current_offset >= settings.max_block_size)
+                if unlikely (current_offset >= context.rows)
                     break;
             }
             wd.collision += !is_equal;
@@ -525,7 +533,7 @@ JoinProbeBlockHelper<KeyGetter, has_null_map, add_row_type, tagged_pointer>::joi
                 ++current_offset;
                 selective_offsets.push_back(state->index);
                 insertRowToBatch(ptr + row_layout.key_offset, key_getter.getJoinKeySize(key2));
-                if unlikely (current_offset >= settings.max_block_size)
+                if unlikely (current_offset >= context.rows)
                 {
                     if (!next_ptr)
                     {

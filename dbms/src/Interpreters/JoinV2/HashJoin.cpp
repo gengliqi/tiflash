@@ -322,6 +322,8 @@ void HashJoin::initProbe(const Block & sample_block, size_t probe_concurrency_)
     probe_concurrency = probe_concurrency_;
     active_probe_worker = probe_concurrency;
     probe_workers_data.resize(probe_concurrency);
+    for (size_t i = 0; i < probe_concurrency; ++i)
+        probe_workers_data[i].var_size.resize(right_sample_block_pruned.columns());
 }
 
 void HashJoin::insertFromBlock(const Block & b, size_t stream_index)
@@ -546,6 +548,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
 
     RUNTIME_ASSERT(rows >= context.start_row_idx);
     size_t start = context.start_row_idx;
+    auto & wd = probe_workers_data[stream_index];
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
         const ColumnWithTypeAndName & src_column = right_sample_block_pruned.getByPosition(i);
@@ -558,12 +561,25 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
         added_columns.back()->reserve(rows);
         if (src_column.type && src_column.type->haveMaximumSizeOfValue())
         {
-            // todo figure out more accurate `rows`
             added_columns.back()->reserve(rows);
+        }
+        else
+        {
+            if (checkAndGetColumn<ColumnString>(added_columns.back().get()))
+            {
+                if (wd.row_count == 0)
+                {
+                    added_columns.back()->reserve(rows);
+                }
+                else
+                {
+                    size_t str_size = 1.0 * wd.var_size[i] / wd.row_count * rows * 1.2;
+                    static_cast<ColumnString*>(added_columns.back().get())->reserveTmp(rows, str_size);
+                }
+            }
         }
     }
 
-    auto & wd = probe_workers_data[stream_index];
     joinProbeBlock(context, wd, method, kind, non_equal_conditions, settings, pointer_table, row_layout, added_columns);
 
     for (size_t index = 0; index < num_columns_to_add; ++index)
@@ -596,6 +612,15 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
 
     if (has_other_condition)
         handleOtherConditions(block, stream_index);
+
+    wd.row_count += block.rows();
+    for (size_t i = 0; i < num_columns_to_add; ++i)
+    {
+        if (checkAndGetColumn<ColumnString>(added_columns.back().get()))
+        {
+            wd.var_size[i] += static_cast<ColumnString*>(added_columns.back().get())->stringByteSize();
+        }
+    }
 
     return block;
 }

@@ -109,6 +109,8 @@ public:
         return char_size + limit * sizeof(offsets[0]);
     }
 
+    size_t stringByteSize() const { return chars.size(); }
+
     size_t allocatedBytes() const override { return chars.allocated_bytes() + offsets.allocated_bytes(); }
 
     MutableColumnPtr cloneResized(size_t to_size) const override;
@@ -402,6 +404,8 @@ public:
     void reserve(size_t n) override;
 
     void reserveWithTotalMemoryHint(size_t n, Int64 total_memory_hint) override;
+
+    void reserveTmp(size_t n, size_t string_bytes);
 
     void getExtremes(Field & min, Field & max) const override;
 

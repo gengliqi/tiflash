@@ -76,6 +76,8 @@ struct alignas(ABSL_CACHELINE_SIZE) JoinProbeWorkerData
     size_t collision = 0;
 
     ColumnUInt8::MutablePtr filter_column = ColumnUInt8::create();
+
+    std::vector<size_t> var_size;
 };
 
 void joinProbeBlock(
