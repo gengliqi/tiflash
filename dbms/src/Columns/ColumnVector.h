@@ -360,7 +360,30 @@ public:
         size_t prev_size = data.size();
         data.resize(prev_size + end - start);
 
-        for (size_t i = start; i < end; ++i)
+        size_t i = start;
+/*#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+        if constexpr (sizeof(__m256i) % sizeof(T) == 0)
+        {
+            const size_t simd_width = sizeof(__m256i) / sizeof(T);
+            union
+            {
+                T buf[simd_with];
+                __m256i loaded_data;
+            };
+            for (; i + simd_width <= end; i += simd_width)
+            {
+                for (size_t j = 0; j < simd_width; ++j)
+                {
+                    buf[j] = unalignedLoad<T>(pos[i + j]);
+                    pos[i + j] += sizeof(T);
+                }
+
+                _mm256_stream_si256((__m256i *)&data[prev_size], loaded_data);
+                prev_size += simd_width;
+            }
+        }
+#endif*/
+        for (; i < end; ++i)
         {
             std::memcpy(&data[prev_size], pos[i], sizeof(T));
             ++prev_size;

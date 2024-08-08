@@ -308,15 +308,59 @@ private:
                         added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, 0, rows);
                 }
             }*/
-            static_cast<ColumnVector<Int64>*>(added_columns[0].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnVector<Int64>*>(added_columns[1].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnString*>(added_columns[2].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnDecimal<Decimal64>*>(added_columns[3].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnVector<UInt64>*>(added_columns[4].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnString*>(added_columns[5].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnString*>(added_columns[6].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnVector<Int64>*>(added_columns[7].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            static_cast<ColumnString*>(added_columns[8].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            for (size_t i = 0; i < rows; ++i)
+            {
+                auto * pos = wd.insert_batch[i];
+
+                auto d = unalignedLoad<Int64>(pos);
+                pos += 8;
+                static_cast<ColumnVector<Int64>*>(added_columns[0].get())->insert(d);
+
+                d = unalignedLoad<Int64>(pos);
+                pos += 8;
+                static_cast<ColumnVector<Int64>*>(added_columns[1].get())->insert(d);
+
+                auto sz = unalignedLoad<size_t>(pos);
+                pos += 8;
+                static_cast<ColumnString*>(added_columns[2].get())->insertDataImpl<false>(reinterpret_cast<char*>(pos), sz);
+                pos += sz;
+
+                d = unalignedLoad<Int64>(pos);
+                pos += 8;
+                static_cast<ColumnDecimal<Decimal64>*>(added_columns[3].get())->insert(Decimal64(d));
+
+                auto d2 = unalignedLoad<UInt64>(pos);
+                pos += 8;
+                static_cast<ColumnVector<UInt64>*>(added_columns[4].get())->insert(d2);
+
+                sz = unalignedLoad<size_t>(pos);
+                pos += 8;
+                static_cast<ColumnString*>(added_columns[5].get())->insertDataImpl<false>(reinterpret_cast<char*>(pos), sz);
+                pos += sz;
+
+                sz = unalignedLoad<size_t>(pos);
+                pos += 8;
+                static_cast<ColumnString*>(added_columns[6].get())->insertDataImpl<false>(reinterpret_cast<char*>(pos), sz);
+                pos += sz;
+
+                d = unalignedLoad<Int64>(pos);
+                pos += 8;
+                static_cast<ColumnVector<Int64>*>(added_columns[7].get())->insert(d);
+
+                sz = unalignedLoad<size_t>(pos);
+                pos += 8;
+                static_cast<ColumnString*>(added_columns[8].get())->insertDataImpl<false>(reinterpret_cast<char*>(pos), sz);
+            }
+            //static_cast<ColumnVector<Int64>*>(added_columns[0].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnVector<Int64>*>(added_columns[1].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnString*>(added_columns[2].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnDecimal<Decimal64>*>(added_columns[3].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnVector<UInt64>*>(added_columns[4].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnString*>(added_columns[5].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnString*>(added_columns[6].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnVector<Int64>*>(added_columns[7].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            //static_cast<ColumnString*>(added_columns[8].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+
             //size_t step = settings.probe_insert_batch_size;
             //for (size_t i = 0; i < rows; i += step)
             //{
