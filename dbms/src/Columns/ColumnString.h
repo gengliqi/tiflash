@@ -286,6 +286,9 @@ public:
             return;
         size_t prev_size = offsets.size();
         size_t char_size = chars.size();
+        RUNTIME_ASSERT(reinterpret_cast<std::uintptr_t>(&offsets[prev_size]) % 64 == 0);
+        RUNTIME_ASSERT(reinterpret_cast<std::uintptr_t>(&chars[char_size]) % 64 == 0);
+
         size_t i = start;
         constexpr size_t VectorSize [[maybe_unused]] = 32;
 
@@ -470,6 +473,8 @@ public:
     void gather(ColumnGathererStream & gatherer_stream) override;
 
     void reserve(size_t n) override;
+
+    void reserveAlign(size_t n, size_t align) override;
 
     void reserveWithTotalMemoryHint(size_t n, Int64 total_memory_hint) override;
 

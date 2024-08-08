@@ -289,6 +289,12 @@ void ColumnString::reserve(size_t n)
     chars.reserve(n * APPROX_STRING_SIZE);
 }
 
+void ColumnString::reserveAlign(size_t n, size_t align)
+{
+    offsets.reserve(n, align);
+    chars.reserve(n * APPROX_STRING_SIZE, align);
+}
+
 void ColumnString::reserveWithTotalMemoryHint(size_t n, Int64 total_memory_hint)
 {
     offsets.reserve(n);
