@@ -301,8 +301,8 @@ void ColumnString::reserveWithTotalMemoryHint(size_t n, Int64 total_memory_hint)
 
 void ColumnString::reserveTmp(size_t n, size_t string_bytes)
 {
-    offsets.reserve(n);
-    chars.reserve(string_bytes);
+    offsets.reserve(n, 64);
+    chars.reserve(string_bytes, 64);
 }
 
 void ColumnString::getExtremes(Field & min, Field & max) const

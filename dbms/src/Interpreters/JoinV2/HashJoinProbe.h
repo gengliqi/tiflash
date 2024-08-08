@@ -65,7 +65,6 @@ struct alignas(ABSL_CACHELINE_SIZE) JoinProbeWorkerData
     IColumn::Offsets selective_offsets;
     IColumn::Offsets offsets_to_replicate;
 
-    RowPtrs tmp_insert_batch;
     RowPtrs insert_batch;
     RowPtrs insert_batch_other;
 
@@ -79,6 +78,7 @@ struct alignas(ABSL_CACHELINE_SIZE) JoinProbeWorkerData
     ColumnUInt8::MutablePtr filter_column = ColumnUInt8::create();
 
     std::vector<size_t> var_size;
+    std::vector<AlignBuffer> buffers;
 };
 
 void joinProbeBlock(

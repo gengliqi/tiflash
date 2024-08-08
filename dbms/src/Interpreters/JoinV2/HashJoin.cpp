@@ -323,7 +323,10 @@ void HashJoin::initProbe(const Block & sample_block, size_t probe_concurrency_)
     active_probe_worker = probe_concurrency;
     probe_workers_data.resize(probe_concurrency);
     for (size_t i = 0; i < probe_concurrency; ++i)
+    {
         probe_workers_data[i].var_size.resize(right_sample_block_pruned.columns());
+        probe_workers_data[i].buffers.resize(right_sample_block_pruned.columns());
+    }
 }
 
 void HashJoin::insertFromBlock(const Block & b, size_t stream_index)
@@ -558,10 +561,9 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
             src_column.name);
 
         added_columns.push_back(src_column.column->cloneEmpty());
-        added_columns.back()->reserve(rows);
         if (src_column.type && src_column.type->haveMaximumSizeOfValue())
         {
-            added_columns.back()->reserve(rows);
+            added_columns.back()->reserveAlign(rows, 64);
         }
         else
         {
@@ -569,12 +571,12 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
             {
                 if (wd.row_count == 0)
                 {
-                    added_columns.back()->reserve(rows);
+                    added_columns.back()->reserveAlign(rows, 64);
                 }
                 else
                 {
                     size_t str_size = 1.0 * wd.var_size[i] / wd.row_count * rows * 1.2;
-                    static_cast<ColumnString*>(added_columns.back().get())->reserveTmp(rows, str_size);
+                    static_cast<ColumnString *>(added_columns.back().get())->reserveTmp(rows, str_size);
                 }
             }
         }

@@ -115,6 +115,7 @@ public:
     size_t allocatedBytes() const override { return data.allocated_bytes(); }
     //void protect() override { data.protect(); }
     void reserve(size_t n) override { data.reserve(n); }
+    void reserveAlign(size_t n, size_t align) override { data.reserve(n, align); }
 
     void insertFrom(const IColumn & src, size_t n) override
     {
@@ -183,14 +184,95 @@ public:
         }
     }
 
-    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end) override
+    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end, AlignBuffer & buffer)
+        override
     {
-        if unlikely (start >= end)
+        if unlikely (start > end)
             return;
         size_t prev_size = data.size();
-        data.resize(prev_size + end - start);
+        data.resize(prev_size + end - start, 64);
 
-        for (size_t i = start; i < end; ++i)
+        size_t i = start;
+        constexpr size_t VectorSize [[maybe_unused]] = 32;
+        if constexpr (64 % sizeof(T) == 0)
+        {
+            if unlikely (end == 0)
+            {
+                if (buffer.size != 0)
+                {
+                    std::memcpy(reinterpret_cast<char *>(&data[prev_size]) - buffer.size, buffer.data, buffer.size);
+                    buffer.size = 0;
+                }
+                return;
+            }
+            if unlikely (buffer.size != 0)
+            {
+                for (; i < end && buffer.size < 64; ++i)
+                {
+                    std::memcpy(&buffer.data[buffer.size], pos[i], sizeof(T));
+                    buffer.size += sizeof(T);
+                    pos[i] += sizeof(T);
+                }
+                if (buffer.size < 64)
+                    return;
+                RUNTIME_ASSERT(buffer.size == 64);
+#ifdef __AVX2__
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[0]));
+                prev_size += VectorSize / sizeof(T);
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[1]));
+                prev_size += VectorSize / sizeof(T);
+#else
+                std::memcpy(&data[prev_size], buffer.data, 64);
+                prev_size += 64 / sizeof(T);
+#endif
+                buffer.size = 0;
+            }
+            else
+            {
+                size_t start_offset = reinterpret_cast<std::uintptr_t>(&data[prev_size]) % 64;
+                if unlikely (start_offset != 0)
+                {
+                    RUNTIME_ASSERT((64 - start_offset) % sizeof(T) == 0);
+                    size_t align_count = (64 - start_offset) / sizeof(T);
+                    for (; i < end && i < start + align_count; ++i)
+                    {
+                        std::memcpy(&data[prev_size], pos[i], sizeof(T));
+                        ++prev_size;
+                        pos[i] += sizeof(T);
+                    }
+                }
+            }
+            const size_t simd_width = 64 / sizeof(T);
+            for (; i + simd_width <= end; i += simd_width)
+            {
+                for (size_t j = 0; j < simd_width; ++j)
+                {
+                    std::memcpy(&buffer.data[buffer.size], pos[i + j], sizeof(T));
+                    buffer.size += sizeof(T);
+                    pos[i + j] += sizeof(T);
+                }
+
+#ifdef __AVX2__
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[0]));
+                prev_size += VectorSize / sizeof(T);
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[1]));
+                prev_size += VectorSize / sizeof(T);
+#else
+                std::memcpy(&data[prev_size], buffer.data, 64);
+                prev_size += 64 / sizeof(T);
+#endif
+                buffer.size = 0;
+            }
+
+            for (; i < end; ++i)
+            {
+                std::memcpy(&buffer.data[buffer.size], pos[i], sizeof(T));
+                buffer.size += sizeof(T);
+                pos[i] += sizeof(T);
+            }
+            return;
+        }
+        for (; i < end; ++i)
         {
             std::memcpy(&data[prev_size], pos[i], sizeof(T));
             ++prev_size;

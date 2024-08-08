@@ -36,6 +36,28 @@ extern const int SIZES_OF_COLUMNS_DOESNT_MATCH;
 class Arena;
 class ColumnGathererStream;
 
+struct AlignBuffer
+{
+    union
+    {
+        char data[64];
+#ifdef __AVX2__
+        __m256i v[2];
+#endif
+    };
+
+    size_t size = 0;
+
+    union
+    {
+        char data2[64];
+#ifdef __AVX2__
+        __m256i v2[2];
+#endif
+    };
+    size_t size2 = 0;
+};
+
 /// Declares interface to store columns in memory.
 class IColumn : public COWPtr<IColumn>
 {
@@ -243,7 +265,11 @@ public:
         throw Exception("Method serializeToPos is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);
     }
 
-    virtual void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & /* pos */, size_t /* start */, size_t /* end */)
+    virtual void deserializeAndInsertFromPos(
+        PaddedPODArray<UInt8 *> & /* pos */,
+        size_t /* start */,
+        size_t /* end */,
+        AlignBuffer & /* buffer */)
     {
         throw Exception(
             "Method deserializeAndInsertFromPos is not supported for " + getName(),
@@ -384,6 +410,7 @@ public:
     /// It affects performance only (not correctness).
     virtual void reserve(size_t /*n*/){};
 
+    virtual void reserveAlign(size_t, size_t) {}
     /// Reserve memory for specified amount of elements with a total memory hint, the default impl is
     /// calling `reserve(n)`, columns with non-fixed size elements can overwrite it for better reserve
     virtual void reserveWithTotalMemoryHint(size_t n, Int64 /*total_memory_hint*/) { reserve(n); }

@@ -189,8 +189,6 @@ public:
             wd.insert_batch.clear();
             wd.insert_batch.reserve(settings.probe_insert_batch_size);
             //wd.insert_batch.reserve(context.rows);
-            wd.tmp_insert_batch.clear();
-            wd.tmp_insert_batch.reserve(settings.probe_insert_batch_size);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {
@@ -265,6 +263,8 @@ private:
         if constexpr (needRawKeyPtr<add_row_type>())
         {
             wd.insert_batch.push_back(row_ptr);
+            PREFETCH_READ(row_ptr + 64);
+            PREFETCH_READ(row_ptr + 128);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {
@@ -283,21 +283,9 @@ private:
         }
         if constexpr (add_row_type != AddRowType::NoNeeded)
         {
-            size_t rows = wd.insert_batch.size();
-            for (size_t i = 0; i < rows; ++i)
-            {
-                PREFETCH_READ(wd.insert_batch[i] + 64);
-                PREFETCH_READ(wd.insert_batch[i] + 128);
-            }
-
-            if unlikely (wd.tmp_insert_batch.empty())
-            {
-                wd.tmp_insert_batch.swap(wd.insert_batch);
-                return;
-            }
-
+            size_t rows;
             if constexpr (needRawKeyPtr<add_row_type>())
-                rows = wd.tmp_insert_batch.size();
+                rows = wd.insert_batch.size();
             else
                 rows = wd.insert_batch_other.size();
 
@@ -322,9 +310,9 @@ private:
                         added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch_other, 0, rows);
                 }
             }*/
-            for (size_t i = 0; i < rows; ++i)
+            /*for (size_t i = 0; i < rows; ++i)
             {
-                auto * pos = wd.tmp_insert_batch[i];
+                auto * pos = wd.insert_batch[i];
 
                 auto d = unalignedLoad<Int64>(pos);
                 pos += 8;
@@ -364,16 +352,34 @@ private:
                 sz = unalignedLoad<size_t>(pos);
                 pos += 8;
                 static_cast<ColumnString*>(added_columns[8].get())->insertDataImpl<false>(reinterpret_cast<char*>(pos), sz);
+            }*/
+            size_t loop = 1;
+            if constexpr (force)
+            {
+                loop = 2;
             }
-            //static_cast<ColumnVector<Int64>*>(added_columns[0].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnVector<Int64>*>(added_columns[1].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnString*>(added_columns[2].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnDecimal<Decimal64>*>(added_columns[3].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnVector<UInt64>*>(added_columns[4].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnString*>(added_columns[5].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnString*>(added_columns[6].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnVector<Int64>*>(added_columns[7].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
-            //static_cast<ColumnString*>(added_columns[8].get())->deserializeAndInsertFromPos(wd.insert_batch, 0, rows);
+            for (size_t i = 0; i < loop; ++i)
+            {
+                static_cast<ColumnVector<Int64> *>(added_columns[0].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[0]);
+                static_cast<ColumnVector<Int64> *>(added_columns[1].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[1]);
+                static_cast<ColumnString *>(added_columns[2].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[2]);
+                static_cast<ColumnDecimal<Decimal64> *>(added_columns[3].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[3]);
+                static_cast<ColumnVector<UInt64> *>(added_columns[4].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[4]);
+                static_cast<ColumnString *>(added_columns[5].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[5]);
+                static_cast<ColumnString *>(added_columns[6].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[6]);
+                static_cast<ColumnVector<Int64> *>(added_columns[7].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[7]);
+                static_cast<ColumnString *>(added_columns[8].get())
+                    ->deserializeAndInsertFromPos(wd.insert_batch, 0, rows, wd.buffers[8]);
+                rows = 0;
+            }
 
             //size_t step = settings.probe_insert_batch_size;
             //for (size_t i = 0; i < rows; i += step)
@@ -414,12 +420,10 @@ private:
             //    }
             //}
 
-            wd.tmp_insert_batch.clear();
-            wd.tmp_insert_batch.swap(wd.insert_batch);
-            //if constexpr (needRawKeyPtr<add_row_type>())
-            //    wd.insert_batch.clear();
-            //if constexpr (needOtherColumnPtr<add_row_type>())
-            //    wd.insert_batch_other.clear();
+            if constexpr (needRawKeyPtr<add_row_type>())
+                wd.insert_batch.clear();
+            if constexpr (needOtherColumnPtr<add_row_type>())
+                wd.insert_batch_other.clear();
         }
     }
 

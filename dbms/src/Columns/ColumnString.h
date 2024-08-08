@@ -279,15 +279,83 @@ public:
         }
     }
 
-    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end) override
+    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end, AlignBuffer & buffer)
+        override
     {
-        if unlikely (start >= end)
+        if unlikely (start > end)
             return;
         size_t prev_size = offsets.size();
-        offsets.resize(prev_size + end - start);
-
         size_t char_size = chars.size();
-        for (size_t i = start; i < end; ++i)
+        size_t i = start;
+        constexpr size_t VectorSize [[maybe_unused]] = 32;
+
+        if unlikely (end == 0)
+        {
+            if (buffer.size != 0)
+            {
+                chars.resize(char_size + buffer.size, 64);
+                std::memcpy(&chars[char_size], buffer.data, buffer.size);
+                buffer.size = 0;
+            }
+            if (buffer.size2 != 0)
+            {
+                offsets.resize(prev_size + buffer.size2 / sizeof(size_t), 64);
+                std::memcpy(&offsets[prev_size], buffer.data2, buffer.size2);
+                buffer.size2 = 0;
+            }
+            return;
+        }
+
+        for (; i < end; ++i)
+        {
+            size_t str_size;
+            std::memcpy(&str_size, pos[i], sizeof(size_t));
+            pos[i] += sizeof(size_t);
+
+            do
+            {
+                size_t remain = 64 - buffer.size;
+                size_t copy_bytes = std::min(remain, str_size);
+                std::memcpy(&buffer.data[buffer.size], pos[i], copy_bytes);
+                pos[i] += copy_bytes;
+                buffer.size += copy_bytes;
+                str_size -= copy_bytes;
+                if (buffer.size == 64)
+                {
+                    chars.resize(char_size + 64, 64);
+#ifdef __AVX2__
+                    _mm256_stream_si256((__m256i *)&chars[char_size], buffer.v[0]));
+                    char_size += VectorSize;
+                    _mm256_stream_si256((__m256i *)&chars[char_size], buffer.v[1]));
+                    char_size += VectorSize;
+#else
+                    std::memcpy(&chars[char_size], buffer.data, 64);
+                    char_size += 64;
+#endif
+                    buffer.size = 0;
+                }
+            } while (str_size > 0);
+
+            size_t offset = char_size + buffer.size;
+            std::memcpy(&buffer.data2[buffer.size2], &offset, sizeof(size_t));
+            buffer.size2 += sizeof(size_t);
+            if (buffer.size2 == 64)
+            {
+                offsets.resize(prev_size + 64 / sizeof(size_t), 64);
+#ifdef __AVX2__
+                _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[0]));
+                prev_size += VectorSize / sizeof(size_t);
+                _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[1]));
+                prev_size += VectorSize / sizeof(size_t);
+#else
+                std::memcpy(&offsets[prev_size], buffer.data, 64);
+                prev_size += 64 / sizeof(size_t);
+#endif
+                buffer.size2 = 0;
+            }
+        }
+
+        /*for (; i < end; ++i)
         {
             size_t str_size;
             std::memcpy(&str_size, pos[i], sizeof(size_t));
@@ -299,7 +367,7 @@ public:
             offsets[prev_size] = char_size;
             ++prev_size;
             pos[i] += str_size;
-        }
+        }*/
     }
 
     void updateHashWithValue(
