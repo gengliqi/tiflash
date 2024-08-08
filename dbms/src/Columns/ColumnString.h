@@ -324,9 +324,9 @@ public:
                 {
                     chars.resize(char_size + 64, 64);
 #ifdef __AVX2__
-                    _mm256_stream_si256((__m256i *)&chars[char_size], buffer.v[0]));
+                    _mm256_stream_si256((__m256i *)&chars[char_size], buffer.v[0]);
                     char_size += VectorSize;
-                    _mm256_stream_si256((__m256i *)&chars[char_size], buffer.v[1]));
+                    _mm256_stream_si256((__m256i *)&chars[char_size], buffer.v[1]);
                     char_size += VectorSize;
 #else
                     std::memcpy(&chars[char_size], buffer.data, 64);
@@ -343,9 +343,9 @@ public:
             {
                 offsets.resize(prev_size + 64 / sizeof(size_t), 64);
 #ifdef __AVX2__
-                _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[0]));
+                _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[0]);
                 prev_size += VectorSize / sizeof(size_t);
-                _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[1]));
+                _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[1]);
                 prev_size += VectorSize / sizeof(size_t);
 #else
                 std::memcpy(&offsets[prev_size], buffer.data, 64);

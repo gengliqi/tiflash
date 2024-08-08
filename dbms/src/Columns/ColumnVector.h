@@ -386,9 +386,9 @@ public:
                     return;
                 RUNTIME_ASSERT(buffer.size == 64);
 #ifdef __AVX2__
-                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[0]));
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[0]);
                 prev_size += VectorSize / sizeof(T);
-                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[1]));
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[1]);
                 prev_size += VectorSize / sizeof(T);
 #else
                 std::memcpy(&data[prev_size], buffer.data, 64);
@@ -422,9 +422,9 @@ public:
                 }
 
 #ifdef __AVX2__
-                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[0]));
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[0]);
                 prev_size += VectorSize / sizeof(T);
-                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[1]));
+                _mm256_stream_si256((__m256i *)&data[prev_size], buffer.v[1]);
                 prev_size += VectorSize / sizeof(T);
 #else
                 std::memcpy(&data[prev_size], buffer.data, 64);
