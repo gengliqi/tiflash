@@ -17,6 +17,9 @@
 #include <Columns/ColumnVectorHelper.h>
 #include <Columns/IColumn.h>
 #include <Common/typeid_cast.h>
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+#include <immintrin.h>
+#endif
 
 #include <cmath>
 

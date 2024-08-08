@@ -16,6 +16,9 @@
 
 #include <Columns/ColumnVectorHelper.h>
 #include <IO/Endian.h>
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+#include <immintrin.h>
+#endif
 
 #include <cmath>
 
