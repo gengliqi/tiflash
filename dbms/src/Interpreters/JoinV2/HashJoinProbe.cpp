@@ -356,7 +356,8 @@ private:
             size_t loop = 1;
             if constexpr (force)
             {
-                loop = 2;
+                if (rows != 0)
+                    loop = 2;
             }
             for (size_t i = 0; i < loop; ++i)
             {
