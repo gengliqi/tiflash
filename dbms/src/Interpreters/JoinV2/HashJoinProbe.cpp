@@ -189,6 +189,8 @@ public:
             wd.insert_batch.clear();
             wd.insert_batch.reserve(settings.probe_insert_batch_size);
             //wd.insert_batch.reserve(context.rows);
+            wd.tmp_insert_batch.clear();
+            wd.tmp_insert_batch.reserve(settings.probe_insert_batch_size);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {
@@ -281,9 +283,21 @@ private:
         }
         if constexpr (add_row_type != AddRowType::NoNeeded)
         {
-            size_t rows;
+            size_t rows = wd.insert_batch.size();
+            for (size_t i = 0; i < rows; ++i)
+            {
+                PREFETCH_READ(wd.insert_batch[i] + 64);
+                PREFETCH_READ(wd.insert_batch[i] + 128);
+            }
+
+            if unlikely (wd.tmp_insert_batch.empty())
+            {
+                wd.tmp_insert_batch.swap(wd.insert_batch);
+                return;
+            }
+
             if constexpr (needRawKeyPtr<add_row_type>())
-                rows = wd.insert_batch.size();
+                rows = wd.tmp_insert_batch.size();
             else
                 rows = wd.insert_batch_other.size();
 
@@ -310,7 +324,7 @@ private:
             }*/
             for (size_t i = 0; i < rows; ++i)
             {
-                auto * pos = wd.insert_batch[i];
+                auto * pos = wd.tmp_insert_batch[i];
 
                 auto d = unalignedLoad<Int64>(pos);
                 pos += 8;
@@ -400,10 +414,12 @@ private:
             //    }
             //}
 
-            if constexpr (needRawKeyPtr<add_row_type>())
-                wd.insert_batch.clear();
-            if constexpr (needOtherColumnPtr<add_row_type>())
-                wd.insert_batch_other.clear();
+            wd.tmp_insert_batch.clear();
+            wd.tmp_insert_batch.swap(wd.insert_batch);
+            //if constexpr (needRawKeyPtr<add_row_type>())
+            //    wd.insert_batch.clear();
+            //if constexpr (needOtherColumnPtr<add_row_type>())
+            //    wd.insert_batch_other.clear();
         }
     }
 
