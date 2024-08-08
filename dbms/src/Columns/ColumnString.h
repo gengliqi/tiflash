@@ -20,6 +20,9 @@
 #include <Common/SipHash.h>
 #include <Common/memcpySmall.h>
 #include <common/memcpy.h>
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+#include <immintrin.h>
+#endif
 
 namespace DB
 {

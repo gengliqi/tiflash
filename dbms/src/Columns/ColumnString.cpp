@@ -19,9 +19,6 @@
 #include <TiDB/Collation/CollatorUtils.h>
 #include <common/memcpy.h>
 #include <fmt/core.h>
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-#include <immintrin.h>
-#endif
 
 namespace DB
 {
