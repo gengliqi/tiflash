@@ -105,10 +105,15 @@ check_then_add_sources_compile_flag (
     src/Columns/ColumnVector.cpp
     src/DataTypes/DataTypeString.cpp
     src/Interpreters/Join.cpp
+    src/Interpreters/JoinV2/HashJoin.cpp
+    src/Interpreters/JoinV2/HashJoinBuild.cpp
+    src/Interpreters/JoinV2/HashJoinProbe.cpp
     src/IO/Compression/EncodingUtil.cpp
     src/Storages/DeltaMerge/BitmapFilter/BitmapFilter.cpp
     src/Storages/DeltaMerge/DMVersionFilterBlockInputStream.cpp
 )
+
+add_sources_compile_flag_avx2 (src/Interpreters/JoinV2/HashJoinProbe.cpp)
 
 list (APPEND tiflash_common_io_sources ${CONFIG_BUILD})
 list (APPEND tiflash_common_io_headers ${CONFIG_VERSION} ${CONFIG_COMMON})
