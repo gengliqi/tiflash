@@ -27,7 +27,7 @@ public:
         PipelineExecutorContext & exec_context_,
         const String & req_id,
         const EventPtr & event_,
-        const JoinPtr join_ptr_,
+        const JoinPtr & join_ptr_,
         size_t index_)
         : EventTask(exec_context_, req_id, event_)
         , join_ptr(join_ptr_)
