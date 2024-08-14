@@ -263,8 +263,6 @@ private:
         if constexpr (needRawKeyPtr<add_row_type>())
         {
             wd.insert_batch.push_back(row_ptr);
-            PREFETCH_READ(row_ptr + 64);
-            PREFETCH_READ(row_ptr + 128);
         }
         if constexpr (needOtherColumnPtr<add_row_type>())
         {

@@ -215,6 +215,7 @@ public:
                     std::memcpy(&buffer.data[buffer.size], pos[i], sizeof(T));
                     buffer.size += sizeof(T);
                     pos[i] += sizeof(T);
+                    __builtin_prefetch(pos[i], 0 /* rw==read */, 3 /* locality */);
                 }
                 if (buffer.size < 64)
                     return;
@@ -242,6 +243,7 @@ public:
                         std::memcpy(&data[prev_size], pos[i], sizeof(T));
                         ++prev_size;
                         pos[i] += sizeof(T);
+                        __builtin_prefetch(pos[i], 0 /* rw==read */, 3 /* locality */);
                     }
                 }
             }
@@ -253,6 +255,7 @@ public:
                     std::memcpy(&buffer.data[buffer.size], pos[i + j], sizeof(T));
                     buffer.size += sizeof(T);
                     pos[i + j] += sizeof(T);
+                    __builtin_prefetch(pos[i + j], 0 /* rw==read */, 3 /* locality */);
                 }
 
 #ifdef __AVX2__
@@ -272,6 +275,7 @@ public:
                 std::memcpy(&buffer.data[buffer.size], pos[i], sizeof(T));
                 buffer.size += sizeof(T);
                 pos[i] += sizeof(T);
+                __builtin_prefetch(pos[i], 0 /* rw==read */, 3 /* locality */);
             }
             return;
         }

@@ -324,6 +324,7 @@ public:
                 size_t copy_bytes = std::min(remain, str_size);
                 std::memcpy(&buffer.data[buffer.size], pos[i], copy_bytes);
                 pos[i] += copy_bytes;
+                __builtin_prefetch(pos[i], 0 /* rw==read */, 3 /* locality */);
                 buffer.size += copy_bytes;
                 str_size -= copy_bytes;
                 if (buffer.size == 64)
@@ -354,7 +355,7 @@ public:
                 _mm256_stream_si256((__m256i *)&offsets[prev_size], buffer.v2[1]);
                 prev_size += VectorSize / sizeof(size_t);
 #else
-                std::memcpy(&offsets[prev_size], buffer.data, 64);
+                std::memcpy(&offsets[prev_size], buffer.data2, 64);
                 prev_size += 64 / sizeof(size_t);
 #endif
                 buffer.size2 = 0;

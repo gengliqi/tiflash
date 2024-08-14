@@ -36,7 +36,7 @@ extern const int SIZES_OF_COLUMNS_DOESNT_MATCH;
 class Arena;
 class ColumnGathererStream;
 
-struct AlignBuffer
+struct alignas(64) AlignBuffer
 {
     union
     {
@@ -45,9 +45,6 @@ struct AlignBuffer
         __m256i v[2];
 #endif
     };
-
-    size_t size = 0;
-
     union
     {
         char data2[64];
@@ -55,6 +52,8 @@ struct AlignBuffer
         __m256i v2[2];
 #endif
     };
+
+    size_t size = 0;
     size_t size2 = 0;
 };
 
