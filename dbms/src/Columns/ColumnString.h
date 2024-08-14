@@ -324,7 +324,7 @@ public:
                 size_t copy_bytes = std::min(remain, str_size);
                 std::memcpy(&buffer.data[buffer.size], pos[i], copy_bytes);
                 pos[i] += copy_bytes;
-                __builtin_prefetch(pos[i], 0 /* rw==read */, 3 /* locality */);
+                //__builtin_prefetch(pos[i], 0 /* rw==read */, 3 /* locality */);
                 buffer.size += copy_bytes;
                 str_size -= copy_bytes;
                 if (buffer.size == 64)
