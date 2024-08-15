@@ -190,11 +190,13 @@ public:
         , added_columns(added_columns)
     {
         wd.insert_batch.clear();
-        wd.insert_batch.reserve(settings.probe_insert_batch_size);
+        //wd.insert_batch.reserve(settings.probe_insert_batch_size);
+        wd.insert_batch.reserve(context.rows);
         if constexpr (!key_all_raw)
         {
             wd.insert_batch_other.clear();
-            wd.insert_batch_other.reserve(settings.probe_insert_batch_size);
+            //wd.insert_batch_other.reserve(settings.probe_insert_batch_size);
+            wd.insert_batch_other.reserve(context.rows);
         }
 
         if (pointer_table.enableProbePrefetch())
@@ -260,17 +262,41 @@ private:
 
     void ALWAYS_INLINE insertRowToBatch(RowPtr row_ptr, size_t key_size) const
     {
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+        std::memcpy(&buffer1.data[buffer_size1], &row_ptr, sizeof(RowPtr));
+        buffer_size1 += sizeof(RowPtr);
+        if unlikely (buffer_size1 == AlignBufferAVX2::buffer_size)
+        {
+            size_t prev_size = wd.insert_batch.size();
+            wd.insert_batch.resize(prev_size + AlignBufferAVX2::buffer_size / sizeof(RowPtr));
+            _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer1.v[0]);
+            prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtrT);
+            _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer2.v[1]);
+            prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtrT);
+            buffer_size1 = 0;
+        }
+        return;
+#endif
         wd.insert_batch.push_back(row_ptr);
         if constexpr (!key_all_raw)
         {
             wd.insert_batch_other.push_back(row_ptr + key_size);
         }
-        FlushBatchIfNecessary<false>();
+        //FlushBatchIfNecessary<false>();
     }
 
     template <bool force>
     void ALWAYS_INLINE FlushBatchIfNecessary() const
     {
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+        if (buffer_size1 != 0)
+        {
+            size_t prev_size = wd.insert_batch.size();
+            wd.insert_batch.resize(prev_size + buffer_size1 / sizeof(RowPtr));
+            std::memcpy(&wd.insert_batch[prev_size], buffer1.data, buffer_size1);
+            buffer_size1 = 0;
+        }
+#endif
         if constexpr (!force)
         {
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
@@ -283,23 +309,35 @@ private:
                 b.need_flush = true;
 #endif
         }
-        for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+
+        size_t rows = wd.insert_batch.size();
+        size_t step = settings.probe_insert_batch_size;
+        RowPtrs row_ptrs;
+        row_ptrs.reserve(step);
+        for (size_t i = 0; i < rows; i += step)
         {
-            IColumn * column = added_columns[column_index].get();
-            if (has_null_map && is_nullable)
-                column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-            column->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer[column_index]);
-        }
-        for (auto [column_index, _] : row_layout.other_required_column_indexes)
-        {
-            if constexpr (key_all_raw)
-                added_columns[column_index]->deserializeAndInsertFromPos(
-                    wd.insert_batch,
-                    wd.align_buffer[column_index]);
-            else
-                added_columns[column_index]->deserializeAndInsertFromPos(
-                    wd.insert_batch_other,
-                    wd.align_buffer[column_index]);
+            size_t start = i;
+            size_t end = i + step > rows ? rows : i + step;
+
+            row_ptrs.resize(end - start);
+            inline_memcpy(&row_ptrs[0], &wd.insert_batch[start], (end - start) * sizeof(RowPtr));
+
+            for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+            {
+                IColumn * column = added_columns[column_index].get();
+                if (has_null_map && is_nullable)
+                    column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+                column->deserializeAndInsertFromPos(row_ptrs, wd.align_buffer[column_index]);
+            }
+            for (auto [column_index, _] : row_layout.other_required_column_indexes)
+            {
+                if constexpr (key_all_raw)
+                    added_columns[column_index]->deserializeAndInsertFromPos(row_ptrs, wd.align_buffer[column_index]);
+                else
+                    added_columns[column_index]->deserializeAndInsertFromPos(
+                        wd.insert_batch_other,
+                        wd.align_buffer[column_index]);
+            }
         }
 
         wd.insert_batch.clear();
@@ -333,11 +371,27 @@ private:
     const HashJoinPointerTable & pointer_table;
     const HashJoinRowLayout & row_layout;
     MutableColumns & added_columns;
+
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    union alignas(64) buffer1
+    {
+        char data[AlignBufferAVX2::buffer_size]{};
+        __m256i v[2];
+    };
+    union alignas(64) buffer2
+    {
+        char data[AlignBufferAVX2::buffer_size]{};
+        __m256i v[2];
+    };
+    size_t buffer_size1 = 0;
+    size_t buffer_size2 = 0;
+#endif
 };
 
 template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
 void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockInner()
 {
+    Stopwatch watch;
     auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
     size_t current_offset = 0;
     auto & offsets_to_replicate = wd.offsets_to_replicate;
@@ -421,8 +475,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
             break;
         }
     }
+    wd.probe_hash_table_time += watch.elapsedFromLastTime();
     FlushBatchIfNecessary<true>();
     FillNullMap(current_offset);
+    wd.insert_time += watch.elapsedFromLastTime();
 
     context.start_row_idx = idx;
     context.current_probe_row_ptr = ptr;
@@ -432,6 +488,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
 template <typename KeyGetter, bool has_null_map, bool key_all_raw, bool tagged_pointer>
 void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged_pointer>::joinProbeBlockInnerPrefetch()
 {
+    Stopwatch watch;
     auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
     auto & selective_offsets = wd.selective_offsets;
     auto * states = static_cast<ProbePrefetchState<KeyGetter> *>(wd.prefetch_states.get());
@@ -565,8 +622,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, key_all_raw, tagged
         ++k;
     }
 
+    wd.probe_hash_table_time += watch.elapsedFromLastTime();
     FlushBatchIfNecessary<true>();
     FillNullMap(current_offset);
+    wd.insert_time += watch.elapsedFromLastTime();
 
     context.start_row_idx = idx;
     context.prefetch_active_states = active_states;

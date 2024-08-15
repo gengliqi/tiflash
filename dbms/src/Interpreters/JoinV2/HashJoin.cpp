@@ -411,11 +411,13 @@ bool HashJoin::finishOneProbe(size_t stream_index)
     auto & wd = probe_workers_data[stream_index];
     LOG_INFO(
         log,
-        "{} probe handle {} rows, cost {}ms(hash_table {}ms + replicate {}ms + other condition {}ms), collision {}",
+        "{} probe handle {} rows, cost {}ms(hash table {}ms + insert {} replicate {}ms + other condition {}ms), "
+        "collision {}",
         stream_index,
         wd.probe_handle_rows,
         wd.probe_time / 1000000UL,
         wd.probe_hash_table_time / 1000000UL,
+        wd.insert_time / 1000000UL,
         wd.replicate_time / 1000000UL,
         wd.other_condition_time / 1000000UL,
         wd.collision);
@@ -563,9 +565,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
     }
 
     auto & wd = probe_workers_data[stream_index];
-    Stopwatch watch;
     joinProbeBlock(context, wd, method, kind, non_equal_conditions, settings, pointer_table, row_layout, added_columns);
-    wd.probe_hash_table_time += watch.elapsedFromLastTime();
 
     for (size_t index = 0; index < num_columns_to_add; ++index)
     {
@@ -573,6 +573,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
         block.insert(ColumnWithTypeAndName(std::move(added_columns[index]), sample_col.type, sample_col.name));
     }
 
+    Stopwatch watch;
     if likely (rows > 0)
     {
         if (pointer_table.enableProbePrefetch())
