@@ -570,6 +570,8 @@ void ColumnString::deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, Al
         return;
     }
 
+    RUNTIME_ASSERT(false);
+
     if unlikely (buffer.size1 != 0)
     {
         chars.resize(char_size + buffer.size1, AlignBufferAVX2::buffer_size);

@@ -212,6 +212,8 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
             return;
         }
 
+        RUNTIME_ASSERT(false);
+
         if unlikely (buffer.size1 != 0)
         {
             std::memcpy(static_cast<void *>(&data[prev_size]), buffer.data1, buffer.size1);
