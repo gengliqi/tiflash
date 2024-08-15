@@ -286,7 +286,7 @@ private:
     }
 
     template <bool force>
-    void ALWAYS_INLINE FlushBatchIfNecessary()
+    void FlushBatchIfNecessary()
     {
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
         if (buffer_size1 != 0)
