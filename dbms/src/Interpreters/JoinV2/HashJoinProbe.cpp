@@ -302,13 +302,6 @@ private:
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
                 return;
         }
-        else
-        {
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-            for (auto & b : wd.align_buffer)
-                b.need_flush = true;
-#endif
-        }
 
         size_t rows = wd.insert_batch.size();
         size_t step = settings.probe_insert_batch_size;
@@ -317,7 +310,15 @@ private:
         for (size_t i = 0; i < rows; i += step)
         {
             size_t start = i;
-            size_t end = i + step > rows ? rows : i + step;
+            size_t end = i + step;
+            if unlikely (end >= rows)
+            {
+                end = rows;
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+                for (auto & b : wd.align_buffer)
+                    b.need_flush = true;
+#endif
+            }
 
             row_ptrs.resize(end - start);
             inline_memcpy(&row_ptrs[0], &wd.insert_batch[start], (end - start) * sizeof(RowPtr));
