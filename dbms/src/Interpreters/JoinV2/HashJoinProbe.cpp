@@ -260,7 +260,7 @@ private:
         return key_getter.joinKeyIsEqual(key1, key2);
     }
 
-    void ALWAYS_INLINE insertRowToBatch(RowPtr row_ptr, size_t key_size) const
+    void ALWAYS_INLINE insertRowToBatch(RowPtr row_ptr, size_t key_size)
     {
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
         std::memcpy(&buffer1.data[buffer_size1], &row_ptr, sizeof(RowPtr));
@@ -286,7 +286,7 @@ private:
     }
 
     template <bool force>
-    void ALWAYS_INLINE FlushBatchIfNecessary() const
+    void ALWAYS_INLINE FlushBatchIfNecessary()
     {
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
         if (buffer_size1 != 0)
