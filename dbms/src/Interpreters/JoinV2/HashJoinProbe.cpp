@@ -270,9 +270,9 @@ private:
             size_t prev_size = wd.insert_batch.size();
             wd.insert_batch.resize(prev_size + AlignBufferAVX2::buffer_size / sizeof(RowPtr));
             _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer1.v[0]);
-            prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtrT);
+            prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtr);
             _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer2.v[1]);
-            prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtrT);
+            prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtr);
             buffer_size1 = 0;
         }
         return;
@@ -373,16 +373,16 @@ private:
     MutableColumns & added_columns;
 
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
-    union alignas(64) buffer1
+    union alignas(64)
     {
         char data[AlignBufferAVX2::buffer_size]{};
         __m256i v[2];
-    };
-    union alignas(64) buffer2
+    } buffer1;
+    union alignas(64)
     {
         char data[AlignBufferAVX2::buffer_size]{};
         __m256i v[2];
-    };
+    } buffer2;
     size_t buffer_size1 = 0;
     size_t buffer_size2 = 0;
 #endif
