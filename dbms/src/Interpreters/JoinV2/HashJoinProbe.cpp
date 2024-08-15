@@ -271,7 +271,7 @@ private:
             wd.insert_batch.resize(prev_size + AlignBufferAVX2::buffer_size / sizeof(RowPtr));
             _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer1.v[0]);
             prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtr);
-            _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer2.v[1]);
+            _mm256_stream_si256(reinterpret_cast<__m256i *>(&wd.insert_batch[prev_size]), buffer1.v[1]);
             prev_size += AlignBufferAVX2::vector_size / sizeof(RowPtr);
             buffer_size1 = 0;
         }
