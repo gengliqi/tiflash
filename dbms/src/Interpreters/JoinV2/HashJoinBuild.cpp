@@ -273,10 +273,10 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             while (offset + CPU_CACHE_LINE_SIZE <= size)
             {
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
+                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
                 data_offset += AlignBufferAVX2::vector_size;
                 offset += AlignBufferAVX2::vector_size;
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
+                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
                 data_offset += AlignBufferAVX2::vector_size;
                 offset += AlignBufferAVX2::vector_size;
 #else
