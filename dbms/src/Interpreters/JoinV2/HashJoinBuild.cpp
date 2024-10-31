@@ -216,6 +216,13 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
                 }
             }
         }
+
+#ifndef NDEBUG
+        for (size_t i = 0; i < rows; ++i)
+        {
+            assert(wd.row_ptrs[i] <= check_row_ptrs[i] + wd.row_sizes[i]);
+        }
+#endif
     }
     else
     {
@@ -242,6 +249,9 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
                     ++i;
                     continue;
                 }
+                wd.partition_row_sizes[0] += wd.row_sizes[i];
+                partition_column_row[0].offsets.push_back(wd.partition_row_sizes[0]);
+
                 wd.row_ptrs.push_back(wd.build_buffer.data() + size);
                 auto & ptr = wd.row_ptrs.back();
                 unalignedStore<RowPtr>(ptr, nullptr);
@@ -297,13 +307,6 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             std::memcpy(&partition_column_row[0].data[data_offset], &wd.build_buffer[0], size);
         }
     }
-
-#ifndef NDEBUG
-    for (size_t i = 0; i < rows; ++i)
-    {
-        assert(wd.row_ptrs[i] <= check_row_ptrs[i] + wd.row_sizes[i]);
-    }
-#endif
 
     for (size_t i = 0; i < part_count; ++i)
     {
