@@ -51,10 +51,10 @@ private:
     /// For convenience, every string ends with terminating zero byte. Note that strings could contain zero bytes in the middle.
     Chars_t chars;
 
-    size_t ALWAYS_INLINE offsetAt(size_t i) const { return i == 0 ? 0 : offsets[i - 1]; }
+    size_t ALWAYS_INLINE offsetAt(ssize_t i) const { return offsets[i - 1]; }
 
     /// Size of i-th element, including terminating zero.
-    size_t ALWAYS_INLINE sizeAt(size_t i) const { return i == 0 ? offsets[0] : (offsets[i] - offsets[i - 1]); }
+    size_t ALWAYS_INLINE sizeAt(ssize_t i) const { return offsets[i] - offsets[i - 1]; }
 
     template <bool positive>
     struct less;
@@ -284,6 +284,35 @@ public:
             pos[i] += sizeof(size_t);
             inline_memcpy(pos[i], &chars[offsetAt(i)], str_size);
             pos[i] += str_size;
+        }
+    }
+
+    void serializeToPosNew(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length, bool has_null) const override
+    {
+        if (has_null)
+            serializeToPosNewImpl<true>(pos, pos_start, data_start, length);
+        else
+            serializeToPosNewImpl<false>(pos, pos_start, data_start, length);
+    }
+
+    template <bool has_null>
+    void serializeToPosNewImpl(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length) const
+    {
+        for (size_t i = 0; i < length; ++i)
+        {
+            if constexpr (has_null)
+            {
+                if (pos[i + pos_start] == nullptr)
+                    continue;
+            }
+
+            size_t pos_index = i + pos_start;
+            size_t data_index = i + data_start;
+            size_t str_size = sizeAt(data_index);
+            std::memcpy(pos[pos_index], &str_size, sizeof(size_t));
+            pos[pos_index] += sizeof(size_t);
+            inline_memcpy(pos[pos_index], &chars[offsetAt(data_index)], str_size);
+            pos[pos_index] += str_size;
         }
     }
 

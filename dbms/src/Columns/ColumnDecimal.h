@@ -184,6 +184,29 @@ public:
         }
     }
 
+    void serializeToPosNew(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length, bool has_null) const override
+    {
+        if (has_null)
+            serializeToPosNewImpl<true>(pos, pos_start, data_start, length);
+        else
+            serializeToPosNewImpl<false>(pos, pos_start, data_start, length);
+    }
+
+    template <bool has_null>
+    void serializeToPosNewImpl(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length) const
+    {
+        for (size_t i = 0; i < length; ++i)
+        {
+            if constexpr (has_null)
+            {
+                if (pos[i + pos_start] == nullptr)
+                    continue;
+            }
+            std::memcpy(pos[i + pos_start], &data[i + data_start], sizeof(T));
+            pos[i + pos_start] += sizeof(T);
+        }
+    }
+
     void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, ColumnsAlignBufferAVX2 & align_buffer) override;
 
     void updateHashWithValue(size_t n, SipHash & hash, const TiDB::TiDBCollatorPtr &, String &) const override;

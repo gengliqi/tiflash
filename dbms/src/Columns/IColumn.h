@@ -244,6 +244,16 @@ public:
         throw Exception("Method serializeToPos is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);
     }
 
+    virtual void serializeToPosNew(
+        PaddedPODArray<UInt8 *> & /* pos */,
+        size_t /* pos_start */,
+        size_t /* data_start */,
+        size_t /* length */,
+        bool /* has_null */) const
+    {
+        throw Exception("Method serializeToPos is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);
+    }
+
     virtual void deserializeAndInsertFromPos(
         PaddedPODArray<UInt8 *> & /* pos */,
         ColumnsAlignBufferAVX2 & /* align_buffer */)

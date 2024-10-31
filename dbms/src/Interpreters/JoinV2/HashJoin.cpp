@@ -306,7 +306,14 @@ void HashJoin::initBuild(const Block & sample_block, size_t build_concurrency_)
     active_build_worker = build_concurrency;
     build_workers_data.resize(build_concurrency);
     for (size_t i = 0; i < build_concurrency; ++i)
+    {
         build_workers_data[i].key_getter = createHashJoinKeyGetter(method, collators);
+        if (settings.build_buffer_size > 0)
+        {
+            build_workers_data[i].build_buffer.resize(settings.build_buffer_size + CPU_CACHE_LINE_SIZE, CPU_CACHE_LINE_SIZE);
+            build_workers_data[i].max_build_buffer_size = settings.build_buffer_size;
+        }
+    }
     for (size_t i = 0; i < JOIN_BUILD_PARTITION_COUNT + 1; ++i)
         multi_row_containers.emplace_back(std::make_unique<MultipleRowContainer>());
 }

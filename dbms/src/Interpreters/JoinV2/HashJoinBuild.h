@@ -28,16 +28,17 @@ extern const int UNKNOWN_SET_DATA_VARIANT;
 } // namespace ErrorCodes
 
 
-constexpr size_t JOIN_BUILD_PARTITION_BITS = 5;
+constexpr size_t JOIN_BUILD_PARTITION_BITS = 0;
 constexpr size_t JOIN_BUILD_PARTITION_COUNT = 1 << JOIN_BUILD_PARTITION_BITS;
 
 template <typename HashValueType>
-inline size_t getJoinBuildPartitionNum(HashValueType hash)
+inline size_t getJoinBuildPartitionNum(HashValueType /* hash */)
 {
-    constexpr size_t hash_value_bits = sizeof(HashValueType) * 8;
-    static_assert(hash_value_bits >= JOIN_BUILD_PARTITION_BITS);
-    constexpr size_t partition_mask = (JOIN_BUILD_PARTITION_COUNT - 1) << (hash_value_bits - JOIN_BUILD_PARTITION_BITS);
-    return (hash & partition_mask) >> (hash_value_bits - JOIN_BUILD_PARTITION_BITS);
+    return 0;
+    //constexpr size_t hash_value_bits = sizeof(HashValueType) * 8;
+    //static_assert(hash_value_bits >= JOIN_BUILD_PARTITION_BITS);
+    //constexpr size_t partition_mask = (JOIN_BUILD_PARTITION_COUNT - 1) << (hash_value_bits - JOIN_BUILD_PARTITION_BITS);
+    //return (hash & partition_mask) >> (hash_value_bits - JOIN_BUILD_PARTITION_BITS);
 }
 
 struct alignas(CPU_CACHE_LINE_SIZE) JoinBuildWorkerData
@@ -66,6 +67,8 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinBuildWorkerData
     size_t all_size = 0;
 
     bool enable_tagged_pointer = true;
+    PaddedPODArray<UInt8> build_buffer;
+    size_t max_build_buffer_size = 0;
 };
 
 void insertBlockToRowContainers(

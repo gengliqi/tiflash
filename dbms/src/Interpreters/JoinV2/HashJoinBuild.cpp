@@ -143,75 +143,158 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
     check_row_ptrs.resize(rows);
 #endif
 
-    for (size_t i = 0; i < rows; ++i)
+    if (wd.max_build_buffer_size == 0)
     {
-        if (has_null_map && (*null_map)[i])
+        for (size_t i = 0; i < rows; ++i)
         {
-            if constexpr (need_record_null_rows)
+            if (has_null_map && (*null_map)[i])
             {
-                // FIXME: row size does not correct
-                wd.row_ptrs[i]
-                    = partition_column_row[part_count - 1].data.data() + wd.partition_row_sizes[part_count - 1];
-                assert((reinterpret_cast<uintptr_t>(wd.row_ptrs[i]) & (ROW_ALIGN - 1)) == 0);
+                if constexpr (need_record_null_rows)
+                {
+                    // FIXME: row size does not correct
+                    wd.row_ptrs[i]
+                        = partition_column_row[part_count - 1].data.data() + wd.partition_row_sizes[part_count - 1];
+                    assert((reinterpret_cast<uintptr_t>(wd.row_ptrs[i]) & (ROW_ALIGN - 1)) == 0);
 
-                wd.partition_row_sizes[part_count - 1] += wd.row_sizes[i];
-                partition_column_row[part_count - 1].offsets.push_back(wd.partition_row_sizes[part_count - 1]);
+                    wd.partition_row_sizes[part_count - 1] += wd.row_sizes[i];
+                    partition_column_row[part_count - 1].offsets.push_back(wd.partition_row_sizes[part_count - 1]);
 
-                /// Append to null rows list
-                unalignedStore<RowPtr>(wd.row_ptrs[i], wd.null_rows_list_head);
-                wd.null_rows_list_head = wd.row_ptrs[i];
+                    /// Append to null rows list
+                    unalignedStore<RowPtr>(wd.row_ptrs[i], wd.null_rows_list_head);
+                    wd.null_rows_list_head = wd.row_ptrs[i];
 
-                wd.row_ptrs[i] += sizeof(RowPtr);
+                    wd.row_ptrs[i] += sizeof(RowPtr);
+                }
+                else
+                {
+                    wd.row_ptrs[i] = nullptr;
+                }
+                continue;
+            }
+
+            size_t part_num = getJoinBuildPartitionNum<HashValueType>(wd.hashes[i]);
+            wd.row_ptrs[i] = partition_column_row[part_num].data.data() + wd.partition_row_sizes[part_num];
+            assert((reinterpret_cast<uintptr_t>(wd.row_ptrs[i]) & (ROW_ALIGN - 1)) == 0);
+
+#ifndef NDEBUG
+            check_row_ptrs[i] = wd.row_ptrs[i];
+#endif
+
+            wd.partition_row_sizes[part_num] += wd.row_sizes[i];
+            partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
+
+            unalignedStore<RowPtr>(wd.row_ptrs[i], nullptr);
+            wd.row_ptrs[i] += sizeof(RowPtr);
+
+            if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+            {
+                unalignedStore<HashValueType>(wd.row_ptrs[i], static_cast<HashValueType>(wd.hashes[i]));
+                wd.row_ptrs[i] += sizeof(HashValueType);
             }
             else
             {
-                wd.row_ptrs[i] = nullptr;
+                partition_column_row[part_num].hashes.push_back(wd.hashes[i]);
             }
-            continue;
+            const auto & key = key_getter.getJoinKeyWithBufferHint(i);
+            key_getter.serializeJoinKey(key, wd.row_ptrs[i]);
+            wd.row_ptrs[i] += key_getter.getJoinKeySize(key);
         }
 
-        size_t part_num = getJoinBuildPartitionNum<HashValueType>(wd.hashes[i]);
-        wd.row_ptrs[i] = partition_column_row[part_num].data.data() + wd.partition_row_sizes[part_num];
-        assert((reinterpret_cast<uintptr_t>(wd.row_ptrs[i]) & (ROW_ALIGN - 1)) == 0);
-
-#ifndef NDEBUG
-        check_row_ptrs[i] = wd.row_ptrs[i];
-#endif
-
-        wd.partition_row_sizes[part_num] += wd.row_sizes[i];
-        partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
-
-        unalignedStore<RowPtr>(wd.row_ptrs[i], nullptr);
-        wd.row_ptrs[i] += sizeof(RowPtr);
-
-        if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+        if (!row_layout.other_required_column_indexes.empty())
         {
-            unalignedStore<HashValueType>(wd.row_ptrs[i], static_cast<HashValueType>(wd.hashes[i]));
-            wd.row_ptrs[i] += sizeof(HashValueType);
+            constexpr size_t step = 64;
+            for (size_t i = 0; i < rows; i += step)
+            {
+                size_t start = i;
+                size_t end = i + step > rows ? rows : i + step;
+                for (const auto & [index, _] : row_layout.other_required_column_indexes)
+                {
+                    if constexpr (has_null_map && !need_record_null_rows)
+                        block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end, true);
+                    else
+                        block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end, false);
+                }
+            }
         }
-        else
-        {
-            partition_column_row[part_num].hashes.push_back(wd.hashes[i]);
-        }
-        const auto & key = key_getter.getJoinKeyWithBufferHint(i);
-        key_getter.serializeJoinKey(key, wd.row_ptrs[i]);
-        wd.row_ptrs[i] += key_getter.getJoinKeySize(key);
     }
-
-    if (!row_layout.other_required_column_indexes.empty())
+    else
     {
-        constexpr size_t step = 64;
-        for (size_t i = 0; i < rows; i += step)
+        size_t i = 0;
+        size_t size = 0;
+        size_t data_offset = 0;
+        while (i < rows)
         {
+            wd.row_ptrs.clear();
             size_t start = i;
-            size_t end = i + step > rows ? rows : i + step;
+            // TODO: what if a row is too large to fit in the buffer
+            while (i < rows && size + wd.row_sizes[i] < wd.max_build_buffer_size)
+            {
+                if (has_null_map && (*null_map)[i])
+                {
+                    if constexpr (need_record_null_rows)
+                    {
+                        //TODO
+                    }
+                    else
+                    {
+                        wd.row_ptrs.push_back(nullptr);
+                    }
+                    ++i;
+                    continue;
+                }
+                wd.row_ptrs.push_back(wd.build_buffer.data() + size);
+                auto & ptr = wd.row_ptrs.back();
+                unalignedStore<RowPtr>(ptr, nullptr);
+                ptr += sizeof(RowPtr);
+                if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+                {
+                    unalignedStore<HashValueType>(ptr, static_cast<HashValueType>(wd.hashes[i]));
+                    ptr += sizeof(HashValueType);
+                }
+                else
+                {
+                    partition_column_row[0].hashes.push_back(wd.hashes[i]);
+                }
+                const auto & key = key_getter.getJoinKeyWithBufferHint(i);
+                key_getter.serializeJoinKey(key, ptr);
+                ptr += key_getter.getJoinKeySize(key);
+
+                size += wd.row_sizes[i];
+                ++i;
+            }
             for (const auto & [index, _] : row_layout.other_required_column_indexes)
             {
                 if constexpr (has_null_map && !need_record_null_rows)
-                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end, true);
+                    block.getByPosition(index).column->serializeToPosNew(wd.row_ptrs, 0, start, i - start, true);
                 else
-                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end, false);
+                    block.getByPosition(index).column->serializeToPosNew(wd.row_ptrs, 0, start, i - start, false);
             }
+            size_t offset = 0;
+            while (offset + CPU_CACHE_LINE_SIZE <= size)
+            {
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
+                data_offset += AlignBufferAVX2::vector_size;
+                offset += AlignBufferAVX2::vector_size;
+                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
+                data_offset += AlignBufferAVX2::vector_size;
+                offset += AlignBufferAVX2::vector_size;
+#else
+                std::memcpy(&partition_column_row[0].data[data_offset], &wd.build_buffer[offset], CPU_CACHE_LINE_SIZE);
+                data_offset += CPU_CACHE_LINE_SIZE;
+                offset += CPU_CACHE_LINE_SIZE;
+#endif
+            }
+            if (offset != 0 && offset < size)
+            {
+                // TODO: buffer size must be greater than CPU_CACHE_LINE_SIZE
+                std::memcpy(&wd.build_buffer[0], &wd.build_buffer[offset], CPU_CACHE_LINE_SIZE);
+            }
+            size = size - offset;
+        }
+        if (size > 0)
+        {
+            std::memcpy(&partition_column_row[0].data[data_offset], &wd.build_buffer[0], size);
         }
     }
 

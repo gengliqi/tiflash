@@ -335,7 +335,8 @@ struct Settings
     M(SettingUInt64, join_v2_probe_enable_prefetch_threshold, 1024 * 1024, "hash join v2 minimum row number of join build table to use prefetch during join probe phase")                                                                            \
     M(SettingUInt64, join_v2_probe_prefetch_step, 16, "hash join v2 probe prefetch length")                                                                                                                                                \
     M(SettingUInt64, join_v2_probe_insert_batch_size, 64, "hash join v2 probe insert batch size")                                                                                                                                          \
-    M(SettingBool, join_v2_enable_tagged_pointer, true, "hash join v2 enable tagged pointer")
+    M(SettingBool, join_v2_enable_tagged_pointer, true, "hash join v2 enable tagged pointer") \
+    M(SettingUInt64, join_v2_build_buffer_size, 8192, "hash join v2 build buffer size")
 
 
 // clang-format on
