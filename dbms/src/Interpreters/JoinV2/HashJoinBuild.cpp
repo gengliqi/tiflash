@@ -224,6 +224,59 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
         }
 #endif
     }
+    else if (wd.max_build_buffer_size == 1)
+    {
+        constexpr size_t step = 64;
+        for (size_t i = 0; i < rows; i += step)
+        {
+            wd.row_ptrs.clear();
+
+            size_t start = i;
+            size_t end = i + step > rows ? rows : i + step;
+            for (size_t j = start; j < end; ++j)
+            {
+                if (has_null_map && (*null_map)[j])
+                {
+                    if constexpr (need_record_null_rows)
+                    {
+                        //TODO
+                    }
+                    else
+                    {
+                        wd.row_ptrs.push_back(nullptr);
+                    }
+                    continue;
+                }
+                size_t part_num = getJoinBuildPartitionNum<HashValueType>(wd.hashes[j]);
+                wd.row_ptrs.push_back(partition_column_row[part_num].data.data() + wd.partition_row_sizes[part_num]);
+                auto & ptr = wd.row_ptrs.back();
+
+                wd.partition_row_sizes[part_num] += wd.row_sizes[j];
+                partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
+                unalignedStore<RowPtr>(ptr, nullptr);
+                ptr += sizeof(RowPtr);
+                if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+                {
+                    unalignedStore<HashValueType>(ptr, static_cast<HashValueType>(wd.hashes[j]));
+                    ptr += sizeof(HashValueType);
+                }
+                else
+                {
+                    partition_column_row[0].hashes.push_back(wd.hashes[j]);
+                }
+                const auto & key = key_getter.getJoinKeyWithBufferHint(j);
+                key_getter.serializeJoinKey(key, ptr);
+                ptr += key_getter.getJoinKeySize(key);
+            }
+            for (const auto & [index, _] : row_layout.other_required_column_indexes)
+            {
+                if constexpr (has_null_map && !need_record_null_rows)
+                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end, true);
+                else
+                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end, false);
+            }
+        }
+    }
     else
     {
         size_t i = 0;
