@@ -434,7 +434,6 @@ public:
     void gather(ColumnGathererStream & gatherer_stream) override;
 
     void reserve(size_t n) override;
-
     void reserveAlign(size_t n, size_t alignment) override;
 
     void reserveWithTotalMemoryHint(size_t n, Int64 total_memory_hint) override;
