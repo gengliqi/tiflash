@@ -20,7 +20,10 @@
 #include <Interpreters/NullableUtils.h>
 #include <common/memcpy.h>
 
+#include <cstdint>
+
 #include "Interpreters/JoinV2/HashJoinRowLayout.h"
+#include "Storages/KVStore/Utils.h"
 
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
 ASSERT_USE_AVX2_COMPILE_FLAG
@@ -116,7 +119,7 @@ enum class ProbePrefetchStage : UInt8
     None,
     FindHeader,
     FindNext,
-    //CopyNext,
+    CopyNext,
 };
 
 template <typename KeyGetter, bool KeyTypeReference = KeyGetter::Type::isJoinKeyTypeReference()>
@@ -132,14 +135,16 @@ struct alignas(CPU_CACHE_LINE_SIZE) ProbePrefetchState<KeyGetter, true>
     ProbePrefetchStage stage = ProbePrefetchStage::None;
     bool is_matched = false;
     UInt16 hash_tag = 0;
-    HashValueType hash = 0;
+    UInt16 remaining_length = 0;
+    UInt16 buffer_offset = 0;
     UInt32 index = 0;
-    //UInt32 remain_length = 0;
+    HashValueType hash = 0;
     union
     {
         RowPtr ptr = nullptr;
         std::atomic<RowPtr> * pointer_ptr;
     };
+    RowPtr next_ptr = nullptr;
 
     ALWAYS_INLINE KeyType getJoinKey(KeyGetterType & key_getter) { return key_getter.getJoinKeyWithBufferHint(index); }
 };
@@ -154,14 +159,16 @@ struct alignas(CPU_CACHE_LINE_SIZE) ProbePrefetchState<KeyGetter, false>
     ProbePrefetchStage stage = ProbePrefetchStage::None;
     bool is_matched = false;
     UInt16 hash_tag = 0;
-    HashValueType hash = 0;
+    UInt16 remaining_length = 0;
+    UInt16 buffer_offset = 0;
     UInt32 index = 0;
-    //UInt32 remain_length = 0;
+    HashValueType hash = 0;
     union
     {
         RowPtr ptr = nullptr;
         std::atomic<RowPtr> * pointer_ptr;
     };
+    RowPtr next_ptr = nullptr;
     KeyType key{};
 
     ALWAYS_INLINE KeyType getJoinKey(KeyGetterType &) { return key; }
@@ -554,10 +561,11 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
         wd.prefetch_iter = k;
         wd.collision += collision;
     }
-    else
+    else if (settings.probe_buffer_size == 1)
     {
+        const size_t probe_buffer_max_size = 4096;
         if (wd.probe_buffer.empty())
-            wd.probe_buffer.resize(settings.probe_buffer_size, CPU_CACHE_LINE_SIZE);
+            wd.probe_buffer.resize(probe_buffer_max_size, CPU_CACHE_LINE_SIZE);
         wd.probe_buffer_size = 0;
 
         auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
@@ -599,7 +607,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                 {
                     ++current_offset;
                     selective_offsets.push_back(state->index);
-                    if unlikely (wd.probe_buffer_size + len > settings.probe_buffer_size)
+                    if unlikely (wd.probe_buffer_size + len > probe_buffer_max_size)
                     {
                         FlushBatchIfNecessary2<false>();
                     }
@@ -694,6 +702,269 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             ++k;
         }
 
+        FlushBatchIfNecessary2<true>();
+        FillNullMap(current_offset);
+
+        context.start_row_idx = idx;
+        context.prefetch_active_states = active_states;
+        wd.prefetch_iter = k;
+        wd.collision += collision;
+    }
+    else
+    {
+        RUNTIME_CHECK_MSG(
+            settings.probe_buffer_size <= UINT16_MAX,
+            "probe_buffer_size {} > UINT16_MAX",
+            settings.probe_buffer_size);
+        if (wd.probe_buffer.empty())
+            wd.probe_buffer.resize(settings.probe_buffer_size, CPU_CACHE_LINE_SIZE);
+        size_t probe_buffer_size = 0;
+        const size_t buffer_row_align = 8;
+        static_assert(CPU_CACHE_LINE_SIZE % buffer_row_align == 0);
+
+        auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
+        auto & selective_offsets = wd.selective_offsets;
+        auto * states = static_cast<ProbePrefetchState<KeyGetter> *>(wd.prefetch_states.get());
+
+        size_t idx = context.start_row_idx;
+        size_t active_states = context.prefetch_active_states;
+        size_t k = wd.prefetch_iter;
+        size_t current_offset = 0;
+        size_t collision = 0;
+        size_t key_offset = sizeof(RowPtr);
+        if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+        {
+            key_offset += sizeof(HashValueType);
+        }
+        const size_t probe_prefetch_step = settings.probe_prefetch_step;
+        while (idx < context.rows || active_states > 0)
+        {
+            k = k == probe_prefetch_step ? 0 : k;
+            auto * state = &states[k];
+            if (state->stage == ProbePrefetchStage::CopyNext)
+            {
+                if (state->remaining_length >= CPU_CACHE_LINE_SIZE)
+                {
+                    std::memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, CPU_CACHE_LINE_SIZE);
+                    state->buffer_offset += CPU_CACHE_LINE_SIZE;
+                    state->ptr += CPU_CACHE_LINE_SIZE;
+                    state->remaining_length -= CPU_CACHE_LINE_SIZE;
+
+                    if (state->remaining_length > 0)
+                    {
+                        PREFETCH_READ(state->ptr);
+                        ++k;
+                        continue;
+                    }
+                }
+                else
+                {
+                    RowPtr ptr = state->ptr;
+                    UInt16 offset = state->buffer_offset;
+                    UInt16 remaining_length = state->remaining_length;
+                    for (size_t i = 0; i < CPU_CACHE_LINE_SIZE / buffer_row_align; ++i)
+                    {
+                        std::memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
+                        if (remaining_length <= buffer_row_align)
+                            break;
+                        offset += buffer_row_align;
+                        ptr += buffer_row_align;
+                        remaining_length -= buffer_row_align;
+                    }
+                }
+
+                if (state->next_ptr)
+                {
+                    state->stage = ProbePrefetchStage::FindNext;
+                    state->ptr = state->next_ptr;
+                    PREFETCH_READ(state->ptr);
+                    ++k;
+                    continue;
+                }
+                state->stage = ProbePrefetchStage::None;
+                --active_states;
+            }
+            else if (state->stage == ProbePrefetchStage::FindNext)
+            {
+                RowPtr ptr = state->ptr;
+                RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(ptr);
+                UInt16 len = getRowPtrTag(next_ptr);
+                next_ptr = removeRowPtrTag(next_ptr);
+
+                const auto & key = state->getJoinKey(key_getter);
+                const auto & key2 = key_getter.deserializeJoinKey(ptr + key_offset);
+                bool key_is_equal = joinKeyIsEqual(key_getter, key, key2, state->hash, ptr);
+                collision += !key_is_equal;
+                if (key_is_equal)
+                {
+                    ++current_offset;
+                    selective_offsets.push_back(state->index);
+                    if (len > 0)
+                    {
+                        RowPtr start = ptr + key_offset + key_getter.getRequiredKeyOffset(key2);
+                        RowPtr copy_start = reinterpret_cast<RowPtr>(
+                            reinterpret_cast<std::uintptr_t>(start) / buffer_row_align * buffer_row_align);
+                        UInt16 diff = start - copy_start;
+                        len += diff;
+                        UInt16 align_len = (len + buffer_row_align - 1) / buffer_row_align * buffer_row_align;
+                        if unlikely (probe_buffer_size + align_len > settings.probe_buffer_size)
+                        {
+                            for (size_t i = 0; i < probe_prefetch_step; ++i)
+                            {
+                                if (states[i].stage == ProbePrefetchStage::CopyNext)
+                                {
+                                    inline_memcpy(
+                                        &wd.probe_buffer[states[i].buffer_offset],
+                                        states[i].ptr,
+                                        states[i].remaining_length);
+                                    if (states[i].next_ptr)
+                                    {
+                                        states[i].stage = ProbePrefetchStage::FindNext;
+                                        states[i].ptr = states[i].next_ptr;
+                                        PREFETCH_READ(states[i].ptr);
+                                    }
+                                    else
+                                    {
+                                        states[i].stage = ProbePrefetchStage::None;
+                                        --active_states;
+                                    }
+                                }
+                            }
+                            FlushBatchIfNecessary2<false>();
+                            probe_buffer_size = 0;
+                        }
+                        wd.insert_batch.push_back(&wd.probe_buffer[probe_buffer_size + diff]);
+                        RowPtr copy_end = reinterpret_cast<RowPtr>(
+                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1)
+                            / CPU_CACHE_LINE_SIZE * CPU_CACHE_LINE_SIZE);
+                        UInt16 remaining_length = align_len;
+                        UInt16 buffer_offset = probe_buffer_size;
+                        probe_buffer_size += align_len;
+                        while (remaining_length > 0 && copy_start < copy_end)
+                        {
+                            std::memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                            buffer_offset += buffer_row_align;
+                            copy_start += buffer_row_align;
+                            remaining_length -= buffer_row_align;
+                        }
+
+                        if (remaining_length > 0)
+                        {
+                            PREFETCH_READ(copy_start);
+                            state->stage = ProbePrefetchStage::CopyNext;
+                            state->remaining_length = remaining_length;
+                            state->buffer_offset = buffer_offset;
+                            state->ptr = copy_start;
+                            state->next_ptr = next_ptr;
+                            ++k;
+                            if unlikely (current_offset >= context.rows)
+                                break;
+                            continue;
+                        }
+                    }
+                    if unlikely (current_offset >= context.rows)
+                    {
+                        if (!next_ptr)
+                        {
+                            state->stage = ProbePrefetchStage::None;
+                            --active_states;
+                        }
+                        break;
+                    }
+                }
+
+                if (next_ptr)
+                {
+                    PREFETCH_READ(next_ptr);
+                    state->ptr = next_ptr;
+                    ++k;
+                    continue;
+                }
+
+                state->stage = ProbePrefetchStage::None;
+                --active_states;
+            }
+            else if (state->stage == ProbePrefetchStage::FindHeader)
+            {
+                RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+                if (ptr)
+                {
+                    bool forward = true;
+                    if constexpr (tagged_pointer)
+                    {
+                        if (containOtherTag(ptr, state->hash_tag))
+                            ptr = removeRowPtrTag(ptr);
+                        else
+                            forward = false;
+                    }
+                    if (forward)
+                    {
+                        PREFETCH_READ(ptr);
+                        state->ptr = ptr;
+                        state->stage = ProbePrefetchStage::FindNext;
+                        ++k;
+                        continue;
+                    }
+                }
+
+                state->stage = ProbePrefetchStage::None;
+                --active_states;
+            }
+
+            assert(state->stage == ProbePrefetchStage::None);
+
+            if constexpr (has_null_map)
+            {
+                while (idx < context.rows)
+                {
+                    if (!(*context.null_map)[idx])
+                        break;
+                    ++idx;
+                }
+            }
+
+            if unlikely (idx >= context.rows)
+            {
+                ++k;
+                continue;
+            }
+
+            const auto & key = key_getter.getJoinKeyWithBufferHint(idx);
+            size_t hash = static_cast<HashValueType>(Hash()(key));
+            size_t bucket = pointer_table.getBucketNum(hash);
+            state->pointer_ptr = pointer_table.getPointerTable() + bucket;
+            PREFETCH_READ(state->pointer_ptr);
+
+            if constexpr (!KeyGetterType::isJoinKeyTypeReference())
+                state->key = key;
+            if constexpr (tagged_pointer)
+                state->hash_tag = hash & ROW_PTR_TAG_MASK;
+            if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+                state->hash = hash;
+            state->index = idx;
+            state->stage = ProbePrefetchStage::FindHeader;
+            ++active_states;
+            ++idx;
+            ++k;
+        }
+
+        for (size_t i = 0; i < probe_prefetch_step; ++i)
+        {
+            if (states[i].stage == ProbePrefetchStage::CopyNext)
+            {
+                inline_memcpy(&wd.probe_buffer[states[i].buffer_offset], states[i].ptr, states[i].remaining_length);
+                if (states[i].next_ptr)
+                {
+                    states[i].stage = ProbePrefetchStage::FindNext;
+                    states[i].ptr = states[i].next_ptr;
+                }
+                else
+                {
+                    states[i].stage = ProbePrefetchStage::None;
+                    --active_states;
+                }
+            }
+        }
         FlushBatchIfNecessary2<true>();
         FillNullMap(current_offset);
 
