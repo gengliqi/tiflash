@@ -587,7 +587,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             {
                 RowPtr ptr = state->ptr;
                 RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(ptr);
-                UInt16 len_tag = getRowPtrTag(next_ptr);
+                UInt16 len = getRowPtrTag(next_ptr);
                 next_ptr = removeRowPtrTag(next_ptr);
                 if (next_ptr)
                 {
@@ -603,14 +603,17 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                 {
                     ++current_offset;
                     selective_offsets.push_back(state->index);
-                    if unlikely (wd.probe_buffer_size + len_tag > settings.probe_buffer_size)
+                    if unlikely (wd.probe_buffer_size + len > settings.probe_buffer_size)
                     {
                         FlushBatchIfNecessary2<false>();
                     }
                     RowPtr start = ptr + key_offset + key_getter.getRequiredKeyOffset(key2);
-                    inline_memcpy(&wd.probe_buffer[wd.probe_buffer_size], start, len_tag);
-                    wd.insert_batch.push_back(&wd.probe_buffer[wd.probe_buffer_size]);
-                    wd.probe_buffer_size += len_tag;
+                    if (len > 0)
+                    {
+                        inline_memcpy(&wd.probe_buffer[wd.probe_buffer_size], start, len);
+                        wd.insert_batch.push_back(&wd.probe_buffer[wd.probe_buffer_size]);
+                        wd.probe_buffer_size += len;
+                    }
                     if unlikely (current_offset >= context.rows)
                     {
                         if (!next_ptr)

@@ -189,6 +189,7 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
     bool is_all_key_fixed = true;
     for (size_t i = 0; i < keys_size; ++i)
     {
+        // TODO: consider Decimal256
         if (key_columns[i].column_ptr->valuesHaveFixedSize())
             row_layout.key_column_fixed_size += key_columns[i].column_ptr->sizeOfValueIfFixed();
         else

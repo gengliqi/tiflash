@@ -310,7 +310,6 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
 
                 wd.row_ptrs.push_back(wd.build_buffer.data() + size);
                 auto & ptr = wd.row_ptrs.back();
-                assert(wd.real_row_sizes[i] <= UINT16_MAX);
                 unalignedStore<RowPtr>(ptr, addRowPtrTag(nullptr, wd.real_row_sizes[i]));
                 ptr += sizeof(RowPtr);
                 if constexpr (KeyGetterType::joinKeyCompareHashFirst())
