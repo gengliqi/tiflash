@@ -745,7 +745,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             {
                 if (state->remaining_length >= CPU_CACHE_LINE_SIZE)
                 {
-                    std::memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, CPU_CACHE_LINE_SIZE);
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, CPU_CACHE_LINE_SIZE);
                     state->buffer_offset += CPU_CACHE_LINE_SIZE;
                     state->ptr += CPU_CACHE_LINE_SIZE;
                     state->remaining_length -= CPU_CACHE_LINE_SIZE;
@@ -764,7 +764,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     UInt16 remaining_length = state->remaining_length;
                     do
                     {
-                        std::memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
                         offset += buffer_row_align;
                         ptr += buffer_row_align;
                         remaining_length -= buffer_row_align;
@@ -801,10 +801,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     {
                         RowPtr start = ptr + key_offset + key_getter.getRequiredKeyOffset(key2);
                         RowPtr copy_start = reinterpret_cast<RowPtr>(
-                            reinterpret_cast<std::uintptr_t>(start) / buffer_row_align * buffer_row_align);
+                            reinterpret_cast<std::uintptr_t>(start) & ~(buffer_row_align - 1));
                         UInt16 diff = start - copy_start;
                         len += diff;
-                        UInt16 align_len = (len + buffer_row_align - 1) / buffer_row_align * buffer_row_align;
+                        UInt16 align_len = (len + buffer_row_align - 1) & ~(buffer_row_align - 1);
                         if unlikely (probe_buffer_size + align_len > settings.probe_buffer_size)
                         {
                             for (size_t i = 0; i < probe_prefetch_step; ++i)
@@ -833,34 +833,32 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                         }
                         wd.insert_batch.push_back(&wd.probe_buffer[probe_buffer_size + diff]);
                         RowPtr copy_end = reinterpret_cast<RowPtr>(
-                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1)
-                            / CPU_CACHE_LINE_SIZE * CPU_CACHE_LINE_SIZE);
-                        UInt16 remaining_length = align_len;
+                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1) & ~(CPU_CACHE_LINE_SIZE - 1));
                         UInt16 buffer_offset = probe_buffer_size;
                         probe_buffer_size += align_len;
-                        if (copy_end - copy_start >= remaining_length)
+                        if (copy_end - copy_start >= align_len)
                         {
                             do
                             {
-                                std::memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
                                 buffer_offset += buffer_row_align;
                                 copy_start += buffer_row_align;
-                                remaining_length -= buffer_row_align;
-                            } while (remaining_length > 0);
+                                align_len -= buffer_row_align;
+                            } while (align_len > 0);
                         }
                         else
                         {
                             while (copy_start < copy_end)
                             {
-                                std::memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
                                 buffer_offset += buffer_row_align;
                                 copy_start += buffer_row_align;
-                                remaining_length -= buffer_row_align;
+                                align_len -= buffer_row_align;
                             }
 
                             PREFETCH_READ(copy_start);
                             state->stage = ProbePrefetchStage::CopyNext;
-                            state->remaining_length = remaining_length;
+                            state->remaining_length = align_len;
                             state->buffer_offset = buffer_offset;
                             state->ptr = copy_start;
                             state->next_ptr = next_ptr;
