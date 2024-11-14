@@ -72,7 +72,7 @@ struct alignas(CPU_CACHE_LINE_SIZE) MultipleRowContainer
 };
 
 /// Row Layout
-/// 1. No-null join key row: <Hash Value> <Next Pointer> <Raw Required Join Keys> <Other Join Keys> <Other Required Columns>
+/// 1. No-null join key row: <Hash Value> <Next Pointer> <Other Join Keys> <Raw Required Join Keys> <Other Required Columns>
 /// 1. Null join key row(For right anti/outer join): <All Required Columns>
 struct HashJoinRowLayout
 {
@@ -83,7 +83,6 @@ struct HashJoinRowLayout
     std::vector<std::pair<size_t, bool>> other_required_column_indexes;
     size_t key_column_fixed_size = 0;
     size_t other_column_fixed_size = 0;
-    bool key_all_raw_required;
 
     static RowPtr getNextRowPtr(const RowPtr ptr) { return unalignedLoad<RowPtr>(ptr); }
 };

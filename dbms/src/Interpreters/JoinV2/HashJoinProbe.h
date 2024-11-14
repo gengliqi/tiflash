@@ -23,6 +23,8 @@
 #include <Parsers/ASTTablesInSelectQuery.h>
 #include <absl/base/optimization.h>
 
+#include "Common/PODArray.h"
+
 
 namespace DB
 {
@@ -55,7 +57,8 @@ struct JoinProbeContext
         const Names & key_names,
         const String & filter_column,
         const NameSet & probe_output_name_set,
-        const TiDB::TiDBCollators & collators);
+        const TiDB::TiDBCollators & collators,
+        const HashJoinRowLayout & row_layout);
 };
 
 struct alignas(CPU_CACHE_LINE_SIZE) JoinProbeWorkerData
@@ -67,7 +70,6 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinProbeWorkerData
     IColumn::Offsets offsets_to_replicate;
 
     RowPtrs insert_batch;
-    RowPtrs insert_batch_other;
 
     size_t probe_handle_rows = 0;
     size_t probe_time = 0;
@@ -79,6 +81,9 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinProbeWorkerData
     ColumnUInt8::MutablePtr filter_column = ColumnUInt8::create();
 
     ColumnsAlignBufferAVX2 align_buffer;
+
+    PaddedPODArray<UInt8> probe_buffer;
+    size_t probe_buffer_size = 0;
 };
 
 void joinProbeBlock(

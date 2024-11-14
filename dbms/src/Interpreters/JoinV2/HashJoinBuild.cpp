@@ -40,7 +40,7 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
     static_assert(sizeof(HashValueType) <= sizeof(decltype(wd.hashes)::value_type));
 
     KeyGetterType & key_getter = *static_cast<KeyGetterType *>(wd.key_getter.get());
-    key_getter.reset(key_columns);
+    key_getter.reset(key_columns, row_layout.raw_required_key_column_indexes.size());
 
     wd.row_sizes.clear();
     wd.row_sizes.resize_fill(rows, row_layout.other_column_fixed_size);
@@ -82,13 +82,13 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
         wd.hashes[i] = static_cast<HashValueType>(Hash()(key));
         size_t part_num = getJoinBuildPartitionNum<HashValueType>(wd.hashes[i]);
 
+        wd.real_row_sizes[i] = wd.row_sizes[i] + key_getter.getJoinKeySize(key) - key_getter.getRequiredKeyOffset(key);
         size_t ptr_and_key_size = sizeof(RowPtr) + key_getter.getJoinKeySize(key);
         if constexpr (KeyGetterType::joinKeyCompareHashFirst())
         {
             ptr_and_key_size += sizeof(HashValueType);
         }
         wd.row_sizes[i] += ptr_and_key_size;
-        wd.real_row_sizes[i] = wd.row_sizes[i];
 
         static_assert(CPU_CACHE_LINE_SIZE % ROW_ALIGN == 0);
         size_t remain_size = CPU_CACHE_LINE_SIZE - wd.partition_row_sizes[part_num] % CPU_CACHE_LINE_SIZE;
@@ -184,7 +184,8 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             wd.partition_row_sizes[part_num] += wd.row_sizes[i];
             partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
 
-            unalignedStore<RowPtr>(wd.row_ptrs[i], nullptr);
+            assert(wd.real_row_sizes[i] <= UINT16_MAX);
+            unalignedStore<RowPtr>(wd.row_ptrs[i], addRowPtrTag(nullptr, wd.real_row_sizes[i]));
             wd.row_ptrs[i] += sizeof(RowPtr);
 
             if constexpr (KeyGetterType::joinKeyCompareHashFirst())
@@ -254,7 +255,8 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
 
                 wd.partition_row_sizes[part_num] += wd.row_sizes[j];
                 partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
-                unalignedStore<RowPtr>(ptr, nullptr);
+                assert(wd.real_row_sizes[i] <= UINT16_MAX);
+                unalignedStore<RowPtr>(ptr, addRowPtrTag(nullptr, wd.real_row_sizes[i]));
                 ptr += sizeof(RowPtr);
                 if constexpr (KeyGetterType::joinKeyCompareHashFirst())
                 {
@@ -308,7 +310,8 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
 
                 wd.row_ptrs.push_back(wd.build_buffer.data() + size);
                 auto & ptr = wd.row_ptrs.back();
-                unalignedStore<RowPtr>(ptr, nullptr);
+                assert(wd.real_row_sizes[i] <= UINT16_MAX);
+                unalignedStore<RowPtr>(ptr, addRowPtrTag(nullptr, wd.real_row_sizes[i]));
                 ptr += sizeof(RowPtr);
                 if constexpr (KeyGetterType::joinKeyCompareHashFirst())
                 {

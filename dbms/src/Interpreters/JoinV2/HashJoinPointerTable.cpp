@@ -125,7 +125,15 @@ bool HashJoinPointerTable::buildImpl(
                 old_head = removeRowPtrTag(old_head);
             }
             if (old_head != nullptr)
-                unalignedStore<RowPtr>(row_ptr, old_head);
+            {
+                RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(row_ptr);
+                UInt16 len = getRowPtrTag(next_ptr);
+                if (len > 0)
+                {
+                    hash++;
+                }
+                unalignedStore<RowPtr>(row_ptr, addRowPtrTag(old_head, len));
+            }
         }
 
         if (build_size >= max_build_size)
