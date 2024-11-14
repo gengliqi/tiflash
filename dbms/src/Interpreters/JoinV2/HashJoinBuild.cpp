@@ -13,9 +13,8 @@
 // limitations under the License.
 
 #include <Interpreters/JoinV2/HashJoinBuild.h>
-
-#include "Interpreters/JoinV2/HashJoinRowLayout.h"
-#include "Storages/KVStore/Utils.h"
+#include <Interpreters/JoinV2/HashJoinRowLayout.h>
+#include <Storages/KVStore/Utils.h>
 
 namespace DB
 {
@@ -91,25 +90,32 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
         wd.row_sizes[i] += ptr_and_key_size;
         wd.real_row_sizes[i] = wd.row_sizes[i];
 
-        wd.last_partition_index[part_num] = i;
-        wd.partition_row_sizes[part_num] += wd.row_sizes[i];
-        ++wd.partition_row_count[part_num];
-
         static_assert(CPU_CACHE_LINE_SIZE % ROW_ALIGN == 0);
         size_t remain_size = CPU_CACHE_LINE_SIZE - wd.partition_row_sizes[part_num] % CPU_CACHE_LINE_SIZE;
         size_t align_remain_size = remain_size / ROW_ALIGN * ROW_ALIGN;
         if (ptr_and_key_size % CPU_CACHE_LINE_SIZE <= align_remain_size)
         {
-            size_t diff = remain_size - align_remain_size;
-            wd.row_sizes[wd.last_partition_index[part_num]] += diff;
-            wd.partition_row_sizes[part_num] += diff;
-            wd.padding_size += diff;
+            if likely (wd.last_partition_index[part_num] != -1)
+            {
+                size_t diff = remain_size - align_remain_size;
+                wd.row_sizes[wd.last_partition_index[part_num]] += diff;
+                wd.partition_row_sizes[part_num] += diff;
+                wd.padding_size += diff;
+            }
         }
         else
         {
-            wd.row_sizes[wd.last_partition_index[part_num]] += remain_size;
-            wd.partition_row_sizes[part_num] += remain_size;
+            if likely (wd.last_partition_index[part_num] != -1)
+            {
+                wd.row_sizes[wd.last_partition_index[part_num]] += remain_size;
+                wd.partition_row_sizes[part_num] += remain_size;
+                wd.padding_size += remain_size;
+            }
         }
+
+        wd.last_partition_index[part_num] = i;
+        wd.partition_row_sizes[part_num] += wd.row_sizes[i];
+        ++wd.partition_row_count[part_num];
     }
 
     std::vector<RowContainer> partition_column_row(part_count);
