@@ -21,6 +21,7 @@
 #include <DataStreams/ColumnGathererStream.h>
 #include <DataTypes/DataTypeDecimal.h>
 #include <IO/WriteHelpers.h>
+#include <common/memcpy.h>
 #include <common/unaligned.h>
 
 #include <ext/scope_guard.h>

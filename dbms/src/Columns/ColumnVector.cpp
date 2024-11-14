@@ -21,6 +21,7 @@
 #include <Common/SipHash.h>
 #include <DataStreams/ColumnGathererStream.h>
 #include <IO/WriteHelpers.h>
+#include <common/memcpy.h>
 
 #include <cmath>
 #include <cstring>
