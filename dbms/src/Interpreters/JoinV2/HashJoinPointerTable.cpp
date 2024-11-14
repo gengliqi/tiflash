@@ -128,10 +128,6 @@ bool HashJoinPointerTable::buildImpl(
             {
                 RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(row_ptr);
                 UInt16 len = getRowPtrTag(next_ptr);
-                if (len > 0)
-                {
-                    hash++;
-                }
                 unalignedStore<RowPtr>(row_ptr, addRowPtrTag(old_head, len));
             }
         }

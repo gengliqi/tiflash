@@ -15,6 +15,7 @@
 #include <Interpreters/JoinV2/HashJoinBuild.h>
 #include <Interpreters/JoinV2/HashJoinRowLayout.h>
 #include <Storages/KVStore/Utils.h>
+#include "Common/Exception.h"
 
 namespace DB
 {
@@ -83,6 +84,7 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
         size_t part_num = getJoinBuildPartitionNum<HashValueType>(wd.hashes[i]);
 
         wd.real_row_sizes[i] = wd.row_sizes[i] + key_getter.getJoinKeySize(key) - key_getter.getRequiredKeyOffset(key);
+        RUNTIME_CHECK_MSG(wd.real_row_sizes[i] <= UINT16_MAX, "real row size {} > UINT16_MAX", wd.real_row_sizes[i]);
         size_t ptr_and_key_size = sizeof(RowPtr) + key_getter.getJoinKeySize(key);
         if constexpr (KeyGetterType::joinKeyCompareHashFirst())
         {
@@ -184,7 +186,6 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             wd.partition_row_sizes[part_num] += wd.row_sizes[i];
             partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
 
-            assert(wd.real_row_sizes[i] <= UINT16_MAX);
             unalignedStore<RowPtr>(wd.row_ptrs[i], addRowPtrTag(nullptr, wd.real_row_sizes[i]));
             wd.row_ptrs[i] += sizeof(RowPtr);
 
@@ -255,8 +256,7 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
 
                 wd.partition_row_sizes[part_num] += wd.row_sizes[j];
                 partition_column_row[part_num].offsets.push_back(wd.partition_row_sizes[part_num]);
-                assert(wd.real_row_sizes[i] <= UINT16_MAX);
-                unalignedStore<RowPtr>(ptr, addRowPtrTag(nullptr, wd.real_row_sizes[i]));
+                unalignedStore<RowPtr>(ptr, addRowPtrTag(nullptr, wd.real_row_sizes[j]));
                 ptr += sizeof(RowPtr);
                 if constexpr (KeyGetterType::joinKeyCompareHashFirst())
                 {
