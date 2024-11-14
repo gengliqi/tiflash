@@ -15,6 +15,7 @@
 #include <Interpreters/JoinV2/HashJoinBuild.h>
 #include <Interpreters/JoinV2/HashJoinRowLayout.h>
 #include <Storages/KVStore/Utils.h>
+
 #include "Common/Exception.h"
 
 namespace DB
@@ -342,13 +343,13 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
                 _mm256_stream_si256(
                     reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]),
                     *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
-                data_offset += AlignBufferAVX2::vector_size;
-                offset += AlignBufferAVX2::vector_size;
+                data_offset += VECTOR_SIZE_AVX2;
+                offset += VECTOR_SIZE_AVX2;
                 _mm256_stream_si256(
                     reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]),
                     *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
-                data_offset += AlignBufferAVX2::vector_size;
-                offset += AlignBufferAVX2::vector_size;
+                data_offset += VECTOR_SIZE_AVX2;
+                offset += VECTOR_SIZE_AVX2;
 #else
                 std::memcpy(&partition_column_row[0].data[data_offset], &wd.build_buffer[offset], CPU_CACHE_LINE_SIZE);
                 data_offset += CPU_CACHE_LINE_SIZE;
