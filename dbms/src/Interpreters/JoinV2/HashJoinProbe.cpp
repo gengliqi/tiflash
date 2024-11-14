@@ -275,9 +275,7 @@ private:
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
                 return;
         }
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-        wd.align_buffer.reset(force);
-#endif
+        wd.align_buffer.resetIndex(force);
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
             IColumn * column = added_columns[column_index].get();
@@ -296,9 +294,7 @@ private:
     template <bool force>
     void ALWAYS_INLINE FlushBatchIfNecessary2() const
     {
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-        wd.align_buffer.reset(force);
-#endif
+        wd.align_buffer.resetIndex(force);
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
             IColumn * column = added_columns[column_index].get();

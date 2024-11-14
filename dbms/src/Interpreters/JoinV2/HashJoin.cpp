@@ -599,7 +599,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
 
         added_columns.push_back(src_column.column->cloneEmpty());
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
-        added_columns.back()->reserveAlign(rows, AlignBufferAVX2::buffer_size);
+        added_columns.back()->reserveAlign(rows, FULL_VECTOR_SIZE_AVX2);
 #else
         added_columns.back()->reserve(rows);
 #endif

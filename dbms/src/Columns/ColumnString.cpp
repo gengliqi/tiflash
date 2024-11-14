@@ -20,6 +20,8 @@
 #include <common/memcpy.h>
 #include <fmt/core.h>
 
+#include <ext/scope_guard.h>
+
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
 ASSERT_USE_AVX2_COMPILE_FLAG
 #endif
@@ -511,14 +513,14 @@ void ColumnString::deserializeAndInsertFromPos(
     {
         for (size_t i = 0; i < size; ++i)
         {
-            UInt32 str_size;
-            tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(UInt32));
-            pos[i] += sizeof(UInt32);
+            size_t str_size;
+            tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(size_t));
+            pos[i] += sizeof(size_t);
 
             do
             {
                 UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
+                UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<size_t>(remain), str_size));
                 inline_memcpy(&char_buffer.data[char_buffer_size], pos[i], copy_bytes);
                 pos[i] += copy_bytes;
                 char_buffer_size += copy_bytes;
@@ -576,9 +578,9 @@ void ColumnString::deserializeAndInsertFromPos(
     offsets.resize(prev_size + size);
     for (size_t i = 0; i < size; ++i)
     {
-        UInt32 str_size;
-        tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(UInt32));
-        pos[i] += sizeof(UInt32);
+        size_t str_size;
+        tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(size_t));
+        pos[i] += sizeof(size_t);
 
         chars.resize(char_size + str_size);
         inline_memcpy(&chars[char_size], pos[i], str_size);
