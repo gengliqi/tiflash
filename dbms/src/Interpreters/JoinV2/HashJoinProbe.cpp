@@ -762,15 +762,13 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     RowPtr ptr = state->ptr;
                     UInt16 offset = state->buffer_offset;
                     UInt16 remaining_length = state->remaining_length;
-                    for (size_t i = 0; i < CPU_CACHE_LINE_SIZE / buffer_row_align; ++i)
+                    do
                     {
                         std::memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
-                        if (remaining_length <= buffer_row_align)
-                            break;
                         offset += buffer_row_align;
                         ptr += buffer_row_align;
                         remaining_length -= buffer_row_align;
-                    }
+                    } while (remaining_length > 0);
                 }
 
                 if (state->next_ptr)
