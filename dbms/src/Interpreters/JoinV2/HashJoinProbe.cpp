@@ -750,7 +750,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     state->ptr += CPU_CACHE_LINE_SIZE;
                     state->remaining_length -= CPU_CACHE_LINE_SIZE;
 
-                    if (state->remaining_length > 0)
+                    if likely (state->remaining_length > 0)
                     {
                         PREFETCH_READ(state->ptr);
                         ++k;
@@ -840,16 +840,26 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                         UInt16 remaining_length = align_len;
                         UInt16 buffer_offset = probe_buffer_size;
                         probe_buffer_size += align_len;
-                        while (remaining_length > 0 && copy_start < copy_end)
+                        if (copy_end - copy_start >= remaining_length)
                         {
-                            std::memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
-                            buffer_offset += buffer_row_align;
-                            copy_start += buffer_row_align;
-                            remaining_length -= buffer_row_align;
+                            do
+                            {
+                                std::memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                                buffer_offset += buffer_row_align;
+                                copy_start += buffer_row_align;
+                                remaining_length -= buffer_row_align;
+                            } while (remaining_length > 0);
                         }
-
-                        if (remaining_length > 0)
+                        else
                         {
+                            while (copy_start < copy_end)
+                            {
+                                std::memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                                buffer_offset += buffer_row_align;
+                                copy_start += buffer_row_align;
+                                remaining_length -= buffer_row_align;
+                            }
+
                             PREFETCH_READ(copy_start);
                             state->stage = ProbePrefetchStage::CopyNext;
                             state->remaining_length = remaining_length;
