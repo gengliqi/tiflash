@@ -14,6 +14,9 @@
 
 #include <Interpreters/JoinV2/HashJoinBuild.h>
 
+#include "Interpreters/JoinV2/HashJoinRowLayout.h"
+#include "Storages/KVStore/Utils.h"
+
 namespace DB
 {
 namespace ErrorCodes
@@ -42,6 +45,8 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
 
     wd.row_sizes.clear();
     wd.row_sizes.resize_fill(rows, row_layout.other_column_fixed_size);
+    wd.real_row_sizes.clear();
+    wd.real_row_sizes.resize(rows);
     wd.hashes.resize(rows);
     wd.row_ptrs.clear();
     wd.row_ptrs.resize_fill(rows, nullptr);
@@ -84,37 +89,27 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             ptr_and_key_size += sizeof(HashValueType);
         }
         wd.row_sizes[i] += ptr_and_key_size;
-
-        size_t remain_size = CPU_CACHE_LINE_SIZE - wd.partition_row_sizes[part_num] % CPU_CACHE_LINE_SIZE;
-        size_t align_remain_size = remain_size / ROW_ALIGN * ROW_ALIGN;
-        if (align_remain_size >= ptr_and_key_size)
-        {
-            if (remain_size > align_remain_size)
-            {
-                if likely (wd.last_partition_index[part_num] != -1)
-                {
-                    wd.row_sizes[wd.last_partition_index[part_num]] += remain_size - align_remain_size;
-                    wd.partition_row_sizes[part_num] += remain_size - align_remain_size;
-                    wd.padding_size += remain_size - align_remain_size;
-                }
-            }
-        }
-        else
-        {
-            if (remain_size != 0)
-            {
-                if likely (wd.last_partition_index[part_num] != -1)
-                {
-                    wd.row_sizes[wd.last_partition_index[part_num]] += remain_size;
-                    wd.partition_row_sizes[part_num] += remain_size;
-                    wd.padding_size += remain_size;
-                }
-            }
-        }
+        wd.real_row_sizes[i] = wd.row_sizes[i];
 
         wd.last_partition_index[part_num] = i;
         wd.partition_row_sizes[part_num] += wd.row_sizes[i];
         ++wd.partition_row_count[part_num];
+
+        static_assert(CPU_CACHE_LINE_SIZE % ROW_ALIGN == 0);
+        size_t remain_size = CPU_CACHE_LINE_SIZE - wd.partition_row_sizes[part_num] % CPU_CACHE_LINE_SIZE;
+        size_t align_remain_size = remain_size / ROW_ALIGN * ROW_ALIGN;
+        if (ptr_and_key_size % CPU_CACHE_LINE_SIZE <= align_remain_size)
+        {
+            size_t diff = remain_size - align_remain_size;
+            wd.row_sizes[wd.last_partition_index[part_num]] += diff;
+            wd.partition_row_sizes[part_num] += diff;
+            wd.padding_size += diff;
+        }
+        else
+        {
+            wd.row_sizes[wd.last_partition_index[part_num]] += remain_size;
+            wd.partition_row_sizes[part_num] += remain_size;
+        }
     }
 
     std::vector<RowContainer> partition_column_row(part_count);
@@ -336,10 +331,14 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             while (offset + CPU_CACHE_LINE_SIZE <= size)
             {
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
+                _mm256_stream_si256(
+                    reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]),
+                    *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
                 data_offset += AlignBufferAVX2::vector_size;
                 offset += AlignBufferAVX2::vector_size;
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]), *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
+                _mm256_stream_si256(
+                    reinterpret_cast<__m256i *>(&partition_column_row[0].data[data_offset]),
+                    *reinterpret_cast<__m256i *>(&wd.build_buffer[offset]));
                 data_offset += AlignBufferAVX2::vector_size;
                 offset += AlignBufferAVX2::vector_size;
 #else

@@ -310,7 +310,9 @@ void HashJoin::initBuild(const Block & sample_block, size_t build_concurrency_)
         build_workers_data[i].key_getter = createHashJoinKeyGetter(method, collators);
         if (settings.build_buffer_size > 0)
         {
-            build_workers_data[i].build_buffer.resize(settings.build_buffer_size + CPU_CACHE_LINE_SIZE, CPU_CACHE_LINE_SIZE);
+            build_workers_data[i].build_buffer.resize(
+                settings.build_buffer_size + CPU_CACHE_LINE_SIZE,
+                CPU_CACHE_LINE_SIZE);
             build_workers_data[i].max_build_buffer_size = settings.build_buffer_size;
         }
     }

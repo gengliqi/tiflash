@@ -184,7 +184,12 @@ public:
         }
     }
 
-    void serializeToPosNew(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length, bool has_null) const override
+    void serializeToPosNew(
+        PaddedPODArray<UInt8 *> & pos,
+        size_t pos_start,
+        size_t data_start,
+        size_t length,
+        bool has_null) const override
     {
         if (has_null)
             serializeToPosNewImpl<true>(pos, pos_start, data_start, length);

@@ -21,7 +21,7 @@
 namespace DB
 {
 
-constexpr size_t ROW_ALIGN = 8;
+constexpr size_t ROW_ALIGN = 4;
 
 using RowPtr = UInt8 *;
 using RowPtrs = PaddedPODArray<RowPtr>;

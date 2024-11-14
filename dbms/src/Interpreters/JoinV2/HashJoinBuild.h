@@ -49,6 +49,7 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinBuildWorkerData
     RowPtr null_rows_list_head = nullptr;
 
     PaddedPODArray<size_t> row_sizes;
+    PaddedPODArray<size_t> real_row_sizes;
     PaddedPODArray<size_t> hashes;
     RowPtrs row_ptrs;
 

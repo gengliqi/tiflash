@@ -79,7 +79,12 @@ public:
     void countSerializeByteSize(PaddedPODArray<size_t> & byte_size) const override;
 
     void serializeToPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end, bool has_null) const override;
-    void serializeToPosNew(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length, bool has_null) const override
+    void serializeToPosNew(
+        PaddedPODArray<UInt8 *> & pos,
+        size_t pos_start,
+        size_t data_start,
+        size_t length,
+        bool has_null) const override
     {
         getNullMapColumn().serializeToPosNew(pos, pos_start, data_start, length, has_null);
         getNestedColumn().serializeToPosNew(pos, pos_start, data_start, length, has_null);
