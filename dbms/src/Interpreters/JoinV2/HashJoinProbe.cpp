@@ -745,7 +745,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             {
                 if (state->remaining_length >= CPU_CACHE_LINE_SIZE)
                 {
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, CPU_CACHE_LINE_SIZE);
+                    tiflash_compiler_builtin_memcpy(
+                        &wd.probe_buffer[state->buffer_offset],
+                        state->ptr,
+                        CPU_CACHE_LINE_SIZE);
                     state->buffer_offset += CPU_CACHE_LINE_SIZE;
                     state->ptr += CPU_CACHE_LINE_SIZE;
                     state->remaining_length -= CPU_CACHE_LINE_SIZE;
@@ -760,15 +763,41 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                 else
                 {
                     RowPtr ptr = state->ptr;
-                    UInt16 offset = state->buffer_offset;
+                    UInt16 buffer_offset = state->buffer_offset;
                     UInt16 remaining_length = state->remaining_length;
-                    do
+                    switch (remaining_length)
                     {
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
-                        offset += buffer_row_align;
-                        ptr += buffer_row_align;
-                        remaining_length -= buffer_row_align;
-                    } while (remaining_length > 0);
+                    case 8:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 8);
+                        break;
+                    case 16:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 16);
+                        break;
+                    case 24:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 24);
+                        break;
+                    case 32:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 32);
+                        break;
+                    case 40:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 40);
+                        break;
+                    case 48:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 48);
+                        break;
+                    case 56:
+                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 56);
+                        break;
+                    default:
+                        assert(false);
+                    }
+                    //do
+                    //{
+                    //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
+                    //    offset += buffer_row_align;
+                    //    ptr += buffer_row_align;
+                    //    remaining_length -= buffer_row_align;
+                    //} while (remaining_length > 0);
                 }
 
                 if (state->next_ptr)
@@ -801,13 +830,36 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     {
                         RowPtr start = ptr + key_offset + key_getter.getRequiredKeyOffset(key2);
                         RowPtr copy_start = reinterpret_cast<RowPtr>(
-                            reinterpret_cast<std::uintptr_t>(start) & ~(buffer_row_align - 1));
+                            reinterpret_cast<std::uintptr_t>(start) / buffer_row_align * buffer_row_align);
                         UInt16 diff = start - copy_start;
                         len += diff;
-                        UInt16 align_len = (len + buffer_row_align - 1) & ~(buffer_row_align - 1);
-                        if unlikely (probe_buffer_size + align_len > settings.probe_buffer_size)
+                        UInt16 align_len = (len + buffer_row_align - 1) / buffer_row_align * buffer_row_align;
+                        if unlikely (
+                            probe_buffer_size + align_len > settings.probe_buffer_size
+                            || wd.insert_batch.size() >= settings.probe_insert_batch_size)
                         {
-                            for (size_t i = 0; i < probe_prefetch_step; ++i)
+                            for (size_t i = k + 1; i < probe_prefetch_step; ++i)
+                            {
+                                if (states[i].stage == ProbePrefetchStage::CopyNext)
+                                {
+                                    inline_memcpy(
+                                        &wd.probe_buffer[states[i].buffer_offset],
+                                        states[i].ptr,
+                                        states[i].remaining_length);
+                                    if (states[i].next_ptr)
+                                    {
+                                        states[i].stage = ProbePrefetchStage::FindNext;
+                                        states[i].ptr = states[i].next_ptr;
+                                        PREFETCH_READ(states[i].ptr);
+                                    }
+                                    else
+                                    {
+                                        states[i].stage = ProbePrefetchStage::None;
+                                        --active_states;
+                                    }
+                                }
+                            }
+                            for (size_t i = 0; i < k; ++i)
                             {
                                 if (states[i].stage == ProbePrefetchStage::CopyNext)
                                 {
@@ -833,34 +885,95 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                         }
                         wd.insert_batch.push_back(&wd.probe_buffer[probe_buffer_size + diff]);
                         RowPtr copy_end = reinterpret_cast<RowPtr>(
-                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1) & ~(CPU_CACHE_LINE_SIZE - 1));
+                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1)
+                            / CPU_CACHE_LINE_SIZE * CPU_CACHE_LINE_SIZE);
                         UInt16 buffer_offset = probe_buffer_size;
                         probe_buffer_size += align_len;
+                        /// copy_end - copy_start max is 64 - 8 = 56.
                         if (copy_end - copy_start >= align_len)
                         {
-                            do
+                            switch (align_len)
                             {
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
-                                buffer_offset += buffer_row_align;
-                                copy_start += buffer_row_align;
-                                align_len -= buffer_row_align;
-                            } while (align_len > 0);
+                            case 8:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 8);
+                                break;
+                            case 16:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
+                                break;
+                            case 24:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 24);
+                                break;
+                            case 32:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
+                                break;
+                            case 40:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 40);
+                                break;
+                            case 48:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
+                                break;
+                            case 56:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 56);
+                                break;
+                            default:
+                                assert(false);
+                            }
+
+                            //do
+                            //{
+                            //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                            //    buffer_offset += buffer_row_align;
+                            //    copy_start += buffer_row_align;
+                            //    align_len -= buffer_row_align;
+                            //} while (align_len > 0);
                         }
                         else
                         {
-                            while (copy_start < copy_end)
+                            UInt16 copy_length = copy_end - copy_start;
+                            switch (copy_length)
                             {
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
-                                buffer_offset += buffer_row_align;
-                                copy_start += buffer_row_align;
-                                align_len -= buffer_row_align;
+                            case 8:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 8);
+                                break;
+                            case 16:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
+                                break;
+                            case 24:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 24);
+                                break;
+                            case 32:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
+                                break;
+                            case 40:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 40);
+                                break;
+                            case 48:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
+                                break;
+                            case 56:
+                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 56);
+                                break;
+                            default:
+                                assert(false);
                             }
 
-                            PREFETCH_READ(copy_start);
+                            buffer_offset += copy_length;
+                            align_len -= copy_length;
+
+                            //while (copy_start < copy_end)
+                            //{
+                            //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
+                            //    buffer_offset += buffer_row_align;
+                            //    copy_start += buffer_row_align;
+                            //    align_len -= buffer_row_align;
+                            //}
+
+                            assert(reinterpret_cast<std::uintptr_t>(copy_end) % CPU_CACHE_LINE_SIZE == 0);
+                            PREFETCH_READ(copy_end);
                             state->stage = ProbePrefetchStage::CopyNext;
                             state->remaining_length = align_len;
                             state->buffer_offset = buffer_offset;
-                            state->ptr = copy_start;
+                            state->ptr = copy_end;
                             state->next_ptr = next_ptr;
                             ++k;
                             if unlikely (current_offset >= context.rows)
