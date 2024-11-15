@@ -753,7 +753,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     state->ptr += CPU_CACHE_LINE_SIZE;
                     state->remaining_length -= CPU_CACHE_LINE_SIZE;
 
-                    if likely (state->remaining_length > 0)
+                    if (state->remaining_length > 0)
                     {
                         PREFETCH_READ(state->ptr);
                         ++k;
