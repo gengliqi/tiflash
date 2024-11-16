@@ -513,14 +513,14 @@ void ColumnString::deserializeAndInsertFromPos(
     {
         for (size_t i = 0; i < size; ++i)
         {
-            size_t str_size;
-            tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(size_t));
-            pos[i] += sizeof(size_t);
+            UInt32 str_size;
+            tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(UInt32));
+            pos[i] += sizeof(UInt32);
 
             do
             {
                 UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<size_t>(remain), str_size));
+                UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
                 inline_memcpy(&char_buffer.data[char_buffer_size], pos[i], copy_bytes);
                 pos[i] += copy_bytes;
                 char_buffer_size += copy_bytes;
@@ -578,12 +578,12 @@ void ColumnString::deserializeAndInsertFromPos(
     offsets.resize(prev_size + size);
     for (size_t i = 0; i < size; ++i)
     {
-        size_t str_size;
-        tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(size_t));
-        pos[i] += sizeof(size_t);
+        UInt32 str_size;
+        tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(UInt32));
+        pos[i] += sizeof(UInt32);
 
         chars.resize(char_size + str_size);
-        inline_memcpy(&chars[char_size], pos[i], str_size);
+        memcpySmallAllowReadWriteOverflow15(&chars[char_size], pos[i], str_size);
         char_size += str_size;
         offsets[prev_size + i] = char_size;
         pos[i] += str_size;

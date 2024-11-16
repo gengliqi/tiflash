@@ -279,9 +279,9 @@ public:
                     continue;
             }
 
-            size_t str_size = sizeAt(i);
-            std::memcpy(pos[i], &str_size, sizeof(size_t));
-            pos[i] += sizeof(size_t);
+            UInt32 str_size = sizeAt(i);
+            std::memcpy(pos[i], &str_size, sizeof(UInt32));
+            pos[i] += sizeof(UInt32);
             inline_memcpy(pos[i], &chars[offsetAt(i)], str_size);
             pos[i] += str_size;
         }
@@ -313,9 +313,9 @@ public:
 
             size_t pos_index = i + pos_start;
             size_t data_index = i + data_start;
-            size_t str_size = sizeAt(data_index);
-            std::memcpy(pos[pos_index], &str_size, sizeof(size_t));
-            pos[pos_index] += sizeof(size_t);
+            UInt32 str_size = sizeAt(data_index);
+            std::memcpy(pos[pos_index], &str_size, sizeof(UInt32));
+            pos[pos_index] += sizeof(UInt32);
             inline_memcpy(pos[pos_index], &chars[offsetAt(data_index)], str_size);
             pos[pos_index] += str_size;
         }
