@@ -533,7 +533,7 @@ void ColumnString::deserializeAndInsertFromPos(
     size_t char_size = chars.size();
     size_t size = pos.size();
 
-    /*#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
     bool is_offset_aligned = reinterpret_cast<std::uintptr_t>(&offsets[prev_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
     bool is_char_aligned = reinterpret_cast<std::uintptr_t>(&chars[char_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
 
@@ -541,7 +541,7 @@ void ColumnString::deserializeAndInsertFromPos(
     size_t char_buffer_index = align_buffer.nextIndex();
     size_t offset_buffer_index = align_buffer.nextIndex();
 
-    AlignBufferAVX2 & char_buffer = align_buffer.getAlignBuffer(char_buffer_index);
+    AlignBufferAVX2 & saved_char_buffer = align_buffer.getAlignBuffer(char_buffer_index);
     UInt8 & char_buffer_size_ref = align_buffer.getSize(char_buffer_index);
     /// Better use a register rather than a reference for a frequently-updated variable
     UInt8 char_buffer_size = char_buffer_size_ref;
@@ -555,6 +555,17 @@ void ColumnString::deserializeAndInsertFromPos(
 
     if likely (is_offset_aligned && is_char_aligned)
     {
+        struct
+        {
+            AlignBufferAVX2 buffer;
+            char padding[15];
+        } tmp_char_buf;
+
+        AlignBufferAVX2 & char_buffer = tmp_char_buf.buffer;
+
+        tiflash_compiler_builtin_memcpy(&char_buffer, &saved_char_buffer, sizeof(AlignBufferAVX2));
+        SCOPE_EXIT({ tiflash_compiler_builtin_memcpy(&saved_char_buffer, &char_buffer, sizeof(AlignBufferAVX2)); });
+
         for (size_t i = 0; i < size; ++i)
         {
             UInt32 str_size;
@@ -565,7 +576,7 @@ void ColumnString::deserializeAndInsertFromPos(
             {
                 UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
                 UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
-                inline_memcpy(&char_buffer.data[char_buffer_size], pos[i], copy_bytes);
+                memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], pos[i], copy_bytes);
                 pos[i] += copy_bytes;
                 char_buffer_size += copy_bytes;
                 str_size -= copy_bytes;
@@ -617,7 +628,7 @@ void ColumnString::deserializeAndInsertFromPos(
         /// This column data is aligned first and then becomes unaligned due to calling other functions
         throw Exception("AlignBuffer is not empty when the data is not aligned", ErrorCodes::LOGICAL_ERROR);
     }
-#endif*/
+#endif
 
     offsets.resize(prev_size + size);
     /// Loop unrolling
