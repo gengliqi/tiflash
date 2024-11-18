@@ -337,7 +337,9 @@ struct Settings
     M(SettingUInt64, join_v2_probe_insert_batch_size, 64, "hash join v2 probe insert batch size")                                                                                                                                          \
     M(SettingBool, join_v2_enable_tagged_pointer, true, "hash join v2 enable tagged pointer") \
     M(SettingUInt64, join_v2_build_buffer_size, 8192, "hash join v2 build buffer size")\
-    M(SettingUInt64, join_v2_probe_buffer_size, 8192, "hash join v2 probe buffer size")
+    M(SettingUInt64, join_v2_probe_buffer_size, 8192, "hash join v2 probe buffer size") \
+    M(SettingUInt64, join_v2_probe_buffer2_size, 0, "hash join v2 probe buffer2 size")\
+    M(SettingUInt64, join_v2_probe_buffer_prefetch_step, 16, "hash join v2 probe buffer prefetch step")
 
 
 // clang-format on

@@ -139,11 +139,7 @@ struct alignas(CPU_CACHE_LINE_SIZE) ProbePrefetchState<KeyGetter, true>
     UInt16 buffer_offset = 0;
     UInt32 index = 0;
     HashValueType hash = 0;
-    union
-    {
-        RowPtr ptr = nullptr;
-        std::atomic<RowPtr> * pointer_ptr;
-    };
+    void * ptr;
     RowPtr next_ptr = nullptr;
 
     ALWAYS_INLINE KeyType getJoinKey(KeyGetterType & key_getter) { return key_getter.getJoinKeyWithBufferHint(index); }
@@ -163,11 +159,7 @@ struct alignas(CPU_CACHE_LINE_SIZE) ProbePrefetchState<KeyGetter, false>
     UInt16 buffer_offset = 0;
     UInt32 index = 0;
     HashValueType hash = 0;
-    union
-    {
-        RowPtr ptr = nullptr;
-        std::atomic<RowPtr> * pointer_ptr;
-    };
+    void * ptr;
     RowPtr next_ptr = nullptr;
     KeyType key{};
 
@@ -315,8 +307,72 @@ private:
         }
 
         wd.insert_batch.clear();
-        wd.probe_buffer_size = 0;
     }
+
+    /*template <bool force>
+    void ALWAYS_INLINE FlushBatchIfNecessary3(size_t probe_buffer_size) const
+    {
+        const size_t prefetch_step = settings.probe_buffer_prefetch_step;
+        wd.probe_buffer_states.resize(prefetch_step);
+
+        size_t i = 0, k = 0;
+        size_t active_states = 0;
+        size_t probe_buffer2_size = 0;
+        while (i < probe_buffer_size || active_states != 0)
+        {
+            k = k == prefetch_step ? 0 : k;
+            auto * state = &wd.probe_buffer_states[k];
+            if likely (state->has_work)
+            {
+                if (state->remaining_len > CPU_CACHE_LINE_SIZE)
+                {
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer2[state->offset], state->ptr, CPU_CACHE_LINE_SIZE);
+                    state->remaining_len -= CPU_CACHE_LINE_SIZE;
+                    state->offset += CPU_CACHE_LINE_SIZE;
+                    state->ptr = reinterpret_cast<RowPtr>(state->ptr) + CPU_CACHE_LINE_SIZE;
+
+                    PREFETCH_READ(state->ptr);
+                    ++k;
+                    continue;
+                }
+
+                switch (state->remaining_len)
+                {
+                case 16:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 16);
+                case 32:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 32);
+                case 48:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 48);
+                case 64:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 64);
+                default:
+                    assert(false);
+                }
+                --active_states;
+            }
+
+            state->has_work = true;
+
+            ++k;
+        }
+
+        wd.align_buffer.resetIndex(force);
+        for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+        {
+            IColumn * column = added_columns[column_index].get();
+            if (has_null_map && is_nullable)
+                column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+            column->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+        }
+        for (auto [column_index, _] : row_layout.other_required_column_indexes)
+        {
+            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+        }
+
+        wd.insert_batch.clear();
+        wd.probe_buffer_size = 0;
+    }*/
 
     void ALWAYS_INLINE FillNullMap(size_t size) const
     {
@@ -451,7 +507,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             auto * state = &states[k];
             if (state->stage == ProbePrefetchStage::FindNext)
             {
-                RowPtr ptr = state->ptr;
+                RowPtr ptr = reinterpret_cast<RowPtr>(state->ptr);
                 RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(ptr);
                 next_ptr = removeRowPtrTag(next_ptr);
                 if (next_ptr)
@@ -491,7 +547,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             }
             else if (state->stage == ProbePrefetchStage::FindHeader)
             {
-                RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+                RowPtr ptr = *reinterpret_cast<RowPtr *>(state->ptr);
                 if (ptr)
                 {
                     bool forward = true;
@@ -537,8 +593,8 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             const auto & key = key_getter.getJoinKeyWithBufferHint(idx);
             size_t hash = static_cast<HashValueType>(Hash()(key));
             size_t bucket = pointer_table.getBucketNum(hash);
-            state->pointer_ptr = pointer_table.getPointerTable() + bucket;
-            PREFETCH_READ(state->pointer_ptr);
+            state->ptr = pointer_table.getPointerTable() + bucket;
+            PREFETCH_READ(state->ptr);
 
             if constexpr (!KeyGetterType::isJoinKeyTypeReference())
                 state->key = key;
@@ -561,156 +617,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
         wd.prefetch_iter = k;
         wd.collision += collision;
     }
-    else if (settings.probe_buffer_size == 1)
-    {
-        const size_t probe_buffer_max_size = 4096;
-        if (wd.probe_buffer.empty())
-            wd.probe_buffer.resize(probe_buffer_max_size, CPU_CACHE_LINE_SIZE);
-        wd.probe_buffer_size = 0;
-
-        auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
-        auto & selective_offsets = wd.selective_offsets;
-        auto * states = static_cast<ProbePrefetchState<KeyGetter> *>(wd.prefetch_states.get());
-
-        size_t idx = context.start_row_idx;
-        size_t active_states = context.prefetch_active_states;
-        size_t k = wd.prefetch_iter;
-        size_t current_offset = 0;
-        size_t collision = 0;
-        size_t key_offset = sizeof(RowPtr);
-        if constexpr (KeyGetterType::joinKeyCompareHashFirst())
-        {
-            key_offset += sizeof(HashValueType);
-        }
-        const size_t probe_prefetch_step = settings.probe_prefetch_step;
-        while (idx < context.rows || active_states > 0)
-        {
-            k = k == probe_prefetch_step ? 0 : k;
-            auto * state = &states[k];
-            if (state->stage == ProbePrefetchStage::FindNext)
-            {
-                RowPtr ptr = state->ptr;
-                RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(ptr);
-                UInt16 len = getRowPtrTag(next_ptr);
-                next_ptr = removeRowPtrTag(next_ptr);
-                if (next_ptr)
-                {
-                    state->ptr = next_ptr;
-                    PREFETCH_READ(next_ptr);
-                }
-
-                const auto & key = state->getJoinKey(key_getter);
-                const auto & key2 = key_getter.deserializeJoinKey(ptr + key_offset);
-                bool key_is_equal = joinKeyIsEqual(key_getter, key, key2, state->hash, ptr);
-                collision += !key_is_equal;
-                if (key_is_equal)
-                {
-                    ++current_offset;
-                    selective_offsets.push_back(state->index);
-                    if unlikely (wd.probe_buffer_size + len > probe_buffer_max_size)
-                    {
-                        FlushBatchIfNecessary2<false>();
-                    }
-                    RowPtr start = ptr + key_offset + key_getter.getRequiredKeyOffset(key2);
-                    if (len > 0)
-                    {
-                        inline_memcpy(&wd.probe_buffer[wd.probe_buffer_size], start, len);
-                        wd.insert_batch.push_back(&wd.probe_buffer[wd.probe_buffer_size]);
-                        wd.probe_buffer_size += len;
-                    }
-                    if unlikely (current_offset >= context.rows)
-                    {
-                        if (!next_ptr)
-                        {
-                            state->stage = ProbePrefetchStage::None;
-                            --active_states;
-                        }
-                        break;
-                    }
-                }
-
-                if (next_ptr)
-                {
-                    ++k;
-                    continue;
-                }
-
-                state->stage = ProbePrefetchStage::None;
-                --active_states;
-            }
-            else if (state->stage == ProbePrefetchStage::FindHeader)
-            {
-                RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
-                if (ptr)
-                {
-                    bool forward = true;
-                    if constexpr (tagged_pointer)
-                    {
-                        if (containOtherTag(ptr, state->hash_tag))
-                            ptr = removeRowPtrTag(ptr);
-                        else
-                            forward = false;
-                    }
-                    if (forward)
-                    {
-                        PREFETCH_READ(ptr);
-                        state->ptr = ptr;
-                        state->stage = ProbePrefetchStage::FindNext;
-                        ++k;
-                        continue;
-                    }
-                }
-
-                state->stage = ProbePrefetchStage::None;
-                --active_states;
-            }
-
-            assert(state->stage == ProbePrefetchStage::None);
-
-            if constexpr (has_null_map)
-            {
-                while (idx < context.rows)
-                {
-                    if (!(*context.null_map)[idx])
-                        break;
-                    ++idx;
-                }
-            }
-
-            if unlikely (idx >= context.rows)
-            {
-                ++k;
-                continue;
-            }
-
-            const auto & key = key_getter.getJoinKeyWithBufferHint(idx);
-            size_t hash = static_cast<HashValueType>(Hash()(key));
-            size_t bucket = pointer_table.getBucketNum(hash);
-            state->pointer_ptr = pointer_table.getPointerTable() + bucket;
-            PREFETCH_READ(state->pointer_ptr);
-
-            if constexpr (!KeyGetterType::isJoinKeyTypeReference())
-                state->key = key;
-            if constexpr (tagged_pointer)
-                state->hash_tag = hash & ROW_PTR_TAG_MASK;
-            if constexpr (KeyGetterType::joinKeyCompareHashFirst())
-                state->hash = hash;
-            state->index = idx;
-            state->stage = ProbePrefetchStage::FindHeader;
-            ++active_states;
-            ++idx;
-            ++k;
-        }
-
-        FlushBatchIfNecessary2<true>();
-        FillNullMap(current_offset);
-
-        context.start_row_idx = idx;
-        context.prefetch_active_states = active_states;
-        wd.prefetch_iter = k;
-        wd.collision += collision;
-    }
-    else
+    else if (settings.probe_buffer2_size == 0)
     {
         RUNTIME_CHECK_MSG(
             settings.probe_buffer_size <= UINT16_MAX,
@@ -719,7 +626,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
         if (wd.probe_buffer.empty())
             wd.probe_buffer.resize(settings.probe_buffer_size, CPU_CACHE_LINE_SIZE);
         size_t probe_buffer_size = 0;
-        const size_t buffer_row_align = 8;
+        const size_t buffer_row_align = 16;
         static_assert(CPU_CACHE_LINE_SIZE % buffer_row_align == 0);
 
         auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
@@ -737,68 +644,53 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             key_offset += sizeof(HashValueType);
         }
         const size_t probe_prefetch_step = settings.probe_prefetch_step;
+        std::deque<UInt8> prefetch_id_queue;
+        assert(settings.probe_prefetch_step <= UINT8_MAX);
         while (idx < context.rows || active_states > 0)
         {
             k = k == probe_prefetch_step ? 0 : k;
             auto * state = &states[k];
             if (state->stage == ProbePrefetchStage::CopyNext)
             {
-                if (state->remaining_length >= CPU_CACHE_LINE_SIZE)
+                assert(reinterpret_cast<std::uintptr_t>(state->ptr) % CPU_CACHE_LINE_SIZE == 0);
+                if (state->remaining_length > CPU_CACHE_LINE_SIZE)
                 {
                     tiflash_compiler_builtin_memcpy(
                         &wd.probe_buffer[state->buffer_offset],
                         state->ptr,
                         CPU_CACHE_LINE_SIZE);
                     state->buffer_offset += CPU_CACHE_LINE_SIZE;
-                    state->ptr += CPU_CACHE_LINE_SIZE;
+                    state->ptr = reinterpret_cast<RowPtr>(state->ptr) + CPU_CACHE_LINE_SIZE;
                     state->remaining_length -= CPU_CACHE_LINE_SIZE;
 
-                    if (state->remaining_length > 0)
-                    {
-                        PREFETCH_READ(state->ptr);
-                        ++k;
-                        continue;
-                    }
+                    PREFETCH_READ(state->ptr);
+                    ++k;
+                    continue;
                 }
-                else
+                switch (state->remaining_length)
                 {
-                    RowPtr ptr = state->ptr;
-                    UInt16 buffer_offset = state->buffer_offset;
-                    UInt16 remaining_length = state->remaining_length;
-                    switch (remaining_length)
-                    {
-                    case 8:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 8);
-                        break;
-                    case 16:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 16);
-                        break;
-                    case 24:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 24);
-                        break;
-                    case 32:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 32);
-                        break;
-                    case 40:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 40);
-                        break;
-                    case 48:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 48);
-                        break;
-                    case 56:
-                        tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], ptr, 56);
-                        break;
-                    default:
-                        assert(false);
-                    }
-                    //do
-                    //{
-                    //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
-                    //    offset += buffer_row_align;
-                    //    ptr += buffer_row_align;
-                    //    remaining_length -= buffer_row_align;
-                    //} while (remaining_length > 0);
+                case 16:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 16);
+                    break;
+                case 32:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 32);
+                    break;
+                case 48:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 48);
+                    break;
+                case 64:
+                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 64);
+                    break;
+                default:
+                    assert(false);
                 }
+                //do
+                //{
+                //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
+                //    offset += buffer_row_align;
+                //    ptr += buffer_row_align;
+                //    remaining_length -= buffer_row_align;
+                //} while (remaining_length > 0);
 
                 if (state->next_ptr)
                 {
@@ -813,7 +705,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             }
             else if (state->stage == ProbePrefetchStage::FindNext)
             {
-                RowPtr ptr = state->ptr;
+                RowPtr ptr = reinterpret_cast<RowPtr>(state->ptr);
                 RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(ptr);
                 UInt16 len = getRowPtrTag(next_ptr);
                 next_ptr = removeRowPtrTag(next_ptr);
@@ -838,127 +730,160 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                             probe_buffer_size + align_len > settings.probe_buffer_size
                             || wd.insert_batch.size() >= settings.probe_insert_batch_size)
                         {
+                            prefetch_id_queue.clear();
                             for (size_t i = k + 1; i < probe_prefetch_step; ++i)
-                            {
                                 if (states[i].stage == ProbePrefetchStage::CopyNext)
-                                {
-                                    inline_memcpy(
-                                        &wd.probe_buffer[states[i].buffer_offset],
-                                        states[i].ptr,
-                                        states[i].remaining_length);
-                                    if (states[i].next_ptr)
-                                    {
-                                        states[i].stage = ProbePrefetchStage::FindNext;
-                                        states[i].ptr = states[i].next_ptr;
-                                        PREFETCH_READ(states[i].ptr);
-                                    }
-                                    else
-                                    {
-                                        states[i].stage = ProbePrefetchStage::None;
-                                        --active_states;
-                                    }
-                                }
-                            }
+                                    prefetch_id_queue.push_back(i);
                             for (size_t i = 0; i < k; ++i)
-                            {
                                 if (states[i].stage == ProbePrefetchStage::CopyNext)
+                                    prefetch_id_queue.push_back(i);
+
+                            while (!prefetch_id_queue.empty())
+                            {
+                                auto id = prefetch_id_queue.front();
+                                prefetch_id_queue.pop_front();
+                                auto * current_state = &states[id];
+                                assert(reinterpret_cast<std::uintptr_t>(current_state->ptr) % CPU_CACHE_LINE_SIZE == 0);
+                                if (current_state->remaining_length > CPU_CACHE_LINE_SIZE)
                                 {
-                                    inline_memcpy(
-                                        &wd.probe_buffer[states[i].buffer_offset],
-                                        states[i].ptr,
-                                        states[i].remaining_length);
-                                    if (states[i].next_ptr)
-                                    {
-                                        states[i].stage = ProbePrefetchStage::FindNext;
-                                        states[i].ptr = states[i].next_ptr;
-                                        PREFETCH_READ(states[i].ptr);
-                                    }
-                                    else
-                                    {
-                                        states[i].stage = ProbePrefetchStage::None;
-                                        --active_states;
-                                    }
+                                    tiflash_compiler_builtin_memcpy(
+                                        &wd.probe_buffer[current_state->buffer_offset],
+                                        current_state->ptr,
+                                        CPU_CACHE_LINE_SIZE);
+                                    current_state->buffer_offset += CPU_CACHE_LINE_SIZE;
+                                    current_state->ptr
+                                        = reinterpret_cast<RowPtr>(current_state->ptr) + CPU_CACHE_LINE_SIZE;
+                                    current_state->remaining_length -= CPU_CACHE_LINE_SIZE;
+
+                                    PREFETCH_READ(current_state->ptr);
+                                    prefetch_id_queue.push_back(id);
+                                    continue;
+                                }
+                                switch (current_state->remaining_length)
+                                {
+                                case 16:
+                                    tiflash_compiler_builtin_memcpy(
+                                        &wd.probe_buffer[current_state->buffer_offset],
+                                        current_state->ptr,
+                                        16);
+                                    break;
+                                case 32:
+                                    tiflash_compiler_builtin_memcpy(
+                                        &wd.probe_buffer[current_state->buffer_offset],
+                                        current_state->ptr,
+                                        32);
+                                    break;
+                                case 48:
+                                    tiflash_compiler_builtin_memcpy(
+                                        &wd.probe_buffer[current_state->buffer_offset],
+                                        current_state->ptr,
+                                        48);
+                                    break;
+                                case 64:
+                                    tiflash_compiler_builtin_memcpy(
+                                        &wd.probe_buffer[current_state->buffer_offset],
+                                        current_state->ptr,
+                                        64);
+                                    break;
+                                default:
+                                    assert(false);
+                                }
+
+                                if (current_state->next_ptr)
+                                {
+                                    current_state->stage = ProbePrefetchStage::FindNext;
+                                    current_state->ptr = current_state->next_ptr;
+                                }
+                                else
+                                {
+                                    current_state->stage = ProbePrefetchStage::None;
+                                    --active_states;
                                 }
                             }
+
+                            //for (size_t i = k + 1; i < probe_prefetch_step; ++i)
+                            //{
+                            //    if (states[i].stage == ProbePrefetchStage::CopyNext)
+                            //    {
+                            //        inline_memcpy(
+                            //            &wd.probe_buffer[states[i].buffer_offset],
+                            //            states[i].ptr,
+                            //            states[i].remaining_length);
+                            //        if (states[i].next_ptr)
+                            //        {
+                            //            states[i].stage = ProbePrefetchStage::FindNext;
+                            //            states[i].ptr = states[i].next_ptr;
+                            //            PREFETCH_READ(states[i].ptr);
+                            //        }
+                            //        else
+                            //        {
+                            //            states[i].stage = ProbePrefetchStage::None;
+                            //            --active_states;
+                            //        }
+                            //    }
+                            //}
+                            //for (size_t i = 0; i < k; ++i)
+                            //{
+                            //    if (states[i].stage == ProbePrefetchStage::CopyNext)
+                            //    {
+                            //        inline_memcpy(
+                            //            &wd.probe_buffer[states[i].buffer_offset],
+                            //            states[i].ptr,
+                            //            states[i].remaining_length);
+                            //        if (states[i].next_ptr)
+                            //        {
+                            //            states[i].stage = ProbePrefetchStage::FindNext;
+                            //            states[i].ptr = states[i].next_ptr;
+                            //            PREFETCH_READ(states[i].ptr);
+                            //        }
+                            //        else
+                            //        {
+                            //            states[i].stage = ProbePrefetchStage::None;
+                            //            --active_states;
+                            //        }
+                            //    }
+                            //}
+
                             FlushBatchIfNecessary2<false>();
                             probe_buffer_size = 0;
+
+                            PREFETCH_READ(copy_start);
+                            for (size_t i = k + 1; i < probe_prefetch_step; ++i)
+                                if (states[i].stage != ProbePrefetchStage::None)
+                                    PREFETCH_READ(states[i].ptr);
+                            for (size_t i = 0; i < k; ++i)
+                                if (states[i].stage != ProbePrefetchStage::None)
+                                    PREFETCH_READ(states[i].ptr);
                         }
                         wd.insert_batch.push_back(&wd.probe_buffer[probe_buffer_size + diff]);
                         RowPtr copy_end = reinterpret_cast<RowPtr>(
-                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1)
-                            / CPU_CACHE_LINE_SIZE * CPU_CACHE_LINE_SIZE);
+                            (reinterpret_cast<std::uintptr_t>(start) + CPU_CACHE_LINE_SIZE - 1) / CPU_CACHE_LINE_SIZE
+                            * CPU_CACHE_LINE_SIZE);
                         UInt16 buffer_offset = probe_buffer_size;
                         probe_buffer_size += align_len;
-                        /// copy_end - copy_start max is 64 - 8 = 56.
-                        if (copy_end - copy_start >= align_len)
+                        /// copy_end - copy_start max is 64 - 16 = 48.
+                        auto copy_len = std::min(copy_end - copy_start, align_len);
+                        switch (copy_len)
                         {
-                            switch (align_len)
-                            {
-                            case 8:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 8);
-                                break;
-                            case 16:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
-                                break;
-                            case 24:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 24);
-                                break;
-                            case 32:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
-                                break;
-                            case 40:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 40);
-                                break;
-                            case 48:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
-                                break;
-                            case 56:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 56);
-                                break;
-                            default:
-                                assert(false);
-                            }
-
-                            //do
-                            //{
-                            //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, buffer_row_align);
-                            //    buffer_offset += buffer_row_align;
-                            //    copy_start += buffer_row_align;
-                            //    align_len -= buffer_row_align;
-                            //} while (align_len > 0);
+                        case 16:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
+                            break;
+                        case 32:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
+                            break;
+                        case 48:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
+                            break;
+                        case 64:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 64);
+                            break;
+                        default:
+                            assert(false);
                         }
-                        else
+                        if (copy_end - copy_start < align_len)
                         {
-                            UInt16 copy_length = copy_end - copy_start;
-                            switch (copy_length)
-                            {
-                            case 8:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 8);
-                                break;
-                            case 16:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
-                                break;
-                            case 24:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 24);
-                                break;
-                            case 32:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
-                                break;
-                            case 40:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 40);
-                                break;
-                            case 48:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
-                                break;
-                            case 56:
-                                tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 56);
-                                break;
-                            default:
-                                assert(false);
-                            }
-
-                            buffer_offset += copy_length;
-                            align_len -= copy_length;
+                            buffer_offset += copy_len;
+                            align_len -= copy_len;
 
                             //while (copy_start < copy_end)
                             //{
@@ -1005,7 +930,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             }
             else if (state->stage == ProbePrefetchStage::FindHeader)
             {
-                RowPtr ptr = state->pointer_ptr->load(std::memory_order_relaxed);
+                RowPtr ptr = *reinterpret_cast<RowPtr *>(state->ptr);
                 if (ptr)
                 {
                     bool forward = true;
@@ -1051,8 +976,8 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             const auto & key = key_getter.getJoinKeyWithBufferHint(idx);
             size_t hash = static_cast<HashValueType>(Hash()(key));
             size_t bucket = pointer_table.getBucketNum(hash);
-            state->pointer_ptr = pointer_table.getPointerTable() + bucket;
-            PREFETCH_READ(state->pointer_ptr);
+            state->ptr = pointer_table.getPointerTable() + bucket;
+            PREFETCH_READ(state->ptr);
 
             if constexpr (!KeyGetterType::isJoinKeyTypeReference())
                 state->key = key;
@@ -1085,6 +1010,182 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
             }
         }
         FlushBatchIfNecessary2<true>();
+        FillNullMap(current_offset);
+
+        context.start_row_idx = idx;
+        context.prefetch_active_states = active_states;
+        wd.prefetch_iter = k;
+        wd.collision += collision;
+    }
+    else
+    {
+        if (wd.probe_buffer.empty())
+            wd.probe_buffer.resize(settings.probe_buffer_size, CPU_CACHE_LINE_SIZE);
+        if (wd.probe_buffer2.empty())
+            wd.probe_buffer2.resize(settings.probe_buffer2_size, CPU_CACHE_LINE_SIZE);
+        size_t probe_buffer_size = 0;
+        const size_t buffer_row_align = 16;
+        static_assert(CPU_CACHE_LINE_SIZE % buffer_row_align == 0);
+        wd.probe_buffer_info.clear();
+        wd.probe_buffer_info.reserve(settings.probe_buffer_size * 2 / CPU_CACHE_LINE_SIZE);
+
+        auto & key_getter = *static_cast<KeyGetterType *>(context.key_getter.get());
+        auto & selective_offsets = wd.selective_offsets;
+        auto * states = static_cast<ProbePrefetchState<KeyGetter> *>(wd.prefetch_states.get());
+
+        size_t idx = context.start_row_idx;
+        size_t active_states = context.prefetch_active_states;
+        size_t k = wd.prefetch_iter;
+        size_t current_offset = 0;
+        size_t collision = 0;
+        size_t key_offset = sizeof(RowPtr);
+        if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+        {
+            key_offset += sizeof(HashValueType);
+        }
+        const size_t probe_prefetch_step = settings.probe_prefetch_step;
+        while (idx < context.rows || active_states > 0)
+        {
+            k = k == probe_prefetch_step ? 0 : k;
+            auto * state = &states[k];
+            if (state->stage == ProbePrefetchStage::FindNext)
+            {
+                RowPtr ptr = reinterpret_cast<RowPtr>(state->ptr);
+                RowPtr next_ptr = HashJoinRowLayout::getNextRowPtr(ptr);
+                UInt16 len = getRowPtrTag(next_ptr);
+                next_ptr = removeRowPtrTag(next_ptr);
+                if (next_ptr)
+                {
+                    state->ptr = next_ptr;
+                    PREFETCH_READ(next_ptr);
+                }
+
+                const auto & key = state->getJoinKey(key_getter);
+                const auto & key2 = key_getter.deserializeJoinKey(ptr + key_offset);
+                bool key_is_equal = joinKeyIsEqual(key_getter, key, key2, state->hash, ptr);
+                collision += !key_is_equal;
+                if (key_is_equal)
+                {
+                    ++current_offset;
+                    selective_offsets.push_back(state->index);
+                    if (len > 0)
+                    {
+                        RowPtr start = ptr + key_offset + key_getter.getRequiredKeyOffset(key2);
+                        RowPtr copy_start = reinterpret_cast<RowPtr>(
+                            reinterpret_cast<std::uintptr_t>(start) / buffer_row_align * buffer_row_align);
+
+                        UInt16 diff = start - copy_start;
+                        len += diff;
+                        UInt16 align_len = (len + buffer_row_align - 1) / buffer_row_align * buffer_row_align;
+
+                        RowPtr copy_end = reinterpret_cast<RowPtr>(
+                            (reinterpret_cast<std::uintptr_t>(copy_start) + CPU_CACHE_LINE_SIZE - 1)
+                            / CPU_CACHE_LINE_SIZE * CPU_CACHE_LINE_SIZE);
+                        UInt16 buffer_offset = probe_buffer_size;
+                        UInt16 copy_len = std::min(copy_end - copy_start, align_len);
+                        switch (copy_len)
+                        {
+                        case 16:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
+                        case 32:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
+                        case 48:
+                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
+                        default:
+                            assert(false);
+                        }
+                        //wd.probe_buffer_info.emplace_back(diff, align_len, align_len - copy_len, copy_end);
+                        if unlikely (probe_buffer_size + CPU_CACHE_LINE_SIZE > settings.probe_buffer_size)
+                        {
+                            //FlushBatchIfNecessary3<false>(probe_buffer_size);
+                            probe_buffer_size = 0;
+                        }
+                    }
+                    if unlikely (current_offset >= context.rows)
+                    {
+                        if (!next_ptr)
+                        {
+                            state->stage = ProbePrefetchStage::None;
+                            --active_states;
+                        }
+                        break;
+                    }
+                }
+
+                if (next_ptr)
+                {
+                    ++k;
+                    continue;
+                }
+
+                state->stage = ProbePrefetchStage::None;
+                --active_states;
+            }
+            else if (state->stage == ProbePrefetchStage::FindHeader)
+            {
+                RowPtr ptr = *reinterpret_cast<RowPtr *>(state->ptr);
+                if (ptr)
+                {
+                    bool forward = true;
+                    if constexpr (tagged_pointer)
+                    {
+                        if (containOtherTag(ptr, state->hash_tag))
+                            ptr = removeRowPtrTag(ptr);
+                        else
+                            forward = false;
+                    }
+                    if (forward)
+                    {
+                        PREFETCH_READ(ptr);
+                        state->ptr = ptr;
+                        state->stage = ProbePrefetchStage::FindNext;
+                        ++k;
+                        continue;
+                    }
+                }
+
+                state->stage = ProbePrefetchStage::None;
+                --active_states;
+            }
+
+            assert(state->stage == ProbePrefetchStage::None);
+
+            if constexpr (has_null_map)
+            {
+                while (idx < context.rows)
+                {
+                    if (!(*context.null_map)[idx])
+                        break;
+                    ++idx;
+                }
+            }
+
+            if unlikely (idx >= context.rows)
+            {
+                ++k;
+                continue;
+            }
+
+            const auto & key = key_getter.getJoinKeyWithBufferHint(idx);
+            size_t hash = static_cast<HashValueType>(Hash()(key));
+            size_t bucket = pointer_table.getBucketNum(hash);
+            state->ptr = pointer_table.getPointerTable() + bucket;
+            PREFETCH_READ(state->ptr);
+
+            if constexpr (!KeyGetterType::isJoinKeyTypeReference())
+                state->key = key;
+            if constexpr (tagged_pointer)
+                state->hash_tag = hash & ROW_PTR_TAG_MASK;
+            if constexpr (KeyGetterType::joinKeyCompareHashFirst())
+                state->hash = hash;
+            state->index = idx;
+            state->stage = ProbePrefetchStage::FindHeader;
+            ++active_states;
+            ++idx;
+            ++k;
+        }
+
+        //FlushBatchIfNecessary3<true>(probe_buffer_size);
         FillNullMap(current_offset);
 
         context.start_row_idx = idx;

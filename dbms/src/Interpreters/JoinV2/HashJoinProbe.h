@@ -61,6 +61,30 @@ struct JoinProbeContext
         const HashJoinRowLayout & row_layout);
 };
 
+struct ProbeBufferInfo
+{
+    bool need_prefetch;
+    UInt16 diff;
+    UInt16 len;
+    UInt16 remaining_len;
+    RowPtr ptr;
+    ProbeBufferInfo(bool need_prefetch_, UInt16 diff_, UInt16 len_, UInt16 remaining_len_, RowPtr ptr_)
+        : need_prefetch(need_prefetch_)
+        , diff(diff_)
+        , len(len_)
+        , remaining_len(remaining_len_)
+        , ptr(ptr_)
+    {}
+};
+
+struct ProbeBufferPrefetchState
+{
+    bool has_work = false;
+    UInt16 offset = 0;
+    UInt16 remaining_len = 0;
+    RowPtr ptr = nullptr;
+};
+
 struct alignas(CPU_CACHE_LINE_SIZE) JoinProbeWorkerData
 {
     size_t prefetch_iter = 0;
@@ -83,7 +107,9 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinProbeWorkerData
     ColumnsAlignBufferAVX2 align_buffer;
 
     PaddedPODArray<UInt8> probe_buffer;
-    size_t probe_buffer_size = 0;
+    PaddedPODArray<ProbeBufferInfo> probe_buffer_info;
+    PaddedPODArray<UInt8> probe_buffer2;
+    std::vector<ProbeBufferPrefetchState> probe_buffer_states;
 };
 
 void joinProbeBlock(
