@@ -481,6 +481,50 @@ void ColumnString::getPermutationWithCollationImpl(
     }
 }
 
+void ColumnString::insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec)
+{
+    const auto & src = static_cast<const ColumnString &>(src_);
+    size_t prev_size = offsets.size();
+    size_t char_size = chars.size();
+    size_t size = position_vec.size();
+
+    offsets.resize(prev_size + size);
+    /// Loop unrolling
+    size_t i = 0;
+    for (; i + 4 <= size; i += 4)
+    {
+        UInt32 str_size1 = src.sizeAt(position_vec[i]);
+        UInt32 str_size2 = src.sizeAt(position_vec[i + 1]);
+        UInt32 str_size3 = src.sizeAt(position_vec[i + 2]);
+        UInt32 str_size4 = src.sizeAt(position_vec[i + 3]);
+
+        size_t offset1 = char_size + str_size1;
+        size_t offset2 = char_size + str_size1 + str_size2;
+        size_t offset3 = char_size + str_size1 + str_size2 + str_size3;
+        size_t offset4 = char_size + str_size1 + str_size2 + str_size3 + str_size4;
+        offsets[prev_size + i] = offset1;
+        offsets[prev_size + i + 1] = offset2;
+        offsets[prev_size + i + 2] = offset3;
+        offsets[prev_size + i + 3] = offset4;
+
+        chars.resize(offset4);
+        inline_memcpy(&chars[char_size], &src.chars[src.offsetAt(position_vec[i])], str_size1);
+        inline_memcpy(&chars[offset1], &src.chars[src.offsetAt(position_vec[i + 1])], str_size2);
+        inline_memcpy(&chars[offset2], &src.chars[src.offsetAt(position_vec[i + 2])], str_size3);
+        inline_memcpy(&chars[offset3], &src.chars[src.offsetAt(position_vec[i + 3])], str_size4);
+        char_size = offset4;
+    }
+
+    for (; i < size; ++i)
+    {
+        UInt32 str_size = src.sizeAt(position_vec[i]);
+        chars.resize(char_size + str_size);
+        memcpySmallAllowReadWriteOverflow15(&chars[char_size], &src.chars[offsetAt(position_vec[i])], str_size);
+        char_size += str_size;
+        offsets[prev_size + i] = char_size;
+    }
+}
+
 void ColumnString::deserializeAndInsertFromPos(
     PaddedPODArray<UInt8 *> & pos,
     ColumnsAlignBufferAVX2 & align_buffer [[maybe_unused]])
@@ -489,7 +533,7 @@ void ColumnString::deserializeAndInsertFromPos(
     size_t char_size = chars.size();
     size_t size = pos.size();
 
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    /*#ifdef TIFLASH_ENABLE_AVX_SUPPORT
     bool is_offset_aligned = reinterpret_cast<std::uintptr_t>(&offsets[prev_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
     bool is_char_aligned = reinterpret_cast<std::uintptr_t>(&chars[char_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
 
@@ -573,10 +617,45 @@ void ColumnString::deserializeAndInsertFromPos(
         /// This column data is aligned first and then becomes unaligned due to calling other functions
         throw Exception("AlignBuffer is not empty when the data is not aligned", ErrorCodes::LOGICAL_ERROR);
     }
-#endif
+#endif*/
 
     offsets.resize(prev_size + size);
-    for (size_t i = 0; i < size; ++i)
+    /// Loop unrolling
+    size_t i = 0;
+    for (; i + 4 <= size; i += 4)
+    {
+        UInt32 str_size1, str_size2, str_size3, str_size4;
+        tiflash_compiler_builtin_memcpy(&str_size1, pos[i], sizeof(UInt32));
+        tiflash_compiler_builtin_memcpy(&str_size2, pos[i + 1], sizeof(UInt32));
+        tiflash_compiler_builtin_memcpy(&str_size3, pos[i + 2], sizeof(UInt32));
+        tiflash_compiler_builtin_memcpy(&str_size4, pos[i + 3], sizeof(UInt32));
+        pos[i] += sizeof(UInt32);
+        pos[i + 1] += sizeof(UInt32);
+        pos[i + 2] += sizeof(UInt32);
+        pos[i + 3] += sizeof(UInt32);
+
+        size_t offset1 = char_size + str_size1;
+        size_t offset2 = char_size + str_size1 + str_size2;
+        size_t offset3 = char_size + str_size1 + str_size2 + str_size3;
+        size_t offset4 = char_size + str_size1 + str_size2 + str_size3 + str_size4;
+        offsets[prev_size + i] = offset1;
+        offsets[prev_size + i + 1] = offset2;
+        offsets[prev_size + i + 2] = offset3;
+        offsets[prev_size + i + 3] = offset4;
+
+        chars.resize(offset4);
+        inline_memcpy(&chars[char_size], pos[i], str_size1);
+        inline_memcpy(&chars[offset1], pos[i + 1], str_size2);
+        inline_memcpy(&chars[offset2], pos[i + 2], str_size3);
+        inline_memcpy(&chars[offset3], pos[i + 3], str_size4);
+        char_size = offset4;
+
+        pos[i] += str_size1;
+        pos[i + 1] += str_size2;
+        pos[i + 2] += str_size3;
+        pos[i + 3] += str_size4;
+    }
+    for (; i < size; ++i)
     {
         UInt32 str_size;
         tiflash_compiler_builtin_memcpy(&str_size, pos[i], sizeof(UInt32));

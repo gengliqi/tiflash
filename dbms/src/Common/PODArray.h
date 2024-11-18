@@ -245,7 +245,7 @@ public:
     void clear() { c_end = c_start; }
 
     template <typename... TAllocatorParams>
-    void reserve(size_t n, TAllocatorParams &&... allocator_params)
+    inline void reserve(size_t n, TAllocatorParams &&... allocator_params)
     {
         if (n > capacity())
             realloc(
@@ -254,13 +254,13 @@ public:
     }
 
     template <typename... TAllocatorParams>
-    void resize(size_t n, TAllocatorParams &&... allocator_params)
+    inline void resize(size_t n, TAllocatorParams &&... allocator_params)
     {
         reserve(n, std::forward<TAllocatorParams>(allocator_params)...);
         resize_assume_reserved(n);
     }
 
-    void resize_assume_reserved(const size_t n) { c_end = c_start + byte_size(n); }
+    inline void resize_assume_reserved(const size_t n) { c_end = c_start + byte_size(n); }
 
     const char * raw_data() const { return c_start; }
 

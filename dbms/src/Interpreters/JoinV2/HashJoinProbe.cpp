@@ -861,7 +861,6 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                             * CPU_CACHE_LINE_SIZE);
                         UInt16 buffer_offset = probe_buffer_size;
                         probe_buffer_size += align_len;
-                        /// copy_end - copy_start max is 64 - 16 = 48.
                         auto copy_len = std::min(copy_end - copy_start, align_len);
                         switch (copy_len)
                         {

@@ -165,13 +165,7 @@ public:
             insertFromImpl(src, position);
     }
 
-    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec) override
-    {
-        const auto & src = static_cast<const ColumnString &>(src_);
-        offsets.reserve(offsets.size() + position_vec.size());
-        for (auto position : position_vec)
-            insertFromImpl(src, position);
-    }
+    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec) override;
 
     template <bool add_terminating_zero>
     ALWAYS_INLINE inline void insertDataImpl(const char * pos, size_t length)

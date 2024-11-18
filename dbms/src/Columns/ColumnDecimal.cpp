@@ -185,12 +185,16 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
             data.resize(prev_size + (size - i) / avx2_width * avx2_width, FULL_VECTOR_SIZE_AVX2);
             for (; i + avx2_width <= size; i += avx2_width)
             {
+                /// Loop unrolling
                 for (size_t j = 0; j < avx2_width; ++j)
                 {
-                    tiflash_compiler_builtin_memcpy(&tmp_buffer.data[tmp_buffer_size], pos[i + j], sizeof(T));
-                    tmp_buffer_size += sizeof(T);
+                    tiflash_compiler_builtin_memcpy(
+                        &tmp_buffer.data[tmp_buffer_size + j * sizeof(T)],
+                        pos[i + j],
+                        sizeof(T));
                     pos[i + j] += sizeof(T);
                 }
+                tmp_buffer_size += avx2_width * sizeof(T);
 
                 _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), tmp_buffer.v[0]);
                 prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
@@ -463,8 +467,20 @@ void ColumnDecimal<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Of
     size_t old_size = data.size();
     size_t to_add_size = position_vec.size();
     data.resize(old_size + to_add_size);
-    for (size_t i = 0; i < to_add_size; ++i)
-        data[i + old_size] = src_data[position_vec[i]];
+    size_t i = 0;
+    for (; i + 8 <= to_add_size; i += 8)
+    {
+        data[old_size + i] = src_data[position_vec[i]];
+        data[old_size + i + 1] = src_data[position_vec[i + 1]];
+        data[old_size + i + 2] = src_data[position_vec[i + 2]];
+        data[old_size + i + 3] = src_data[position_vec[i + 3]];
+        data[old_size + i + 4] = src_data[position_vec[i + 4]];
+        data[old_size + i + 5] = src_data[position_vec[i + 5]];
+        data[old_size + i + 6] = src_data[position_vec[i + 6]];
+        data[old_size + i + 7] = src_data[position_vec[i + 7]];
+    }
+    for (; i < to_add_size; ++i)
+        data[old_size + i] = src_data[position_vec[i]];
 }
 
 #pragma GCC diagnostic pop
