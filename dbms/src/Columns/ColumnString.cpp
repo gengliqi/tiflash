@@ -519,7 +519,7 @@ void ColumnString::insertDisjunctFrom(const IColumn & src_, const Offsets & posi
     {
         UInt32 str_size = src.sizeAt(position_vec[i]);
         chars.resize(char_size + str_size);
-        memcpySmallAllowReadWriteOverflow15(&chars[char_size], &src.chars[offsetAt(position_vec[i])], str_size);
+        memcpySmallAllowReadWriteOverflow15(&chars[char_size], &src.chars[src.offsetAt(position_vec[i])], str_size);
         char_size += str_size;
         offsets[prev_size + i] = char_size;
     }
