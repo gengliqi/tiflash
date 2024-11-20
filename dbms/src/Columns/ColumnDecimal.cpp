@@ -488,7 +488,7 @@ void ColumnDecimal<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Of
                     size_t count = std::min(size, (FULL_VECTOR_SIZE_AVX2 - buffer_size) / sizeof(T));
                     for (; i < count; ++i)
                     {
-                        tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], src_data[position_vec[i]], sizeof(T));
+                        tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
                         buffer_size += sizeof(T);
                     }
 
@@ -524,7 +524,7 @@ void ColumnDecimal<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Of
                     {
                         tiflash_compiler_builtin_memcpy(
                             &tmp_buffer.data[tmp_buffer_size + j * sizeof(T)],
-                            src_data[position_vec[i + j]],
+                            &src_data[position_vec[i + j]],
                             sizeof(T));
                     }
                     tmp_buffer_size += avx2_width * sizeof(T);
@@ -538,7 +538,7 @@ void ColumnDecimal<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Of
 
                 for (; i < size; ++i)
                 {
-                    tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], src_data[position_vec[i]], sizeof(T));
+                    tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
                     buffer_size += sizeof(T);
                 }
 

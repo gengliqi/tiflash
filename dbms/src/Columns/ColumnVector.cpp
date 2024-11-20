@@ -86,7 +86,7 @@ void ColumnVector<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Off
                     size_t count = std::min(size, (FULL_VECTOR_SIZE_AVX2 - buffer_size) / sizeof(T));
                     for (; i < count; ++i)
                     {
-                        tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], src_data[position_vec[i]], sizeof(T));
+                        tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
                         buffer_size += sizeof(T);
                     }
 
@@ -122,7 +122,7 @@ void ColumnVector<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Off
                     {
                         tiflash_compiler_builtin_memcpy(
                             &tmp_buffer.data[tmp_buffer_size + j * sizeof(T)],
-                            src_data[position_vec[i + j]],
+                            &src_data[position_vec[i + j]],
                             sizeof(T));
                     }
                     tmp_buffer_size += avx2_width * sizeof(T);
@@ -136,7 +136,7 @@ void ColumnVector<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Off
 
                 for (; i < size; ++i)
                 {
-                    tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], src_data[position_vec[i]], sizeof(T));
+                    tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
                     buffer_size += sizeof(T);
                 }
 
