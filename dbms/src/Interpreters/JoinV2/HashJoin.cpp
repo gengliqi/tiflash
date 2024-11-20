@@ -591,7 +591,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
     added_columns.reserve(num_columns_to_add);
 
     RUNTIME_ASSERT(rows >= context.start_row_idx);
-    size_t start = context.start_row_idx;
+    //size_t start = context.start_row_idx;
     for (size_t i = 0; i < num_columns_to_add; ++i)
     {
         const ColumnWithTypeAndName & src_column = right_sample_block_pruned.getByPosition(i);
@@ -621,32 +621,32 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
 
     if likely (rows > 0)
     {
-        if (pointer_table.enableProbePrefetch())
+        //if (pointer_table.enableProbePrefetch())
+        //{
+        wd.align_buffer_for_left.resetIndex(true);
+        size_t added_rows [[maybe_unused]] = wd.selective_offsets.size();
+        for (size_t i = 0; i < existing_columns; ++i)
         {
-            wd.align_buffer_for_left.resetIndex(true);
-            size_t added_rows [[maybe_unused]] = wd.selective_offsets.size();
-            for (size_t i = 0; i < existing_columns; ++i)
-            {
-                auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
+            auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
-                mutable_column->reserveAlign(added_rows, FULL_VECTOR_SIZE_AVX2);
+            mutable_column->reserveAlign(added_rows, FULL_VECTOR_SIZE_AVX2);
 #endif
-                mutable_column->insertDisjunctFrom(
-                    *block.safeGetByPosition(i).column.get(),
-                    wd.selective_offsets,
-                    &wd.align_buffer_for_left);
-                block.safeGetByPosition(i).column = std::move(mutable_column);
-            }
+            mutable_column->insertDisjunctFrom(
+                *block.safeGetByPosition(i).column.get(),
+                wd.selective_offsets,
+                &wd.align_buffer_for_left);
+            block.safeGetByPosition(i).column = std::move(mutable_column);
         }
-        else
-        {
-            size_t end = context.current_probe_row_ptr == nullptr ? context.start_row_idx : context.start_row_idx + 1;
-            for (size_t i = 0; i < existing_columns; ++i)
-            {
-                block.safeGetByPosition(i).column
-                    = block.safeGetByPosition(i).column->replicateRange(start, end, wd.offsets_to_replicate);
-            }
-        }
+        //}
+        //else
+        //{
+        //    size_t end = context.current_probe_row_ptr == nullptr ? context.start_row_idx : context.start_row_idx + 1;
+        //    for (size_t i = 0; i < existing_columns; ++i)
+        //    {
+        //        block.safeGetByPosition(i).column
+        //            = block.safeGetByPosition(i).column->replicateRange(start, end, wd.offsets_to_replicate);
+        //    }
+        //}
     }
     wd.replicate_time += watch.elapsedFromLastTime();
 
