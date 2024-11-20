@@ -99,7 +99,7 @@ public:
         throw Exception("Cannot insert into " + getName(), ErrorCodes::NOT_IMPLEMENTED);
     }
 
-    void insertDisjunctFrom(const IColumn &, const Offsets &) override
+    void insertDisjunctFrom(const IColumn &, const Offsets &, ColumnsAlignBufferAVX2 *) override
     {
         throw Exception("Cannot insert into " + getName(), ErrorCodes::NOT_IMPLEMENTED);
     }

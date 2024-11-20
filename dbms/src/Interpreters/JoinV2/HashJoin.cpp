@@ -17,6 +17,7 @@
 #include <DataStreams/materializeBlock.h>
 #include <Interpreters/JoinV2/HashJoin.h>
 #include <Interpreters/NullableUtils.h>
+#include "Common/ColumnsAlignBuffer.h"
 
 namespace DB
 {
@@ -620,10 +621,11 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
     {
         if (pointer_table.enableProbePrefetch())
         {
+            wd.align_buffer_for_left.resetIndex(true);
             for (size_t i = 0; i < existing_columns; ++i)
             {
                 auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
-                mutable_column->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), wd.selective_offsets);
+                mutable_column->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), wd.selective_offsets, &wd.align_buffer_for_left);
                 block.safeGetByPosition(i).column = std::move(mutable_column);
             }
         }

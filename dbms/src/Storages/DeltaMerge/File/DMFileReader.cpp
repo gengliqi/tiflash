@@ -241,7 +241,7 @@ Block DMFileReader::readWithFilter(const IColumn::Filter & filter)
                 }
                 for (size_t i = 0; i < block.columns(); ++i)
                 {
-                    columns[i]->insertDisjunctFrom(*block.getByPosition(i).column, positions);
+                    columns[i]->insertDisjunctFrom(*block.getByPosition(i).column, positions, nullptr);
                 }
             }
             else

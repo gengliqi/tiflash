@@ -106,6 +106,8 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinProbeWorkerData
 
     ColumnsAlignBufferAVX2 align_buffer;
 
+    ColumnsAlignBufferAVX2 align_buffer_for_left;
+
     PaddedPODArray<UInt8> probe_buffer;
     PaddedPODArray<ProbeBufferInfo> probe_buffer_info;
     PaddedPODArray<UInt8> probe_buffer2;

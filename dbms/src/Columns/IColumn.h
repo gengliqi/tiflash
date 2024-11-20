@@ -147,7 +147,7 @@ public:
     /// Note: the source column and the destination column must be of the same type, can not ColumnXXX->insertDisjunctFrom(ConstColumnXXX, ...)
     using Offset = UInt64;
     using Offsets = PaddedPODArray<Offset>;
-    virtual void insertDisjunctFrom(const IColumn & src, const Offsets & position_vec) = 0;
+    virtual void insertDisjunctFrom(const IColumn & src, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer) = 0;
 
     /// Appends one field multiple times. Can be optimized in inherited classes.
     virtual void insertMany(const Field & field, size_t length)

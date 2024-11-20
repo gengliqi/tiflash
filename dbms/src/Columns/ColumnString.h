@@ -165,7 +165,7 @@ public:
             insertFromImpl(src, position);
     }
 
-    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec) override;
+    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer) override;
 
     template <bool add_terminating_zero>
     ALWAYS_INLINE inline void insertDataImpl(const char * pos, size_t length)

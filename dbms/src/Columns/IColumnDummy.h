@@ -101,7 +101,7 @@ public:
 
     void insertManyFrom(const IColumn &, size_t, size_t length) override { s += length; }
 
-    void insertDisjunctFrom(const IColumn &, const Offsets & position_vec) override { s += position_vec.size(); }
+    void insertDisjunctFrom(const IColumn &, const Offsets & position_vec, ColumnsAlignBufferAVX2 *) override { s += position_vec.size(); }
 
     void insertRangeFrom(const IColumn & /*src*/, size_t /*start*/, size_t length) override { s += length; }
 
