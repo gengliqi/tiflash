@@ -97,7 +97,8 @@ public:
     void insert(const Field & x) override;
     void insertFrom(const IColumn & src, size_t n) override;
     void insertManyFrom(const IColumn & src, size_t n, size_t length) override;
-    void insertDisjunctFrom(const IColumn & src, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer) override;
+    void insertDisjunctFrom(const IColumn & src, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer)
+        override;
 
     void insertDefault() override
     {

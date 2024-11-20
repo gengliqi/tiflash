@@ -85,7 +85,8 @@ public:
 
     void insertManyFrom(const IColumn & src_, size_t position, size_t length) override;
 
-    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer) override;
+    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer)
+        override;
 
     void insertData(const char * pos, size_t length) override;
 

@@ -481,7 +481,10 @@ void ColumnString::getPermutationWithCollationImpl(
     }
 }
 
-void ColumnString::insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]])
+void ColumnString::insertDisjunctFrom(
+    const IColumn & src_,
+    const Offsets & position_vec,
+    ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]])
 {
     const auto & src = static_cast<const ColumnString &>(src_);
     size_t prev_size = offsets.size();

@@ -59,7 +59,10 @@ StringRef ColumnVector<T>::serializeValueIntoArena(
 }
 
 template <typename T>
-void ColumnVector<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]])
+void ColumnVector<T>::insertDisjunctFrom(
+    const IColumn & src,
+    const IColumn::Offsets & position_vec,
+    ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]])
 {
     const auto & src_data = static_cast<const Self &>(src).getData();
     size_t prev_size = data.size();
@@ -86,7 +89,10 @@ void ColumnVector<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Off
                     size_t count = std::min(size, (FULL_VECTOR_SIZE_AVX2 - buffer_size) / sizeof(T));
                     for (; i < count; ++i)
                     {
-                        tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
+                        tiflash_compiler_builtin_memcpy(
+                            &buffer.data[buffer_size],
+                            &src_data[position_vec[i]],
+                            sizeof(T));
                         buffer_size += sizeof(T);
                     }
 

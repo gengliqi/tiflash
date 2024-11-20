@@ -219,7 +219,10 @@ public:
         data.resize_fill(data.size() + length, value);
     }
 
-    void insertDisjunctFrom(const IColumn & src, const IColumn::Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer) override;
+    void insertDisjunctFrom(
+        const IColumn & src,
+        const IColumn::Offsets & position_vec,
+        ColumnsAlignBufferAVX2 * align_buffer) override;
 
     void insertMany(const Field & field, size_t length) override
     {

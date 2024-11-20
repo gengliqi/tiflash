@@ -461,7 +461,10 @@ void ColumnDecimal<T>::insertManyFrom(const IColumn & src, size_t position, size
 }
 
 template <typename T>
-void ColumnDecimal<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]])
+void ColumnDecimal<T>::insertDisjunctFrom(
+    const IColumn & src,
+    const IColumn::Offsets & position_vec,
+    ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]])
 {
     const auto & src_data = static_cast<const ColumnDecimal &>(src).data;
     size_t prev_size = data.size();
@@ -488,7 +491,10 @@ void ColumnDecimal<T>::insertDisjunctFrom(const IColumn & src, const IColumn::Of
                     size_t count = std::min(size, (FULL_VECTOR_SIZE_AVX2 - buffer_size) / sizeof(T));
                     for (; i < count; ++i)
                     {
-                        tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
+                        tiflash_compiler_builtin_memcpy(
+                            &buffer.data[buffer_size],
+                            &src_data[position_vec[i]],
+                            sizeof(T));
                         buffer_size += sizeof(T);
                     }
 

@@ -80,7 +80,10 @@ public:
 
     void insertManyFrom(const IColumn &, size_t, size_t length) override { s += length; }
 
-    void insertDisjunctFrom(const IColumn &, const Offsets & position_vec, ColumnsAlignBufferAVX2 *) override { s += position_vec.size(); }
+    void insertDisjunctFrom(const IColumn &, const Offsets & position_vec, ColumnsAlignBufferAVX2 *) override
+    {
+        s += position_vec.size();
+    }
 
     void insertMany(const Field &, size_t length) override { s += length; }
 
