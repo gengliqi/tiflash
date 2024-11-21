@@ -586,7 +586,7 @@ void DMFileReader::readFromDisk(
     RUNTIME_ASSERT(column->empty());
     auto & top_stream = iter->second;
     auto data_type = dmfile->getColumnStat(column_define.id).type;
-    //align_buffer.resetIndex();
+    align_buffer.resetIndex();
     data_type->deserializeBinaryBulkWithMultipleStreams( //
         *column,
         nullptr,
@@ -602,7 +602,8 @@ void DMFileReader::readFromDisk(
         top_stream->avg_size_hint,
         true,
         {});
-    //column->flushAlignBuffer(align_buffer, false);
+    align_buffer.resetIndex();
+    column->flushAlignBuffer(align_buffer, false);
     IDataType::updateAvgValueSizeHint(*column, top_stream->avg_size_hint);
 }
 

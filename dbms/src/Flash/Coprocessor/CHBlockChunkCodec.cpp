@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <Common/ColumnsAlignBuffer.h>
 #include <Common/TiFlashException.h>
 #include <DataStreams/IBlockInputStream.h>
 #include <DataStreams/NativeBlockInputStream.h>
@@ -20,8 +21,6 @@
 #include <Flash/Coprocessor/CHBlockChunkCodec.h>
 #include <Flash/Coprocessor/DAGUtils.h>
 #include <IO/Buffer/ReadBufferFromString.h>
-
-#include <Common/ColumnsAlignBuffer.h>
 
 namespace DB
 {
@@ -105,7 +104,7 @@ void WriteColumnData(const IDataType & type, const ColumnPtr & column, WriteBuff
 void CHBlockChunkCodec::readData(
     const IDataType & type,
     IColumn & column,
-    ColumnsAlignBufferAVX2 & align_buffer [[maybe_unused]],
+    ColumnsAlignBufferAVX2 & align_buffer,
     ReadBuffer & istr,
     size_t rows)
 {
@@ -113,7 +112,7 @@ void CHBlockChunkCodec::readData(
     IDataType::InputStreamGetter input_stream_getter = [&](const IDataType::SubstreamPath &) {
         return &istr;
     };
-    type.deserializeBinaryBulkWithMultipleStreams(column, nullptr, input_stream_getter, rows, 0, false, {});
+    type.deserializeBinaryBulkWithMultipleStreams(column, &align_buffer, input_stream_getter, rows, 0, false, {});
 }
 
 size_t ApproxBlockBytes(const Block & block)

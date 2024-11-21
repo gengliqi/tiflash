@@ -635,6 +635,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
                 *block.safeGetByPosition(i).column.get(),
                 wd.selective_offsets,
                 &wd.align_buffer_for_left);
+            wd.align_buffer_for_left.resetIndex();
             mutable_column->flushAlignBuffer(wd.align_buffer_for_left, true);
             block.safeGetByPosition(i).column = std::move(mutable_column);
         }

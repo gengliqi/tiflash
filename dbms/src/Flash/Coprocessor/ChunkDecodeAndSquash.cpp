@@ -107,11 +107,12 @@ std::optional<Block> CHBlockChunkDecodeAndSquash::decodeAndSquash(const String &
             auto mutable_columns = accumulated_block->mutateColumns();
             for (size_t i = 0; i < columns; ++i)
             {
-                //align_buffer.resetIndex();
+                align_buffer.resetIndex();
                 ColumnWithTypeAndName column;
                 codec.readColumnMeta(i, istr, column);
                 CHBlockChunkCodec::readData(*column.type, *(mutable_columns[i]), align_buffer, istr, rows);
-                //mutable_columns[i]->flushAlignBuffer(align_buffer, false);
+                align_buffer.resetIndex();
+                mutable_columns[i]->flushAlignBuffer(align_buffer, false);
             }
             accumulated_block->setColumns(std::move(mutable_columns));
         }
