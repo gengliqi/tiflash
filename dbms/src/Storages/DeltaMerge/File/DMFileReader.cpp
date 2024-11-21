@@ -589,7 +589,7 @@ void DMFileReader::readFromDisk(
     align_buffer.resetIndex();
     data_type->deserializeBinaryBulkWithMultipleStreams( //
         *column,
-        nullptr,
+        &align_buffer,
         [&](const IDataType::SubstreamPath & substream_path) {
             const auto substream_name = DMFile::getFileNameBase(column_define.id, substream_path);
             auto & sub_stream = column_streams.at(substream_name);
