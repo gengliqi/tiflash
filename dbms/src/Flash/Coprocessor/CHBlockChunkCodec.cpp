@@ -104,7 +104,7 @@ void WriteColumnData(const IDataType & type, const ColumnPtr & column, WriteBuff
 void CHBlockChunkCodec::readData(
     const IDataType & type,
     IColumn & column,
-    ColumnsAlignBufferAVX2 & align_buffer,
+    ColumnsAlignBufferAVX2 * align_buffer,
     ReadBuffer & istr,
     size_t rows)
 {
@@ -112,7 +112,7 @@ void CHBlockChunkCodec::readData(
     IDataType::InputStreamGetter input_stream_getter = [&](const IDataType::SubstreamPath &) {
         return &istr;
     };
-    type.deserializeBinaryBulkWithMultipleStreams(column, &align_buffer, input_stream_getter, rows, 0, false, {});
+    type.deserializeBinaryBulkWithMultipleStreams(column, align_buffer, input_stream_getter, rows, 0, false, {});
 }
 
 size_t ApproxBlockBytes(const Block & block)
@@ -197,7 +197,7 @@ Block CHBlockChunkCodec::decodeImpl(ReadBuffer & istr, size_t reserve_size)
         if (rows) /// If no rows, nothing to read.
         {
             align_buffer.resetIndex();
-            readData(*column.type, *read_column, align_buffer, istr, rows);
+            readData(*column.type, *read_column, &align_buffer, istr, rows);
             read_column->flushAlignBuffer(align_buffer, false);
         }
 

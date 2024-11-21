@@ -42,7 +42,7 @@ private:
     static void readData(
         const IDataType & type,
         IColumn & column,
-        ColumnsAlignBufferAVX2 & align_buffer,
+        ColumnsAlignBufferAVX2 * align_buffer,
         ReadBuffer & istr,
         size_t rows);
     /// 'reserve_size' used for Squash usage, and takes effect when 'reserve_size' > 0
