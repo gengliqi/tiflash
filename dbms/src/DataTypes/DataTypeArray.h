@@ -82,6 +82,7 @@ public:
 
     void deserializeBinaryBulkWithMultipleStreams(
         IColumn & column,
+        ColumnsAlignBufferAVX2 * align_buffer,
         const InputStreamGetter & getter,
         size_t limit,
         double avg_value_size_hint,
@@ -98,7 +99,7 @@ public:
     bool haveSubtypes() const override { return true; }
     bool cannotBeStoredInTables() const override { return nested->cannotBeStoredInTables(); }
     bool textCanContainOnlyValidUTF8() const override { return nested->textCanContainOnlyValidUTF8(); }
-    bool isComparable() const override { return nested->isComparable(); };
+    bool isComparable() const override { return nested->isComparable(); }
     bool canBeComparedWithCollation() const override { return nested->canBeComparedWithCollation(); }
 
     bool isValueUnambiguouslyRepresentedInContiguousMemoryRegion() const override

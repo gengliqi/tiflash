@@ -46,7 +46,7 @@ public:
     bool isCategorial() const override { return true; }
     bool isEnum() const override { return true; }
     bool canBeInsideNullable() const override { return true; }
-    bool isComparable() const override { return true; };
+    bool isComparable() const override { return true; }
 };
 
 
@@ -137,6 +137,7 @@ public:
         const override;
     void deserializeBinaryBulk(
         IColumn & column,
+        ColumnsAlignBufferAVX2 * align_buffer,
         ReadBuffer & istr,
         const size_t limit,
         const double avg_value_size_hint) const override;

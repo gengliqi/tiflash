@@ -246,6 +246,7 @@ void DataTypeEnum<Type>::serializeBinaryBulk(
 template <typename Type>
 void DataTypeEnum<Type>::deserializeBinaryBulk(
     IColumn & column,
+    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     const size_t limit,
     const double /*avg_value_size_hint*/) const

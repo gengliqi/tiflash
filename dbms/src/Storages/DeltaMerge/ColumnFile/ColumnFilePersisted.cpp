@@ -91,6 +91,7 @@ void deserializeColumn(IColumn & column, const DataTypePtr & type, std::string_v
     CompressedReadBuffer compressed(buf);
     type->deserializeBinaryBulkWithMultipleStreams(
         column,
+        nullptr,
         [&](const IDataType::SubstreamPath &) { return &compressed; },
         rows,
         static_cast<double>(data_buf.size()) / rows,

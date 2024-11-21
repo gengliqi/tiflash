@@ -159,15 +159,7 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
                 }
 
                 if (buffer_size < FULL_VECTOR_SIZE_AVX2)
-                {
-                    if unlikely (align_buffer.needFlush())
-                    {
-                        data.resize(prev_size + buffer_size / sizeof(T), FULL_VECTOR_SIZE_AVX2);
-                        inline_memcpy(static_cast<void *>(&data[prev_size]), buffer.data, buffer_size);
-                        buffer_size = 0;
-                    }
                     return;
-                }
 
                 assert(buffer_size == FULL_VECTOR_SIZE_AVX2);
                 data.resize(prev_size + avx2_width, FULL_VECTOR_SIZE_AVX2);
@@ -210,12 +202,6 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
                 pos[i] += sizeof(T);
             }
 
-            if unlikely (align_buffer.needFlush())
-            {
-                data.resize(prev_size + buffer_size / sizeof(T), FULL_VECTOR_SIZE_AVX2);
-                inline_memcpy(static_cast<void *>(&data[prev_size]), buffer.data, buffer_size);
-                buffer_size = 0;
-            }
             return;
         }
 
@@ -234,6 +220,39 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
         ++prev_size;
         pos[i] += sizeof(T);
     }
+}
+
+template <typename T>
+void ColumnDecimal<T>::flushAlignBuffer(
+    ColumnsAlignBufferAVX2 & align_buffer [[maybe_unused]],
+    bool from_join [[maybe_unused]])
+{
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    if (!from_join)
+        return;
+    if constexpr (FULL_VECTOR_SIZE_AVX2 % sizeof(T) == 0)
+    {
+        size_t prev_size = data.size();
+        size_t buffer_index = align_buffer.nextIndex();
+        AlignBufferAVX2 & buffer = align_buffer.getAlignBuffer(buffer_index);
+        UInt8 & buffer_size = align_buffer.getSize(buffer_index);
+
+        bool is_aligned = reinterpret_cast<std::uintptr_t>(&data[prev_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
+        if unlikely (!is_aligned)
+        {
+            if (buffer_size != 0)
+            {
+                /// This column data is aligned first and then becomes unaligned due to calling other functions
+                throw Exception("AlignBuffer is not empty when the data is not aligned", ErrorCodes::LOGICAL_ERROR);
+            }
+            return;
+        }
+
+        data.resize(prev_size + buffer_size / sizeof(T), FULL_VECTOR_SIZE_AVX2);
+        inline_memcpy(&data[prev_size], buffer.data, buffer_size);
+        buffer_size = 0;
+    }
+#endif
 }
 
 template <typename T>
@@ -499,15 +518,7 @@ void ColumnDecimal<T>::insertDisjunctFrom(
                     }
 
                     if (buffer_size < FULL_VECTOR_SIZE_AVX2)
-                    {
-                        if unlikely (align_buffer->needFlush())
-                        {
-                            data.resize(prev_size + buffer_size / sizeof(T), FULL_VECTOR_SIZE_AVX2);
-                            inline_memcpy(static_cast<void *>(&data[prev_size]), buffer.data, buffer_size);
-                            buffer_size = 0;
-                        }
                         return;
-                    }
 
                     assert(buffer_size == FULL_VECTOR_SIZE_AVX2);
                     data.resize(prev_size + avx2_width, FULL_VECTOR_SIZE_AVX2);
@@ -548,12 +559,6 @@ void ColumnDecimal<T>::insertDisjunctFrom(
                     buffer_size += sizeof(T);
                 }
 
-                if unlikely (align_buffer->needFlush())
-                {
-                    data.resize(prev_size + buffer_size / sizeof(T), FULL_VECTOR_SIZE_AVX2);
-                    inline_memcpy(static_cast<void *>(&data[prev_size]), buffer.data, buffer_size);
-                    buffer_size = 0;
-                }
                 return;
             }
 

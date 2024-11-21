@@ -245,6 +245,7 @@ void DataTypeNumberBase<T>::serializeBinaryBulk(const IColumn & column, WriteBuf
 template <typename T>
 void DataTypeNumberBase<T>::deserializeBinaryBulk(
     IColumn & column,
+    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const

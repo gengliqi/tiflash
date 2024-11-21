@@ -318,6 +318,8 @@ public:
 
     void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, ColumnsAlignBufferAVX2 & align_buffer) override;
 
+    void flushAlignBuffer(ColumnsAlignBufferAVX2 & align_buffer, bool) override;
+
     void updateHashWithValue(
         size_t n,
         SipHash & hash,

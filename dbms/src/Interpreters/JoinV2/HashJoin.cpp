@@ -623,10 +623,10 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
     {
         //if (pointer_table.enableProbePrefetch())
         //{
-        wd.align_buffer_for_left.resetIndex(true);
         size_t added_rows [[maybe_unused]] = wd.selective_offsets.size();
         for (size_t i = 0; i < existing_columns; ++i)
         {
+            wd.align_buffer_for_left.resetIndex();
             auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
             mutable_column->reserveAlign(added_rows, FULL_VECTOR_SIZE_AVX2);
@@ -635,6 +635,7 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
                 *block.safeGetByPosition(i).column.get(),
                 wd.selective_offsets,
                 &wd.align_buffer_for_left);
+            mutable_column->flushAlignBuffer(wd.align_buffer_for_left, true);
             block.safeGetByPosition(i).column = std::move(mutable_column);
         }
         //}

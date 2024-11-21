@@ -44,11 +44,7 @@ public:
         sizes.resize_fill_zero(n, FULL_VECTOR_SIZE_AVX2);
     }
 
-    void resetIndex(bool need_flush_)
-    {
-        current_index = 0;
-        need_flush = need_flush_;
-    }
+    void resetIndex() { current_index = 0; }
 
     size_t nextIndex()
     {
@@ -69,11 +65,8 @@ public:
         return sizes[index];
     }
 
-    bool needFlush() const { return need_flush; }
-
 private:
     size_t current_index = 0;
-    bool need_flush = false;
     PaddedPODArray<AlignBufferAVX2> buffers;
     static_assert(UINT8_MAX >= FULL_VECTOR_SIZE_AVX2);
     PaddedPODArray<UInt8> sizes;
@@ -84,7 +77,7 @@ class ColumnsAlignBufferAVX2
 {
 public:
     void resize(size_t /*n*/) {}
-    void resetIndex(bool /*need_flush*/) {}
+    void resetIndex() {}
 };
 #endif
 } // namespace DB

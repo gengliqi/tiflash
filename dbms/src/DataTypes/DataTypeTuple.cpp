@@ -335,6 +335,7 @@ void DataTypeTuple::serializeBinaryBulkWithMultipleStreams(
 
 void DataTypeTuple::deserializeBinaryBulkWithMultipleStreams(
     IColumn & column,
+    ColumnsAlignBufferAVX2 * align_buffer,
     const InputStreamGetter & getter,
     size_t limit,
     double avg_value_size_hint,
@@ -347,6 +348,7 @@ void DataTypeTuple::deserializeBinaryBulkWithMultipleStreams(
         path.back().tuple_element_name = names[i];
         elems[i]->deserializeBinaryBulkWithMultipleStreams(
             extractElementColumn(column, i),
+            align_buffer,
             getter,
             limit,
             avg_value_size_hint,

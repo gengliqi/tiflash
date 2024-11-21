@@ -44,6 +44,7 @@ public:
 
     void deserializeBinaryBulkWithMultipleStreams(
         IColumn & column,
+        ColumnsAlignBufferAVX2 * align_buffer,
         const InputStreamGetter & getter,
         size_t limit,
         double avg_value_size_hint,
@@ -96,7 +97,7 @@ public:
         return nested_data_type->shouldAlignRightInPrettyFormats();
     }
     bool textCanContainOnlyValidUTF8() const override { return nested_data_type->textCanContainOnlyValidUTF8(); }
-    bool isComparable() const override { return nested_data_type->isComparable(); };
+    bool isComparable() const override { return nested_data_type->isComparable(); }
     bool canBeComparedWithCollation() const override { return nested_data_type->canBeComparedWithCollation(); }
     bool canBeUsedAsVersion() const override { return false; }
     bool isSummable() const override { return nested_data_type->isSummable(); }

@@ -77,6 +77,7 @@ void DataTypeDecimal<T>::serializeBinaryBulk(const IColumn & column, WriteBuffer
 template <typename T>
 void DataTypeDecimal<T>::deserializeBinaryBulk(
     IColumn & column,
+    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const

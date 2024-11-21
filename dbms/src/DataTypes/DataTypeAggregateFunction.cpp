@@ -127,6 +127,7 @@ void DataTypeAggregateFunction::serializeBinaryBulk(
 
 void DataTypeAggregateFunction::deserializeBinaryBulk(
     IColumn & column,
+    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const

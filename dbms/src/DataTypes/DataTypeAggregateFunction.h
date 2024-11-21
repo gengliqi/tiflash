@@ -45,7 +45,7 @@ public:
     std::string getFunctionName() const { return function->getName(); }
     AggregateFunctionPtr getFunction() const { return function; }
 
-    TypeIndex getTypeId() const override { return TypeIndex::AggregateFunction; };
+    TypeIndex getTypeId() const override { return TypeIndex::AggregateFunction; }
 
     std::string getName() const override;
 
@@ -53,7 +53,7 @@ public:
 
     bool canBeInsideNullable() const override { return false; }
 
-    DataTypePtr getReturnType() const { return function->getReturnType(); };
+    DataTypePtr getReturnType() const { return function->getReturnType(); }
     DataTypes getArgumentsDataTypes() const { return argument_types; }
 
     /// NOTE These two functions for serializing single values are incompatible with the functions below.
@@ -63,8 +63,12 @@ public:
     void serializeBinary(const IColumn & column, size_t row_num, WriteBuffer & ostr) const override;
     void deserializeBinary(IColumn & column, ReadBuffer & istr) const override;
     void serializeBinaryBulk(const IColumn & column, WriteBuffer & ostr, size_t offset, size_t limit) const override;
-    void deserializeBinaryBulk(IColumn & column, ReadBuffer & istr, size_t limit, double avg_value_size_hint)
-        const override;
+    void deserializeBinaryBulk(
+        IColumn & column,
+        ColumnsAlignBufferAVX2 *,
+        ReadBuffer & istr,
+        size_t limit,
+        double avg_value_size_hint) const override;
     void serializeText(const IColumn & column, size_t row_num, WriteBuffer & ostr) const override;
     void serializeTextEscaped(const IColumn & column, size_t row_num, WriteBuffer & ostr) const override;
     void deserializeTextEscaped(IColumn & column, ReadBuffer & istr) const override;

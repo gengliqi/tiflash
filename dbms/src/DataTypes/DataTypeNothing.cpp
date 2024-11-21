@@ -40,6 +40,7 @@ void DataTypeNothing::serializeBinaryBulk(const IColumn & column, WriteBuffer & 
 
 void DataTypeNothing::deserializeBinaryBulk(
     IColumn & column,
+    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const

@@ -21,6 +21,8 @@
 #include <Flash/Coprocessor/DAGUtils.h>
 #include <IO/Buffer/ReadBufferFromString.h>
 
+#include <Common/ColumnsAlignBuffer.h>
+
 namespace DB
 {
 class CHBlockChunkCodecStream : public ChunkCodecStream
@@ -100,12 +102,18 @@ void WriteColumnData(const IDataType & type, const ColumnPtr & column, WriteBuff
     type.serializeBinaryBulkWithMultipleStreams(*full_column, output_stream_getter, offset, limit, false, {});
 }
 
-void CHBlockChunkCodec::readData(const IDataType & type, IColumn & column, ReadBuffer & istr, size_t rows)
+void CHBlockChunkCodec::readData(
+    const IDataType & type,
+    IColumn & column,
+    ColumnsAlignBufferAVX2 & align_buffer [[maybe_unused]],
+    ReadBuffer & istr,
+    size_t rows)
 {
+    assert(column.empty());
     IDataType::InputStreamGetter input_stream_getter = [&](const IDataType::SubstreamPath &) {
         return &istr;
     };
-    type.deserializeBinaryBulkWithMultipleStreams(column, input_stream_getter, rows, 0, false, {});
+    type.deserializeBinaryBulkWithMultipleStreams(column, nullptr, input_stream_getter, rows, 0, false, {});
 }
 
 size_t ApproxBlockBytes(const Block & block)
@@ -163,6 +171,7 @@ Block CHBlockChunkCodec::decodeImpl(ReadBuffer & istr, size_t reserve_size)
     size_t rows = 0;
     readBlockMeta(istr, columns, rows);
 
+    ColumnsAlignBufferAVX2 align_buffer;
     for (size_t i = 0; i < columns; ++i)
     {
         ColumnWithTypeAndName column;
@@ -173,13 +182,25 @@ Block CHBlockChunkCodec::decodeImpl(ReadBuffer & istr, size_t reserve_size)
         if (column.type->haveMaximumSizeOfValue())
         {
             if (reserve_size > 0)
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+                read_column->reserveAlign(std::max(rows, reserve_size), FULL_VECTOR_SIZE_AVX2);
+#else
                 read_column->reserve(std::max(rows, reserve_size));
+#endif
             else if (rows)
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+                read_column->reserveAlign(rows, FULL_VECTOR_SIZE_AVX2);
+#else
                 read_column->reserve(rows);
+#endif
         }
 
         if (rows) /// If no rows, nothing to read.
-            readData(*column.type, *read_column, istr, rows);
+        {
+            align_buffer.resetIndex();
+            readData(*column.type, *read_column, align_buffer, istr, rows);
+            read_column->flushAlignBuffer(align_buffer, false);
+        }
 
         column.column = std::move(read_column);
         res.insert(std::move(column));

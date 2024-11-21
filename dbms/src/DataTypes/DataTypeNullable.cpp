@@ -91,6 +91,7 @@ void DataTypeNullable::serializeBinaryBulkWithMultipleStreams(
 
 void DataTypeNullable::deserializeBinaryBulkWithMultipleStreams(
     IColumn & column,
+    ColumnsAlignBufferAVX2 * align_buffer,
     const InputStreamGetter & getter,
     size_t limit,
     double avg_value_size_hint,
@@ -101,11 +102,12 @@ void DataTypeNullable::deserializeBinaryBulkWithMultipleStreams(
 
     path.push_back(Substream::NullMap);
     if (auto * stream = getter(path))
-        DataTypeUInt8().deserializeBinaryBulk(col.getNullMapColumn(), *stream, limit, 0);
+        DataTypeUInt8().deserializeBinaryBulk(col.getNullMapColumn(), align_buffer, *stream, limit, 0);
 
     path.back() = Substream::NullableElements;
     nested_data_type->deserializeBinaryBulkWithMultipleStreams(
         col.getNestedColumn(),
+        align_buffer,
         getter,
         limit,
         avg_value_size_hint,

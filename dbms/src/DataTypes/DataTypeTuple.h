@@ -85,6 +85,7 @@ public:
 
     void deserializeBinaryBulkWithMultipleStreams(
         IColumn & column,
+        ColumnsAlignBufferAVX2 * align_buffer,
         const InputStreamGetter & getter,
         size_t limit,
         double avg_value_size_hint,

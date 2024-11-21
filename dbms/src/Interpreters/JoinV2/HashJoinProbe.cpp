@@ -274,7 +274,7 @@ private:
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
                 return;
         }
-        wd.align_buffer.resetIndex(force);
+        wd.align_buffer.resetIndex();
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
             IColumn * column = added_columns[column_index].get();
@@ -285,6 +285,22 @@ private:
         for (auto [column_index, _] : row_layout.other_required_column_indexes)
         {
             added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+        }
+
+        if constexpr (force)
+        {
+            wd.align_buffer.resetIndex();
+            for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+            {
+                IColumn * column = added_columns[column_index].get();
+                if (has_null_map && is_nullable)
+                    column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+                column->flushAlignBuffer(wd.align_buffer, true);
+            }
+            for (auto [column_index, _] : row_layout.other_required_column_indexes)
+            {
+                added_columns[column_index]->flushAlignBuffer(wd.align_buffer, true);
+            }
         }
 
         wd.insert_batch.clear();
@@ -293,7 +309,7 @@ private:
     template <bool force>
     void ALWAYS_INLINE FlushBatchIfNecessary2() const
     {
-        wd.align_buffer.resetIndex(force);
+        wd.align_buffer.resetIndex();
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
             IColumn * column = added_columns[column_index].get();
@@ -304,6 +320,22 @@ private:
         for (auto [column_index, _] : row_layout.other_required_column_indexes)
         {
             added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+        }
+
+        if constexpr (force)
+        {
+            wd.align_buffer.resetIndex();
+            for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+            {
+                IColumn * column = added_columns[column_index].get();
+                if (has_null_map && is_nullable)
+                    column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
+                column->flushAlignBuffer(wd.align_buffer, true);
+            }
+            for (auto [column_index, _] : row_layout.other_required_column_indexes)
+            {
+                added_columns[column_index]->flushAlignBuffer(wd.align_buffer, true);
+            }
         }
 
         wd.insert_batch.clear();

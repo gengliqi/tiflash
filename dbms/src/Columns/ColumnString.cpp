@@ -563,22 +563,6 @@ void ColumnString::insertDisjunctFrom(
                     offset_buffer_size = 0;
                 }
             }
-
-            if unlikely (align_buffer->needFlush())
-            {
-                if (char_buffer_size != 0)
-                {
-                    chars.resize(char_size + char_buffer_size, FULL_VECTOR_SIZE_AVX2);
-                    inline_memcpy(&chars[char_size], char_buffer.data, char_buffer_size);
-                    char_buffer_size = 0;
-                }
-                if (offset_buffer_size != 0)
-                {
-                    offsets.resize(prev_size + offset_buffer_size / sizeof(size_t), FULL_VECTOR_SIZE_AVX2);
-                    inline_memcpy(&offsets[prev_size], offset_buffer.data, offset_buffer_size);
-                    offset_buffer_size = 0;
-                }
-            }
             return;
         }
 
@@ -683,21 +667,6 @@ void ColumnString::deserializeAndInsertFromPos(
             }
         }
 
-        if unlikely (align_buffer.needFlush())
-        {
-            if (char_buffer_size != 0)
-            {
-                chars.resize(char_size + char_buffer_size, FULL_VECTOR_SIZE_AVX2);
-                inline_memcpy(&chars[char_size], char_buffer.data, char_buffer_size);
-                char_buffer_size = 0;
-            }
-            if (offset_buffer_size != 0)
-            {
-                offsets.resize(prev_size + offset_buffer_size / sizeof(size_t), FULL_VECTOR_SIZE_AVX2);
-                inline_memcpy(&offsets[prev_size], offset_buffer.data, offset_buffer_size);
-                offset_buffer_size = 0;
-            }
-        }
         return;
     }
 
@@ -721,6 +690,49 @@ void ColumnString::deserializeAndInsertFromPos(
         offsets[prev_size + i] = char_size;
         pos[i] += str_size;
     }
+}
+
+void ColumnString::flushAlignBuffer(ColumnsAlignBufferAVX2 & align_buffer [[maybe_unused]], bool)
+{
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    size_t prev_size = offsets.size();
+    size_t char_size = chars.size();
+
+    bool is_offset_aligned = reinterpret_cast<std::uintptr_t>(&offsets[prev_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
+    bool is_char_aligned = reinterpret_cast<std::uintptr_t>(&chars[char_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
+    /// Get two next indexes first then get the references to avoid the hang pointer issue
+    size_t char_buffer_index = align_buffer.nextIndex();
+    size_t offset_buffer_index = align_buffer.nextIndex();
+
+    AlignBufferAVX2 & char_buffer = align_buffer.getAlignBuffer(char_buffer_index);
+    UInt8 & char_buffer_size = align_buffer.getSize(char_buffer_index);
+
+    AlignBufferAVX2 & offset_buffer = align_buffer.getAlignBuffer(offset_buffer_index);
+    UInt8 & offset_buffer_size = align_buffer.getSize(offset_buffer_index);
+
+    if unlikely (!is_offset_aligned || !is_char_aligned)
+    {
+        if unlikely (char_buffer_size != 0 || offset_buffer_size != 0)
+        {
+            /// This column data is aligned first and then becomes unaligned due to calling other functions
+            throw Exception("AlignBuffer is not empty when the data is not aligned", ErrorCodes::LOGICAL_ERROR);
+        }
+        return;
+    }
+
+    if (char_buffer_size != 0)
+    {
+        chars.resize(char_size + char_buffer_size, FULL_VECTOR_SIZE_AVX2);
+        inline_memcpy(&chars[char_size], char_buffer.data, char_buffer_size);
+        char_buffer_size = 0;
+    }
+    if (offset_buffer_size != 0)
+    {
+        offsets.resize(prev_size + offset_buffer_size / sizeof(size_t), FULL_VECTOR_SIZE_AVX2);
+        inline_memcpy(&offsets[prev_size], offset_buffer.data, offset_buffer_size);
+        offset_buffer_size = 0;
+    }
+#endif
 }
 
 void updateWeakHash32BinPadding(const std::string_view & view, size_t idx, ColumnString::WeakHash32Info & info)

@@ -26,6 +26,8 @@
 #include <common/logger_useful.h>
 #include <fmt/format.h>
 
+#include "Common/ColumnsAlignBuffer.h"
+
 
 namespace DB::ErrorCodes
 {
@@ -581,10 +583,13 @@ void DMFileReader::readFromDisk(
         column_define.id,
         stream_name);
 #endif
+    RUNTIME_ASSERT(column->empty());
     auto & top_stream = iter->second;
     auto data_type = dmfile->getColumnStat(column_define.id).type;
+    //align_buffer.resetIndex();
     data_type->deserializeBinaryBulkWithMultipleStreams( //
         *column,
+        nullptr,
         [&](const IDataType::SubstreamPath & substream_path) {
             const auto substream_name = DMFile::getFileNameBase(column_define.id, substream_path);
             auto & sub_stream = column_streams.at(substream_name);
@@ -597,6 +602,7 @@ void DMFileReader::readFromDisk(
         top_stream->avg_size_hint,
         true,
         {});
+    //column->flushAlignBuffer(align_buffer, false);
     IDataType::updateAvgValueSizeHint(*column, top_stream->avg_size_hint);
 }
 

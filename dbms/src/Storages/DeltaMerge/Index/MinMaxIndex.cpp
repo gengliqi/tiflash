@@ -185,6 +185,7 @@ MinMaxIndexPtr MinMaxIndex::read(const IDataType & type, ReadBuffer & buf, size_
     buf.read(reinterpret_cast<char *>(has_value_marks.data()), sizeof(UInt8) * size);
     type.deserializeBinaryBulkWithMultipleStreams(
         *minmaxes, //
+        nullptr,
         [&](const IDataType::SubstreamPath &) { return &buf; },
         size * 2,
         0,

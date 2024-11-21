@@ -78,7 +78,7 @@ public:
             res.insert({name_type.type->createColumn(), name_type.type, name_type.name});
 
         return Nested::flatten(res);
-    };
+    }
 
 protected:
     Block readImpl() override;
@@ -264,6 +264,7 @@ void LogBlockInputStream::readData(
 
     type.deserializeBinaryBulkWithMultipleStreams(
         column,
+        nullptr,
         stream_getter,
         max_rows_to_read,
         0,

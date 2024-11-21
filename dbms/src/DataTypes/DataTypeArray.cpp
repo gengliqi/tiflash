@@ -213,6 +213,7 @@ void DataTypeArray::serializeBinaryBulkWithMultipleStreams(
 
 void DataTypeArray::deserializeBinaryBulkWithMultipleStreams(
     IColumn & column,
+    ColumnsAlignBufferAVX2 * align_buffer,
     const InputStreamGetter & getter,
     size_t limit,
     double /*avg_value_size_hint*/,
@@ -228,7 +229,7 @@ void DataTypeArray::deserializeBinaryBulkWithMultipleStreams(
             deserializeArraySizesPositionIndependent(column, *stream, limit);
         else
             DataTypeNumber<ColumnArray::Offset>()
-                .deserializeBinaryBulk(column_array.getOffsetsColumn(), *stream, limit, 0);
+                .deserializeBinaryBulk(column_array.getOffsetsColumn(), align_buffer, *stream, limit, 0);
     }
 
     path.back() = Substream::ArrayElements;
@@ -243,6 +244,7 @@ void DataTypeArray::deserializeBinaryBulkWithMultipleStreams(
     size_t nested_limit = last_offset - nested_column.size();
     nested->deserializeBinaryBulkWithMultipleStreams(
         nested_column,
+        align_buffer,
         getter,
         nested_limit,
         0,

@@ -21,6 +21,8 @@
 #include <IO/Compression/CompressionCodecFactory.h>
 #include <IO/Compression/CompressionInfo.h>
 
+#include "Common/ColumnsAlignBuffer.h"
+
 namespace DB
 {
 size_t ApproxBlockHeaderBytes(const Block & block)
@@ -104,15 +106,24 @@ static inline void decodeColumnsByBlock(ReadBuffer & istr, Block & res, size_t r
     auto && mutable_columns = res.mutateColumns();
     const auto & name_and_type_list = res.getColumnsWithTypeAndName();
     size_t column_size = mutable_columns.size();
+    //ColumnsAlignBufferAVX2 align_buffer;
     for (size_t i = 0; i < column_size; ++i)
     {
         auto && column = mutable_columns[i];
         if (name_and_type_list[i].type->haveMaximumSizeOfValue())
         {
             if (reserve_size > 0)
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+                column->reserveAlign(std::max(rows_to_read, reserve_size), FULL_VECTOR_SIZE_AVX2);
+#else
                 column->reserve(std::max(rows_to_read, reserve_size));
+#endif
             else
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+                column->reserveAlign(rows_to_read + column->size(), FULL_VECTOR_SIZE_AVX2);
+#else
                 column->reserve(rows_to_read + column->size());
+#endif
         }
     }
 
@@ -124,12 +135,14 @@ static inline void decodeColumnsByBlock(ReadBuffer & istr, Block & res, size_t r
 
         assert(sz > 0);
 
+        //align_buffer.resetIndex();
         // Decode columns of one block
-        for (size_t i = 0; i < res.columns(); ++i)
+        for (size_t i = 0; i < column_size; ++i)
         {
             /// Data
             res.getByPosition(i).type->deserializeBinaryBulkWithMultipleStreams(
                 *mutable_columns[i],
+                nullptr,
                 [&](const IDataType::SubstreamPath &) { return &istr; },
                 sz,
                 0,
@@ -137,6 +150,10 @@ static inline void decodeColumnsByBlock(ReadBuffer & istr, Block & res, size_t r
                 {});
         }
     }
+
+    //align_buffer.resetIndex();
+    //for (size_t i = 0; i < column_size; ++i)
+    //    mutable_columns[i]->flushAlignBuffer(align_buffer, false);
 
     assert(decode_rows == rows_to_read);
 

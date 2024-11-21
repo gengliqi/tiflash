@@ -103,6 +103,7 @@ void DataTypeFixedString::serializeBinaryBulk(const IColumn & column, WriteBuffe
 
 void DataTypeFixedString::deserializeBinaryBulk(
     IColumn & column,
+    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const

@@ -267,6 +267,11 @@ public:
             ErrorCodes::NOT_IMPLEMENTED);
     }
 
+    virtual void flushAlignBuffer(ColumnsAlignBufferAVX2 & /* align_buffer */, bool)
+    {
+        throw Exception("Method flushAlignBuffer is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);
+    }
+
     /// Update state of hash function with value of n-th element.
     /// On subsequent calls of this method for sequence of column values of arbitary types,
     ///  passed bytes to hash must identify sequence of values unambiguously.

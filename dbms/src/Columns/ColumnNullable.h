@@ -92,6 +92,12 @@ public:
 
     void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, ColumnsAlignBufferAVX2 & align_buffer) override;
 
+    void flushAlignBuffer(ColumnsAlignBufferAVX2 & align_buffer, bool from_join) override
+    {
+        getNullMapColumn().flushAlignBuffer(align_buffer, from_join);
+        getNestedColumn().flushAlignBuffer(align_buffer, from_join);
+    }
+
     void insertRangeFrom(const IColumn & src, size_t start, size_t length) override;
 
     void insert(const Field & x) override;

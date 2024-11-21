@@ -26,6 +26,8 @@
 #include <Storages/DeltaMerge/ScanContext_fwd.h>
 #include <Storages/MarkCache.h>
 
+#include "Common/ColumnsAlignBuffer.h"
+
 namespace DB::DM
 {
 class RSOperator;
@@ -128,6 +130,7 @@ private:
     DMFilePtr dmfile;
     ColumnDefines read_columns;
     ColumnReadStreamMap column_streams;
+    ColumnsAlignBufferAVX2 align_buffer;
 
     const bool is_common_handle;
 

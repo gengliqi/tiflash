@@ -110,8 +110,12 @@ check_then_add_sources_compile_flag (
     src/Interpreters/JoinV2/HashJoinBuild.cpp
     src/Interpreters/JoinV2/HashJoinProbe.cpp
     src/IO/Compression/EncodingUtil.cpp
+    src/Storages/DeltaMerge/File/DMFileReader.cpp
     src/Storages/DeltaMerge/BitmapFilter/BitmapFilter.cpp
     src/Storages/DeltaMerge/DMVersionFilterBlockInputStream.cpp
+    src/Flash/Coprocessor/CHBlockChunkCodec.cpp
+    src/Flash/Coprocessor/CHBlockChunkCodecV1.cpp
+    src/Flash/Coprocessor/ChunkDecodeAndSquash.cpp
 )
 
 list (APPEND tiflash_common_io_sources ${CONFIG_BUILD})
