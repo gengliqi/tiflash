@@ -165,9 +165,10 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
                 data.resize(prev_size + avx2_width, FULL_VECTOR_SIZE_AVX2);
 
                 _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), buffer.v[0]);
-                prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), buffer.v[1]);
-                prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
+                _mm256_stream_si256(
+                    reinterpret_cast<__m256i *>(&data[prev_size + VECTOR_SIZE_AVX2 / sizeof(T)]),
+                    buffer.v[1]);
+                prev_size += FULL_VECTOR_SIZE_AVX2 / sizeof(T);
                 buffer_size = 0;
             }
 
@@ -189,9 +190,10 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
                 tmp_buffer_size += avx2_width * sizeof(T);
 
                 _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), tmp_buffer.v[0]);
-                prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), tmp_buffer.v[1]);
-                prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
+                _mm256_stream_si256(
+                    reinterpret_cast<__m256i *>(&data[prev_size + VECTOR_SIZE_AVX2 / sizeof(T)]),
+                    tmp_buffer.v[1]);
+                prev_size += FULL_VECTOR_SIZE_AVX2 / sizeof(T);
                 tmp_buffer_size = 0;
             }
 
@@ -524,9 +526,10 @@ void ColumnDecimal<T>::insertDisjunctFrom(
                     data.resize(prev_size + avx2_width, FULL_VECTOR_SIZE_AVX2);
 
                     _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), buffer.v[0]);
-                    prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
-                    _mm256_stream_si256(reinterpret_cast<__m256i *>(&data[prev_size]), buffer.v[1]);
-                    prev_size += VECTOR_SIZE_AVX2 / sizeof(T);
+                    _mm256_stream_si256(
+                        reinterpret_cast<__m256i *>(&data[prev_size + VECTOR_SIZE_AVX2 / sizeof(T)]),
+                        buffer.v[1]);
+                    prev_size += FULL_VECTOR_SIZE_AVX2 / sizeof(T);
                     buffer_size = 0;
                 }
 

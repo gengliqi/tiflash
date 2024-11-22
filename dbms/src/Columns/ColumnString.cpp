@@ -543,11 +543,14 @@ void ColumnString::insertDisjunctFrom(
                     {
                         chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
                         _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                        char_size += VECTOR_SIZE_AVX2;
-                        _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[1]);
-                        char_size += VECTOR_SIZE_AVX2;
+                        _mm256_stream_si256(
+                            reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                            char_buffer.v[1]);
+                        char_size += FULL_VECTOR_SIZE_AVX2;
                         char_buffer_size = 0;
+                        continue;
                     }
+                    break;
                 } while (str_size > 0);
 
                 size_t offset = char_size + char_buffer_size;
@@ -557,9 +560,10 @@ void ColumnString::insertDisjunctFrom(
                 {
                     offsets.resize(prev_size + FULL_VECTOR_SIZE_AVX2 / sizeof(size_t), FULL_VECTOR_SIZE_AVX2);
                     _mm256_stream_si256(reinterpret_cast<__m256i *>(&offsets[prev_size]), offset_buffer.v[0]);
-                    prev_size += VECTOR_SIZE_AVX2 / sizeof(size_t);
-                    _mm256_stream_si256(reinterpret_cast<__m256i *>(&offsets[prev_size]), offset_buffer.v[1]);
-                    prev_size += VECTOR_SIZE_AVX2 / sizeof(size_t);
+                    _mm256_stream_si256(
+                        reinterpret_cast<__m256i *>(&offsets[prev_size + VECTOR_SIZE_AVX2 / sizeof(size_t)]),
+                        offset_buffer.v[1]);
+                    prev_size += FULL_VECTOR_SIZE_AVX2 / sizeof(size_t);
                     offset_buffer_size = 0;
                 }
             }
@@ -645,11 +649,14 @@ void ColumnString::deserializeAndInsertFromPos(
                 {
                     chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
                     _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                    char_size += VECTOR_SIZE_AVX2;
-                    _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[1]);
-                    char_size += VECTOR_SIZE_AVX2;
+                    _mm256_stream_si256(
+                        reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                        char_buffer.v[1]);
+                    char_size += FULL_VECTOR_SIZE_AVX2;
                     char_buffer_size = 0;
+                    continue;
                 }
+                break;
             } while (str_size > 0);
             pos[i] = p;
 
@@ -660,9 +667,10 @@ void ColumnString::deserializeAndInsertFromPos(
             {
                 offsets.resize(prev_size + FULL_VECTOR_SIZE_AVX2 / sizeof(size_t), FULL_VECTOR_SIZE_AVX2);
                 _mm256_stream_si256(reinterpret_cast<__m256i *>(&offsets[prev_size]), offset_buffer.v[0]);
-                prev_size += VECTOR_SIZE_AVX2 / sizeof(size_t);
-                _mm256_stream_si256(reinterpret_cast<__m256i *>(&offsets[prev_size]), offset_buffer.v[1]);
-                prev_size += VECTOR_SIZE_AVX2 / sizeof(size_t);
+                _mm256_stream_si256(
+                    reinterpret_cast<__m256i *>(&offsets[prev_size + VECTOR_SIZE_AVX2 / sizeof(size_t)]),
+                    offset_buffer.v[1]);
+                prev_size += FULL_VECTOR_SIZE_AVX2 / sizeof(size_t);
                 offset_buffer_size = 0;
             }
         }
