@@ -548,9 +548,7 @@ void ColumnString::insertDisjunctFrom(
                             char_buffer.v[1]);
                         char_size += FULL_VECTOR_SIZE_AVX2;
                         char_buffer_size = 0;
-                        continue;
                     }
-                    break;
                 } while (str_size > 0);
 
                 size_t offset = char_size + char_buffer_size;
@@ -654,9 +652,7 @@ void ColumnString::deserializeAndInsertFromPos(
                         char_buffer.v[1]);
                     char_size += FULL_VECTOR_SIZE_AVX2;
                     char_buffer_size = 0;
-                    continue;
                 }
-                break;
             } while (str_size > 0);
             pos[i] = p;
 

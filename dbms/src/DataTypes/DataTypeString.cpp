@@ -277,9 +277,7 @@ void DataTypeString::deserializeBinaryBulk(
                                 char_buffer.v[1]);
                             char_size += FULL_VECTOR_SIZE_AVX2;
                             char_buffer_size = 0;
-                            continue;
                         }
-                        break;
                     } while (str_size > 0);
                 }
                 else
@@ -301,9 +299,7 @@ void DataTypeString::deserializeBinaryBulk(
                                 char_buffer.v[1]);
                             char_size += FULL_VECTOR_SIZE_AVX2;
                             char_buffer_size = 0;
-                            continue;
                         }
-                        break;
                     } while (str_size > 0);
                 }
 
