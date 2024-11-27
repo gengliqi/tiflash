@@ -343,6 +343,8 @@ void DataTypeString::deserializeBinaryBulk(
                     offset_buffer_size = 0;
                 }
             }
+
+            _mm_sfence();
             return;
         }
         throw Exception("AlignBuffer is not used due to unaligned data");

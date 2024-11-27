@@ -570,6 +570,7 @@ void ColumnString::insertDisjunctFrom(
                     offset_buffer_size = 0;
                 }
             }
+            _mm_sfence();
             return;
         }
 
@@ -680,7 +681,7 @@ void ColumnString::deserializeAndInsertFromPos(
                 offset_buffer_size = 0;
             }
         }
-
+        _mm_sfence();
         return;
     }
 

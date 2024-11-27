@@ -203,7 +203,7 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
                 buffer_size += sizeof(T);
                 pos[i] += sizeof(T);
             }
-
+            _mm_sfence();
             return;
         }
 
@@ -561,7 +561,7 @@ void ColumnDecimal<T>::insertDisjunctFrom(
                     tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], &src_data[position_vec[i]], sizeof(T));
                     buffer_size += sizeof(T);
                 }
-
+                _mm_sfence();
                 return;
             }
 
