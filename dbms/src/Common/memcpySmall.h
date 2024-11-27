@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <Common/Exception.h>
 #include <common/defines.h>
 #include <string.h>
 
@@ -67,4 +68,29 @@ __attribute__((always_inline)) inline void memcpySmallAllowReadWriteOverflow15(
         reinterpret_cast<char *>(dst),
         reinterpret_cast<const char *>(src),
         n);
+}
+
+__attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
+    void * __restrict dst,
+    const void * __restrict src,
+    size_t n)
+{
+    auto align_size = (n + 15) / 16 * 16;
+    switch (align_size)
+    {
+    case 16:
+        tiflash_compiler_builtin_memcpy(dst, src, 16);
+        break;
+    case 32:
+        tiflash_compiler_builtin_memcpy(dst, src, 32);
+        break;
+    case 48:
+        tiflash_compiler_builtin_memcpy(dst, src, 48);
+        break;
+    case 64:
+        tiflash_compiler_builtin_memcpy(dst, src, 64);
+        break;
+    default:
+        RUNTIME_CHECK_MSG(false, "wrong size {}", align_size);
+    }
 }

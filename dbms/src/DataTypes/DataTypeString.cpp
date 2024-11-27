@@ -262,58 +262,63 @@ void DataTypeString::deserializeBinaryBulk(
                 UInt64 str_size;
                 p = readVarUInt(str_size, p, istr.buffer().end());
 
-                if likely (p + str_size + 15 <= istr.buffer().end())
+                if (str_size > 0)
                 {
-                    while (true)
+                    if likely (p + str_size + 15 <= istr.buffer().end())
                     {
-                        UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                        if (remain > str_size)
+                        while (true)
                         {
-                            memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
-                            p += str_size;
-                            char_buffer_size += str_size;
-                            break;
-                        }
+                            UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
+                            if (remain > str_size)
+                            {
+                                memcpyMax64BAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                                //memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                                p += str_size;
+                                char_buffer_size += str_size;
+                                break;
+                            }
 
-                        memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
-                        p += remain;
-                        chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
-                        _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                        _mm256_stream_si256(
-                            reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
-                            char_buffer.v[1]);
-                        char_size += FULL_VECTOR_SIZE_AVX2;
-                        char_buffer_size = 0;
-                        if (remain == str_size)
-                            break;
-                        str_size -= remain;
+                            memcpyMax64BAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                            //memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                            p += remain;
+                            chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
+                            _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
+                            _mm256_stream_si256(
+                                reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                                char_buffer.v[1]);
+                            char_size += FULL_VECTOR_SIZE_AVX2;
+                            char_buffer_size = 0;
+                            if (remain == str_size)
+                                break;
+                            str_size -= remain;
+                        }
                     }
-                }
-                else
-                {
-                    while (true)
+                    else
                     {
-                        UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                        if (remain > str_size)
+                        while (true)
                         {
-                            inline_memcpy(&char_buffer.data[char_buffer_size], p, str_size);
-                            p += str_size;
-                            char_buffer_size += str_size;
-                            break;
-                        }
+                            UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
+                            if (remain > str_size)
+                            {
+                                inline_memcpy(&char_buffer.data[char_buffer_size], p, str_size);
+                                p += str_size;
+                                char_buffer_size += str_size;
+                                break;
+                            }
 
-                        inline_memcpy(&char_buffer.data[char_buffer_size], p, remain);
-                        p += remain;
-                        chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
-                        _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                        _mm256_stream_si256(
-                            reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
-                            char_buffer.v[1]);
-                        char_size += FULL_VECTOR_SIZE_AVX2;
-                        char_buffer_size = 0;
-                        if (remain == str_size)
-                            break;
-                        str_size -= remain;
+                            inline_memcpy(&char_buffer.data[char_buffer_size], p, remain);
+                            p += remain;
+                            chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
+                            _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
+                            _mm256_stream_si256(
+                                reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                                char_buffer.v[1]);
+                            char_size += FULL_VECTOR_SIZE_AVX2;
+                            char_buffer_size = 0;
+                            if (remain == str_size)
+                                break;
+                            str_size -= remain;
+                        }
                     }
                 }
 

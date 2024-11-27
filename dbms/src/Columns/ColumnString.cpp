@@ -536,13 +536,15 @@ void ColumnString::insertDisjunctFrom(
                     UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
                     if (remain > str_size)
                     {
-                        memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                        memcpyMax64BAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                        //memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
                         p += str_size;
                         char_buffer_size += str_size;
                         break;
                     }
 
-                    memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                    memcpyMax64BAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                    //memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
                     p += remain;
                     chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
                     _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
@@ -646,13 +648,15 @@ void ColumnString::deserializeAndInsertFromPos(
                 UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
                 if (remain > str_size)
                 {
-                    memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                    memcpyMax64BAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                    //memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
                     p += str_size;
                     char_buffer_size += str_size;
                     break;
                 }
 
-                memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                memcpyMax64BAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                //memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
                 p += remain;
                 chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
                 _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);

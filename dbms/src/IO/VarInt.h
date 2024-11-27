@@ -184,7 +184,6 @@ inline void readVarUInt(UInt64 & x, ReadBuffer & istr)
 }
 
 
-
 inline void readVarUInt(UInt64 & x, std::istream & istr)
 {
     x = 0;
