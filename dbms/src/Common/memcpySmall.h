@@ -18,6 +18,12 @@
 #include <common/defines.h>
 #include <string.h>
 
+#include <cassert>
+
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+#include <immintrin.h>
+#endif
+
 /** memcpy function could work suboptimal if all the following conditions are met:
   * 1. Size of memory region is relatively small (approximately, under 50 bytes).
   * 2. Size of memory region is not known at compile-time.
@@ -75,6 +81,9 @@ __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
     const void * __restrict src,
     size_t n)
 {
+    if unlikely (n == 0)
+        return;
+    assert(n <= 64);
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
     auto * d = static_cast<char *>(dst);
     auto * s = static_cast<const char *>(src);
@@ -85,19 +94,16 @@ __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
             reinterpret_cast<__m256i *>(d + 32),
             _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s + 32)));
         [[fallthrough]];
-    case 3:
+    case 2:
         _mm256_storeu_si256(reinterpret_cast<__m256i *>(d), _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s)));
         break;
-    case 2:
-        _mm_storeu_si128(
-            reinterpret_cast<__m128i *>(d + 16),
-            _mm_loadu_si128(reinterpret_cast<const __m128i *>(s + 16)));
+    case 3:
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i *>(d + 16),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s + 16)));
         [[fallthrough]];
     case 1:
         _mm_storeu_si128(reinterpret_cast<__m128i *>(d), _mm_loadu_si128(reinterpret_cast<const __m128i *>(s)));
-        break;
-    default:
-        RUNTIME_CHECK_MSG(false, "wrong size {}", n);
     }
 #else
     switch ((n + 15) / 16)
@@ -113,9 +119,6 @@ __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
         break;
     case 4:
         tiflash_compiler_builtin_memcpy(dst, src, 64);
-        break;
-    default:
-        RUNTIME_CHECK_MSG(false, "wrong size {}", n);
     }
 #endif
 }
