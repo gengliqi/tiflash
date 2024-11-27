@@ -701,23 +701,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                     ++k;
                     continue;
                 }
-                switch (state->remaining_length)
-                {
-                case 16:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 16);
-                    break;
-                case 32:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 32);
-                    break;
-                case 48:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 48);
-                    break;
-                case 64:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->buffer_offset], state->ptr, 64);
-                    break;
-                default:
-                    assert(false);
-                }
+                memcpyMax64BAllowReadWriteOverflow15(
+                    &wd.probe_buffer[state->buffer_offset],
+                    state->ptr,
+                    state->remaining_length);
                 //do
                 //{
                 //    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[offset], ptr, buffer_row_align);
@@ -793,35 +780,10 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                                     prefetch_id_queue.push_back(id);
                                     continue;
                                 }
-                                switch (current_state->remaining_length)
-                                {
-                                case 16:
-                                    tiflash_compiler_builtin_memcpy(
-                                        &wd.probe_buffer[current_state->buffer_offset],
-                                        current_state->ptr,
-                                        16);
-                                    break;
-                                case 32:
-                                    tiflash_compiler_builtin_memcpy(
-                                        &wd.probe_buffer[current_state->buffer_offset],
-                                        current_state->ptr,
-                                        32);
-                                    break;
-                                case 48:
-                                    tiflash_compiler_builtin_memcpy(
-                                        &wd.probe_buffer[current_state->buffer_offset],
-                                        current_state->ptr,
-                                        48);
-                                    break;
-                                case 64:
-                                    tiflash_compiler_builtin_memcpy(
-                                        &wd.probe_buffer[current_state->buffer_offset],
-                                        current_state->ptr,
-                                        64);
-                                    break;
-                                default:
-                                    assert(false);
-                                }
+                                memcpyMax64BAllowReadWriteOverflow15(
+                                    &wd.probe_buffer[current_state->buffer_offset],
+                                    current_state->ptr,
+                                    current_state->remaining_length);
 
                                 if (current_state->next_ptr)
                                 {
@@ -881,13 +843,13 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                             FlushBatchIfNecessary2<false>();
                             probe_buffer_size = 0;
 
-                            PREFETCH_READ(copy_start);
-                            for (size_t i = k + 1; i < probe_prefetch_step; ++i)
-                                if (states[i].stage != ProbePrefetchStage::None)
-                                    PREFETCH_READ(states[i].ptr);
-                            for (size_t i = 0; i < k; ++i)
-                                if (states[i].stage != ProbePrefetchStage::None)
-                                    PREFETCH_READ(states[i].ptr);
+                            //PREFETCH_READ(copy_start);
+                            //for (size_t i = k + 1; i < probe_prefetch_step; ++i)
+                            //    if (states[i].stage != ProbePrefetchStage::None)
+                            //        PREFETCH_READ(states[i].ptr);
+                            //for (size_t i = 0; i < k; ++i)
+                            //    if (states[i].stage != ProbePrefetchStage::None)
+                            //        PREFETCH_READ(states[i].ptr);
                         }
                         wd.insert_batch.push_back(&wd.probe_buffer[probe_buffer_size + diff]);
                         RowPtr copy_end = reinterpret_cast<RowPtr>(
@@ -896,23 +858,7 @@ void NO_INLINE JoinProbeBlockHelper<KeyGetter, has_null_map, tagged_pointer>::jo
                         UInt16 buffer_offset = probe_buffer_size;
                         probe_buffer_size += align_len;
                         auto copy_len = std::min(copy_end - copy_start, align_len);
-                        switch (copy_len)
-                        {
-                        case 16:
-                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 16);
-                            break;
-                        case 32:
-                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 32);
-                            break;
-                        case 48:
-                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 48);
-                            break;
-                        case 64:
-                            tiflash_compiler_builtin_memcpy(&wd.probe_buffer[buffer_offset], copy_start, 64);
-                            break;
-                        default:
-                            assert(false);
-                        }
+                        memcpyMax64BAllowReadWriteOverflow15(&wd.probe_buffer[buffer_offset], copy_start, copy_len);
                         if (copy_end - copy_start < align_len)
                         {
                             buffer_offset += copy_len;

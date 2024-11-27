@@ -20,10 +20,6 @@
 
 #include <cassert>
 
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-#include <immintrin.h>
-#endif
-
 /** memcpy function could work suboptimal if all the following conditions are met:
   * 1. Size of memory region is relatively small (approximately, under 50 bytes).
   * 2. Size of memory region is not known at compile-time.
@@ -81,44 +77,22 @@ __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
     const void * __restrict src,
     size_t n)
 {
-    if unlikely (n == 0)
-        return;
     assert(n <= 64);
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
     auto * d = static_cast<char *>(dst);
-    auto * s = static_cast<const char *>(src);
+    const auto * s = static_cast<const char *>(src);
     switch ((n + 15) / 16)
     {
     case 4:
-        _mm256_storeu_si256(
-            reinterpret_cast<__m256i *>(d + 32),
-            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s + 32)));
+        tiflash_compiler_builtin_memcpy(d + 48, s + 48, 16);
+        [[fallthrough]];
+    case 3:
+        tiflash_compiler_builtin_memcpy(d + 32, s + 32, 16);
         [[fallthrough]];
     case 2:
-        _mm256_storeu_si256(reinterpret_cast<__m256i *>(d), _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s)));
-        break;
-    case 3:
-        _mm256_storeu_si256(
-            reinterpret_cast<__m256i *>(d + 16),
-            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s + 16)));
+        tiflash_compiler_builtin_memcpy(d + 16, s + 16, 16);
         [[fallthrough]];
     case 1:
-        _mm_storeu_si128(reinterpret_cast<__m128i *>(d), _mm_loadu_si128(reinterpret_cast<const __m128i *>(s)));
+        tiflash_compiler_builtin_memcpy(d, s, 16);
+    case 0:
     }
-#else
-    switch ((n + 15) / 16)
-    {
-    case 1:
-        tiflash_compiler_builtin_memcpy(dst, src, 16);
-        break;
-    case 2:
-        tiflash_compiler_builtin_memcpy(dst, src, 32);
-        break;
-    case 3:
-        tiflash_compiler_builtin_memcpy(dst, src, 48);
-        break;
-    case 4:
-        tiflash_compiler_builtin_memcpy(dst, src, 64);
-    }
-#endif
 }
