@@ -184,6 +184,7 @@ inline void readVarUInt(UInt64 & x, ReadBuffer & istr)
 }
 
 
+
 inline void readVarUInt(UInt64 & x, std::istream & istr)
 {
     x = 0;
@@ -205,6 +206,25 @@ inline const char * readVarUInt(UInt64 & x, const char * istr, size_t size)
     for (size_t i = 0; i < 9; ++i)
     {
         if (istr == end)
+            throwReadAfterEOF();
+
+        UInt64 byte = *istr;
+        ++istr;
+        x |= (byte & 0x7F) << (7 * i);
+
+        if (!(byte & 0x80))
+            return istr;
+    }
+
+    return istr;
+}
+
+inline char * readVarUInt(UInt64 & x, char * istr, const char * end)
+{
+    x = 0;
+    for (size_t i = 0; i < 9; ++i)
+    {
+        if unlikely (istr == end)
             throwReadAfterEOF();
 
         UInt64 byte = *istr;

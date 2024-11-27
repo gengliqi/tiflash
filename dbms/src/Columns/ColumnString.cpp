@@ -531,25 +531,30 @@ void ColumnString::insertDisjunctFrom(
                 UInt32 str_size = src.sizeAt(position_vec[i]);
 
                 auto * p = &src.chars[src.offsetAt(position_vec[i])];
-                do
+                while (true)
                 {
                     UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                    UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
-                    memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, copy_bytes);
-                    p += copy_bytes;
-                    char_buffer_size += copy_bytes;
-                    str_size -= copy_bytes;
-                    if (char_buffer_size == FULL_VECTOR_SIZE_AVX2)
+                    if (remain > str_size)
                     {
-                        chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
-                        _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                        _mm256_stream_si256(
-                            reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
-                            char_buffer.v[1]);
-                        char_size += FULL_VECTOR_SIZE_AVX2;
-                        char_buffer_size = 0;
+                        memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                        p += str_size;
+                        char_buffer_size += str_size;
+                        break;
                     }
-                } while (str_size > 0);
+
+                    memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                    p += remain;
+                    chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
+                    _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
+                    _mm256_stream_si256(
+                        reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                        char_buffer.v[1]);
+                    char_size += FULL_VECTOR_SIZE_AVX2;
+                    char_buffer_size = 0;
+                    if (remain == str_size)
+                        break;
+                    str_size -= remain;
+                }
 
                 size_t offset = char_size + char_buffer_size;
                 tiflash_compiler_builtin_memcpy(&offset_buffer.data[offset_buffer_size], &offset, sizeof(size_t));
@@ -635,25 +640,30 @@ void ColumnString::deserializeAndInsertFromPos(
             pos[i] += sizeof(UInt32);
 
             auto * p = pos[i];
-            do
+            while (true)
             {
                 UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
-                memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, copy_bytes);
-                p += copy_bytes;
-                char_buffer_size += copy_bytes;
-                str_size -= copy_bytes;
-                if (char_buffer_size == FULL_VECTOR_SIZE_AVX2)
+                if (remain > str_size)
                 {
-                    chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
-                    _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                    _mm256_stream_si256(
-                        reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
-                        char_buffer.v[1]);
-                    char_size += FULL_VECTOR_SIZE_AVX2;
-                    char_buffer_size = 0;
+                    memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                    p += str_size;
+                    char_buffer_size += str_size;
+                    break;
                 }
-            } while (str_size > 0);
+
+                memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                p += remain;
+                chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
+                _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
+                _mm256_stream_si256(
+                    reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                    char_buffer.v[1]);
+                char_size += FULL_VECTOR_SIZE_AVX2;
+                char_buffer_size = 0;
+                if (remain == str_size)
+                    break;
+                str_size -= remain;
+            }
             pos[i] = p;
 
             size_t offset = char_size + char_buffer_size;

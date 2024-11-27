@@ -249,61 +249,73 @@ void DataTypeString::deserializeBinaryBulk(
             tiflash_compiler_builtin_memcpy(&char_buffer, &saved_char_buffer, sizeof(AlignBufferAVX2));
             SCOPE_EXIT({ tiflash_compiler_builtin_memcpy(&saved_char_buffer, &char_buffer, sizeof(AlignBufferAVX2)); });
 
+            auto * p = istr.position();
             for (size_t i = 0; i < limit; ++i)
             {
-                if (istr.eof())
-                    break;
+                if unlikely (p == istr.buffer().end())
+                {
+                    if (!istr.next())
+                        break;
+                    p = istr.position();
+                }
 
                 UInt64 str_size;
-                readVarUInt(str_size, istr);
+                p = readVarUInt(str_size, p, istr.buffer().end());
 
-                auto * p = istr.position();
                 if likely (p + str_size + 15 <= istr.buffer().end())
                 {
-                    do
+                    while (true)
                     {
                         UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                        UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
-                        memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, copy_bytes);
-                        p += copy_bytes;
-                        char_buffer_size += copy_bytes;
-                        str_size -= copy_bytes;
-                        if (char_buffer_size == FULL_VECTOR_SIZE_AVX2)
+                        if (remain > str_size)
                         {
-                            chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
-                            _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                            _mm256_stream_si256(
-                                reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
-                                char_buffer.v[1]);
-                            char_size += FULL_VECTOR_SIZE_AVX2;
-                            char_buffer_size = 0;
+                            memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, str_size);
+                            p += str_size;
+                            char_buffer_size += str_size;
+                            break;
                         }
-                    } while (str_size > 0);
+
+                        memcpySmallAllowReadWriteOverflow15(&char_buffer.data[char_buffer_size], p, remain);
+                        p += remain;
+                        chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
+                        _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
+                        _mm256_stream_si256(
+                            reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                            char_buffer.v[1]);
+                        char_size += FULL_VECTOR_SIZE_AVX2;
+                        char_buffer_size = 0;
+                        if (remain == str_size)
+                            break;
+                        str_size -= remain;
+                    }
                 }
                 else
                 {
-                    do
+                    while (true)
                     {
                         UInt8 remain = FULL_VECTOR_SIZE_AVX2 - char_buffer_size;
-                        UInt8 copy_bytes = static_cast<UInt8>(std::min(static_cast<UInt32>(remain), str_size));
-                        inline_memcpy(&char_buffer.data[char_buffer_size], p, copy_bytes);
-                        p += copy_bytes;
-                        char_buffer_size += copy_bytes;
-                        str_size -= copy_bytes;
-                        if (char_buffer_size == FULL_VECTOR_SIZE_AVX2)
+                        if (remain > str_size)
                         {
-                            chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
-                            _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                            _mm256_stream_si256(
-                                reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
-                                char_buffer.v[1]);
-                            char_size += FULL_VECTOR_SIZE_AVX2;
-                            char_buffer_size = 0;
+                            inline_memcpy(&char_buffer.data[char_buffer_size], p, str_size);
+                            p += str_size;
+                            char_buffer_size += str_size;
+                            break;
                         }
-                    } while (str_size > 0);
-                }
 
-                istr.position() = p;
+                        inline_memcpy(&char_buffer.data[char_buffer_size], p, remain);
+                        p += remain;
+                        chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
+                        _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
+                        _mm256_stream_si256(
+                            reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                            char_buffer.v[1]);
+                        char_size += FULL_VECTOR_SIZE_AVX2;
+                        char_buffer_size = 0;
+                        if (remain == str_size)
+                            break;
+                        str_size -= remain;
+                    }
+                }
 
                 char_buffer.data[char_buffer_size] = 0;
                 ++char_buffer_size;
@@ -311,9 +323,10 @@ void DataTypeString::deserializeBinaryBulk(
                 {
                     chars.resize(char_size + FULL_VECTOR_SIZE_AVX2, FULL_VECTOR_SIZE_AVX2);
                     _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[0]);
-                    char_size += VECTOR_SIZE_AVX2;
-                    _mm256_stream_si256(reinterpret_cast<__m256i *>(&chars[char_size]), char_buffer.v[1]);
-                    char_size += VECTOR_SIZE_AVX2;
+                    _mm256_stream_si256(
+                        reinterpret_cast<__m256i *>(&chars[char_size + VECTOR_SIZE_AVX2]),
+                        char_buffer.v[1]);
+                    char_size += FULL_VECTOR_SIZE_AVX2;
                     char_buffer_size = 0;
                 }
 
