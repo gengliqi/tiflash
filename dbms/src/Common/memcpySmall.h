@@ -75,22 +75,47 @@ __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
     const void * __restrict src,
     size_t n)
 {
-    auto align_size = (n + 15) / 16 * 16;
-    switch (align_size)
+#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    auto * d = static_cast<char *>(dst);
+    auto * s = static_cast<const char *>(src);
+    switch ((n + 15) / 16)
     {
-    case 16:
+    case 4:
+        _mm256_storeu_si256(
+            reinterpret_cast<__m256i *>(d + 32),
+            _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s + 32)));
+        [[fallthrough]];
+    case 3:
+        _mm256_storeu_si256(reinterpret_cast<__m256i *>(d), _mm256_loadu_si256(reinterpret_cast<const __m256i *>(s)));
+        break;
+    case 2:
+        _mm_storeu_si128(
+            reinterpret_cast<__m128i *>(d + 16),
+            _mm_loadu_si128(reinterpret_cast<const __m128i *>(s + 16)));
+        [[fallthrough]];
+    case 1:
+        _mm_storeu_si128(reinterpret_cast<__m128i *>(d), _mm_loadu_si128(reinterpret_cast<const __m128i *>(s)));
+        break;
+    default:
+        RUNTIME_CHECK_MSG(false, "wrong size {}", n);
+    }
+#else
+    switch ((n + 15) / 16)
+    {
+    case 1:
         tiflash_compiler_builtin_memcpy(dst, src, 16);
         break;
-    case 32:
+    case 2:
         tiflash_compiler_builtin_memcpy(dst, src, 32);
         break;
-    case 48:
+    case 3:
         tiflash_compiler_builtin_memcpy(dst, src, 48);
         break;
-    case 64:
+    case 4:
         tiflash_compiler_builtin_memcpy(dst, src, 64);
         break;
     default:
-        RUNTIME_CHECK_MSG(false, "wrong size {}", align_size);
+        RUNTIME_CHECK_MSG(false, "wrong size {}", n);
     }
+#endif
 }
