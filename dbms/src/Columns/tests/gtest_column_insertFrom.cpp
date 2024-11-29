@@ -85,8 +85,8 @@ public:
                 cols[0]->insertFrom(*column_ptr, position);
             for (size_t position : position_vec)
                 cols[0]->insertFrom(*column_ptr, position);
-            cols[1]->insertDisjunctFrom(*column_ptr, position_vec);
-            cols[1]->insertDisjunctFrom(*column_ptr, position_vec);
+            cols[1]->insertDisjunctFrom(*column_ptr, position_vec, nullptr);
+            cols[1]->insertDisjunctFrom(*column_ptr, position_vec, nullptr);
             {
                 ColumnWithTypeAndName ref(std::move(cols[0]), col_with_type_and_name.type, "");
                 ColumnWithTypeAndName result(std::move(cols[1]), col_with_type_and_name.type, "");
