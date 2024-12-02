@@ -17,8 +17,6 @@
 #include <Flash/Coprocessor/ChunkCodec.h>
 #include <Flash/Coprocessor/CodecUtils.h>
 
-#include "Common/ColumnsAlignBuffer.h"
-
 namespace DB
 {
 class CHBlockChunkDecodeAndSquash;
@@ -39,12 +37,7 @@ private:
     friend class CHBlockChunkDecodeAndSquash;
     void readColumnMeta(size_t i, ReadBuffer & istr, ColumnWithTypeAndName & column);
     void readBlockMeta(ReadBuffer & istr, size_t & columns, size_t & rows) const;
-    static void readData(
-        const IDataType & type,
-        IColumn & column,
-        ColumnsAlignBufferAVX2 * align_buffer,
-        ReadBuffer & istr,
-        size_t rows);
+    static void readData(const IDataType & type, IColumn & column, ReadBuffer & istr, size_t rows);
     /// 'reserve_size' used for Squash usage, and takes effect when 'reserve_size' > 0
     Block decodeImpl(ReadBuffer & istr, size_t reserve_size = 0);
 

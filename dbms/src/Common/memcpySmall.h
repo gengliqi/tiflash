@@ -66,12 +66,14 @@ __attribute__((always_inline)) inline void memcpySmallAllowReadWriteOverflow15(
     const void * __restrict src,
     size_t n)
 {
-    ::detail::memcpySmallAllowReadWriteOverflow15Impl(
-        reinterpret_cast<char *>(dst),
-        reinterpret_cast<const char *>(src),
-        n);
+    ::detail::memcpySmallAllowReadWriteOverflow15Impl(static_cast<char *>(dst), static_cast<const char *>(src), n);
 }
 
+/** Works under assumptions:
+  * 1. copy maximum 64 Byte.
+  * 2. may read up to 15 excessive bytes after end of 'src' region.
+  * 3. may write any garbage into up to 15 bytes after end of 'dst' region.
+  */
 __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
     void * __restrict dst,
     const void * __restrict src,
@@ -83,16 +85,16 @@ __attribute__((always_inline)) inline void memcpyMax64BAllowReadWriteOverflow15(
     switch ((n + 15) / 16)
     {
     case 4:
-        tiflash_compiler_builtin_memcpy(d + 48, s + 48, 16);
-        [[fallthrough]];
+        tiflash_compiler_builtin_memcpy(d, s, 64);
+        break;
     case 3:
-        tiflash_compiler_builtin_memcpy(d + 32, s + 32, 16);
-        [[fallthrough]];
+        tiflash_compiler_builtin_memcpy(d, s, 48);
+        break;
     case 2:
-        tiflash_compiler_builtin_memcpy(d + 16, s + 16, 16);
-        [[fallthrough]];
+        tiflash_compiler_builtin_memcpy(d, s, 32);
+        break;
     case 1:
         tiflash_compiler_builtin_memcpy(d, s, 16);
-    case 0:
+        break;
     }
 }

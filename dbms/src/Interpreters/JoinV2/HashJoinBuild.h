@@ -68,7 +68,7 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinBuildWorkerData
     size_t all_size = 0;
 
     bool enable_tagged_pointer = true;
-    PaddedPODArray<UInt8> build_buffer;
+    PaddedPODArray<char> build_buffer;
     size_t max_build_buffer_size = 0;
 };
 

@@ -109,7 +109,7 @@ std::optional<Block> CHBlockChunkDecodeAndSquash::decodeAndSquash(const String &
             {
                 ColumnWithTypeAndName column;
                 codec.readColumnMeta(i, istr, column);
-                CHBlockChunkCodec::readData(*column.type, *(mutable_columns[i]), nullptr, istr, rows);
+                CHBlockChunkCodec::readData(*column.type, *(mutable_columns[i]), istr, rows);
             }
             accumulated_block->setColumns(std::move(mutable_columns));
         }

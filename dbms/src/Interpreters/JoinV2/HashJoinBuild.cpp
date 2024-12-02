@@ -275,9 +275,9 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             for (const auto & [index, _] : row_layout.other_required_column_indexes)
             {
                 if constexpr (has_null_map && !need_record_null_rows)
-                    block.getByPosition(index).column->serializeToPosNew(wd.row_ptrs, 0, start, end - start, true);
+                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end - start, true);
                 else
-                    block.getByPosition(index).column->serializeToPosNew(wd.row_ptrs, 0, start, end - start, false);
+                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end - start, false);
             }
         }
     }
@@ -332,9 +332,9 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             for (const auto & [index, _] : row_layout.other_required_column_indexes)
             {
                 if constexpr (has_null_map && !need_record_null_rows)
-                    block.getByPosition(index).column->serializeToPosNew(wd.row_ptrs, 0, start, i - start, true);
+                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, i - start, true);
                 else
-                    block.getByPosition(index).column->serializeToPosNew(wd.row_ptrs, 0, start, i - start, false);
+                    block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, i - start, false);
             }
             size_t offset = 0;
             while (offset + CPU_CACHE_LINE_SIZE <= size)

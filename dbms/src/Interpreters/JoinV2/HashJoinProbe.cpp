@@ -274,32 +274,30 @@ private:
             if likely (wd.insert_batch.size() < settings.probe_insert_batch_size)
                 return;
         }
-        wd.align_buffer.resetIndex();
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
             IColumn * column = added_columns[column_index].get();
             if (has_null_map && is_nullable)
                 column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-            column->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+            column->deserializeAndInsertFromPos(wd.insert_batch, true);
         }
         for (auto [column_index, _] : row_layout.other_required_column_indexes)
         {
-            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, true);
         }
 
         if constexpr (force)
         {
-            wd.align_buffer.resetIndex();
             for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
             {
                 IColumn * column = added_columns[column_index].get();
                 if (has_null_map && is_nullable)
                     column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-                column->flushAlignBuffer(wd.align_buffer, true);
+                column->flushNTAlignBuffer();
             }
             for (auto [column_index, _] : row_layout.other_required_column_indexes)
             {
-                added_columns[column_index]->flushAlignBuffer(wd.align_buffer, true);
+                added_columns[column_index]->flushNTAlignBuffer();
             }
         }
 
@@ -309,102 +307,35 @@ private:
     template <bool force>
     void ALWAYS_INLINE FlushBatchIfNecessary2() const
     {
-        wd.align_buffer.resetIndex();
         for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
         {
             IColumn * column = added_columns[column_index].get();
             if (has_null_map && is_nullable)
                 column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-            column->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+            column->deserializeAndInsertFromPos(wd.insert_batch, true);
         }
         for (auto [column_index, _] : row_layout.other_required_column_indexes)
         {
-            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
+            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, true);
         }
 
         if constexpr (force)
         {
-            wd.align_buffer.resetIndex();
             for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
             {
                 IColumn * column = added_columns[column_index].get();
                 if (has_null_map && is_nullable)
                     column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-                column->flushAlignBuffer(wd.align_buffer, true);
+                column->flushNTAlignBuffer();
             }
             for (auto [column_index, _] : row_layout.other_required_column_indexes)
             {
-                added_columns[column_index]->flushAlignBuffer(wd.align_buffer, true);
+                added_columns[column_index]->flushNTAlignBuffer();
             }
         }
 
         wd.insert_batch.clear();
     }
-
-    /*template <bool force>
-    void ALWAYS_INLINE FlushBatchIfNecessary3(size_t probe_buffer_size) const
-    {
-        const size_t prefetch_step = settings.probe_buffer_prefetch_step;
-        wd.probe_buffer_states.resize(prefetch_step);
-
-        size_t i = 0, k = 0;
-        size_t active_states = 0;
-        size_t probe_buffer2_size = 0;
-        while (i < probe_buffer_size || active_states != 0)
-        {
-            k = k == prefetch_step ? 0 : k;
-            auto * state = &wd.probe_buffer_states[k];
-            if likely (state->has_work)
-            {
-                if (state->remaining_len > CPU_CACHE_LINE_SIZE)
-                {
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer2[state->offset], state->ptr, CPU_CACHE_LINE_SIZE);
-                    state->remaining_len -= CPU_CACHE_LINE_SIZE;
-                    state->offset += CPU_CACHE_LINE_SIZE;
-                    state->ptr = reinterpret_cast<RowPtr>(state->ptr) + CPU_CACHE_LINE_SIZE;
-
-                    PREFETCH_READ(state->ptr);
-                    ++k;
-                    continue;
-                }
-
-                switch (state->remaining_len)
-                {
-                case 16:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 16);
-                case 32:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 32);
-                case 48:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 48);
-                case 64:
-                    tiflash_compiler_builtin_memcpy(&wd.probe_buffer[state->offset], state->ptr, 64);
-                default:
-                    assert(false);
-                }
-                --active_states;
-            }
-
-            state->has_work = true;
-
-            ++k;
-        }
-
-        wd.align_buffer.resetIndex(force);
-        for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
-        {
-            IColumn * column = added_columns[column_index].get();
-            if (has_null_map && is_nullable)
-                column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
-            column->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
-        }
-        for (auto [column_index, _] : row_layout.other_required_column_indexes)
-        {
-            added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, wd.align_buffer);
-        }
-
-        wd.insert_batch.clear();
-        wd.probe_buffer_size = 0;
-    }*/
 
     void ALWAYS_INLINE FillNullMap(size_t size) const
     {

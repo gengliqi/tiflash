@@ -19,7 +19,6 @@
 #include <Interpreters/NullableUtils.h>
 
 #include "Columns/IColumn.h"
-#include "Common/ColumnsAlignBuffer.h"
 
 namespace DB
 {
@@ -626,17 +625,12 @@ Block HashJoin::doJoinBlock(JoinProbeContext & context, size_t stream_index)
         size_t added_rows [[maybe_unused]] = wd.selective_offsets.size();
         for (size_t i = 0; i < existing_columns; ++i)
         {
-            wd.align_buffer_for_left.resetIndex();
             auto mutable_column = block.safeGetByPosition(i).column->cloneEmpty();
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
             mutable_column->reserveAlign(added_rows, FULL_VECTOR_SIZE_AVX2);
 #endif
-            mutable_column->insertDisjunctFrom(
-                *block.safeGetByPosition(i).column.get(),
-                wd.selective_offsets,
-                &wd.align_buffer_for_left);
-            wd.align_buffer_for_left.resetIndex();
-            mutable_column->flushAlignBuffer(wd.align_buffer_for_left, true);
+            mutable_column->insertDisjunctFrom(*block.safeGetByPosition(i).column.get(), wd.selective_offsets);
+            mutable_column->flushNTAlignBuffer();
             block.safeGetByPosition(i).column = std::move(mutable_column);
         }
         //}

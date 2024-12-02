@@ -82,9 +82,9 @@ public:
 
     ALWAYS_INLINE size_t getJoinKeySize(const T &) { return sizeof(T); }
 
-    ALWAYS_INLINE void serializeJoinKey(const T & t, UInt8 * pos) { memcpy(pos, &t, sizeof(T)); }
+    ALWAYS_INLINE void serializeJoinKey(const T & t, char * pos) { memcpy(pos, &t, sizeof(T)); }
 
-    ALWAYS_INLINE T deserializeJoinKey(const UInt8 * pos)
+    ALWAYS_INLINE T deserializeJoinKey(const char * pos)
     {
         T t;
         memcpy(&t, pos, sizeof(T));
@@ -153,9 +153,9 @@ public:
 
     ALWAYS_INLINE size_t getJoinKeySize(const T &) { return sizeof(T); }
 
-    ALWAYS_INLINE void serializeJoinKey(const T & t, UInt8 * pos) { memcpy(pos, &t, sizeof(T)); }
+    ALWAYS_INLINE void serializeJoinKey(const T & t, char * pos) { memcpy(pos, &t, sizeof(T)); }
 
-    ALWAYS_INLINE T deserializeJoinKey(const UInt8 * pos)
+    ALWAYS_INLINE T deserializeJoinKey(const char * pos)
     {
         T key;
         memcpy(&key, pos, sizeof(T));
@@ -219,9 +219,9 @@ public:
 
     ALWAYS_INLINE size_t getJoinKeySize(const KeyType &) { return fixed_size_sum; }
 
-    ALWAYS_INLINE void serializeJoinKey(const KeyType & s, UInt8 * pos) { memcpy(pos, s.data, fixed_size_sum); }
+    ALWAYS_INLINE void serializeJoinKey(const KeyType & s, char * pos) { memcpy(pos, s.data, fixed_size_sum); }
 
-    ALWAYS_INLINE KeyType deserializeJoinKey(const UInt8 * pos) { return StringRef(pos, fixed_size_sum); }
+    ALWAYS_INLINE KeyType deserializeJoinKey(const char * pos) { return StringRef(pos, fixed_size_sum); }
 
     static constexpr bool joinKeyCompareHashFirst() { return true; }
 
@@ -267,13 +267,13 @@ public:
 
     ALWAYS_INLINE size_t getJoinKeySize(const StringRef & s) { return sizeof(UInt32) + s.size; }
 
-    ALWAYS_INLINE void serializeJoinKey(const StringRef & s, UInt8 * pos)
+    ALWAYS_INLINE void serializeJoinKey(const StringRef & s, char * pos)
     {
         std::memcpy(pos, &s.size, sizeof(UInt32));
         inline_memcpy(pos + sizeof(UInt32), s.data, s.size);
     }
 
-    ALWAYS_INLINE KeyType deserializeJoinKey(const UInt8 * pos)
+    ALWAYS_INLINE KeyType deserializeJoinKey(const char * pos)
     {
         StringRef s;
         std::memcpy(&s.size, pos, sizeof(UInt32));
@@ -343,13 +343,13 @@ public:
 
     ALWAYS_INLINE size_t getJoinKeySize(const StringRef & s) { return sizeof(UInt32) + s.size; }
 
-    ALWAYS_INLINE void serializeJoinKey(const StringRef & s, UInt8 * pos)
+    ALWAYS_INLINE void serializeJoinKey(const StringRef & s, char * pos)
     {
         memcpy(pos, &s.size, sizeof(UInt32));
         inline_memcpy(pos + sizeof(UInt32), s.data, s.size);
     }
 
-    ALWAYS_INLINE KeyType deserializeJoinKey(const UInt8 * pos)
+    ALWAYS_INLINE KeyType deserializeJoinKey(const char * pos)
     {
         StringRef s;
         memcpy(&s.size, pos, sizeof(UInt32));
@@ -429,13 +429,13 @@ public:
 
     ALWAYS_INLINE size_t getJoinKeySize(const StringRef & s) { return sizeof(UInt32) + s.size; }
 
-    ALWAYS_INLINE void serializeJoinKey(const StringRef & s, UInt8 * pos)
+    ALWAYS_INLINE void serializeJoinKey(const StringRef & s, char * pos)
     {
         memcpy(pos, &s.size, sizeof(UInt32));
         inline_memcpy(pos + sizeof(UInt32), s.data, s.size);
     }
 
-    ALWAYS_INLINE KeyType deserializeJoinKey(const UInt8 * pos)
+    ALWAYS_INLINE KeyType deserializeJoinKey(const char * pos)
     {
         StringRef s;
         memcpy(&s.size, pos, sizeof(UInt32));

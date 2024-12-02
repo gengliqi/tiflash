@@ -77,7 +77,6 @@ void DataTypeDecimal<T>::serializeBinaryBulk(const IColumn & column, WriteBuffer
 template <typename T>
 void DataTypeDecimal<T>::deserializeBinaryBulk(
     IColumn & column,
-    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const
@@ -144,20 +143,6 @@ void DataTypeDecimal<T>::deserializeTextJSON(IColumn &, ReadBuffer &) const
 {
     // TODO
     throw Exception("Not yet implemented.");
-}
-
-template <typename T>
-void DataTypeDecimal<T>::serializeTextCSV(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
-{
-    serializeText(column, row_num, ostr);
-}
-
-template <typename T>
-void DataTypeDecimal<T>::deserializeTextCSV(IColumn & column, ReadBuffer & istr, const char /*delimiter*/) const
-{
-    T x{};
-    readCSVDecimal(x, istr, precision, scale);
-    static_cast<ColumnType &>(column).getData().push_back(x);
 }
 
 template <typename T>

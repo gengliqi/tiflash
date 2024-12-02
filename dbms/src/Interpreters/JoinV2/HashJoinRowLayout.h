@@ -23,12 +23,12 @@ namespace DB
 
 constexpr size_t ROW_ALIGN = 4;
 
-using RowPtr = UInt8 *;
+using RowPtr = char *;
 using RowPtrs = PaddedPODArray<RowPtr>;
 
 struct RowContainer
 {
-    PaddedPODArray<UInt8> data;
+    PaddedPODArray<char> data;
     PaddedPODArray<size_t> offsets;
     PaddedPODArray<size_t> hashes;
 

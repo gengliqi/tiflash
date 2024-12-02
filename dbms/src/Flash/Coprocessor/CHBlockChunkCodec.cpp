@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <Common/ColumnsAlignBuffer.h>
 #include <Common/TiFlashException.h>
 #include <DataStreams/IBlockInputStream.h>
 #include <DataStreams/NativeBlockInputStream.h>
@@ -21,6 +20,7 @@
 #include <Flash/Coprocessor/CHBlockChunkCodec.h>
 #include <Flash/Coprocessor/DAGUtils.h>
 #include <IO/Buffer/ReadBufferFromString.h>
+#include <TiDB/Decode/TypeMapping.h>
 
 namespace DB
 {
@@ -98,21 +98,28 @@ void WriteColumnData(const IDataType & type, const ColumnPtr & column, WriteBuff
     IDataType::OutputStreamGetter output_stream_getter = [&](const IDataType::SubstreamPath &) {
         return &ostr;
     };
-    type.serializeBinaryBulkWithMultipleStreams(*full_column, output_stream_getter, offset, limit, false, {});
+    type.serializeBinaryBulkWithMultipleStreams(
+        *full_column,
+        output_stream_getter,
+        offset,
+        limit,
+        /*position_independent_encoding=*/true,
+        {});
 }
 
-void CHBlockChunkCodec::readData(
-    const IDataType & type,
-    IColumn & column,
-    ColumnsAlignBufferAVX2 * align_buffer,
-    ReadBuffer & istr,
-    size_t rows)
+void CHBlockChunkCodec::readData(const IDataType & type, IColumn & column, ReadBuffer & istr, size_t rows)
 {
     assert(column.empty());
     IDataType::InputStreamGetter input_stream_getter = [&](const IDataType::SubstreamPath &) {
         return &istr;
     };
-    type.deserializeBinaryBulkWithMultipleStreams(column, align_buffer, input_stream_getter, rows, 0, false, {});
+    type.deserializeBinaryBulkWithMultipleStreams(
+        column,
+        input_stream_getter,
+        rows,
+        0,
+        /*position_independent_encoding=*/true,
+        {});
 }
 
 size_t ApproxBlockBytes(const Block & block)
@@ -170,7 +177,6 @@ Block CHBlockChunkCodec::decodeImpl(ReadBuffer & istr, size_t reserve_size)
     size_t rows = 0;
     readBlockMeta(istr, columns, rows);
 
-    ColumnsAlignBufferAVX2 align_buffer;
     for (size_t i = 0; i < columns; ++i)
     {
         ColumnWithTypeAndName column;
@@ -196,9 +202,8 @@ Block CHBlockChunkCodec::decodeImpl(ReadBuffer & istr, size_t reserve_size)
 
         if (rows) /// If no rows, nothing to read.
         {
-            align_buffer.resetIndex();
-            readData(*column.type, *read_column, &align_buffer, istr, rows);
-            read_column->flushAlignBuffer(align_buffer, false);
+            readData(*column.type, *read_column, istr, rows);
+            read_column->flushNTAlignBuffer();
         }
 
         column.column = std::move(read_column);

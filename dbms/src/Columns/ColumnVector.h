@@ -220,10 +220,15 @@ public:
         data.resize_fill(data.size() + length, value);
     }
 
-    void insertDisjunctFrom(
-        const IColumn & src,
-        const IColumn::Offsets & position_vec,
-        ColumnsAlignBufferAVX2 * align_buffer) override;
+    void insertDisjunctFrom(const IColumn & src, const IColumn::Offsets & position_vec) override
+    {
+        const auto & src_container = static_cast<const Self &>(src).getData();
+        size_t old_size = data.size();
+        size_t to_add_size = position_vec.size();
+        data.resize(old_size + to_add_size);
+        for (size_t i = 0; i < to_add_size; ++i)
+            data[i + old_size] = src_container[position_vec[i]];
+    }
 
     void insertMany(const Field & field, size_t length) override
     {
@@ -313,73 +318,35 @@ public:
         return pos + sizeof(T);
     }
 
-    void countSerializeByteSize(PaddedPODArray<size_t> & byte_size) const override
-    {
-        if unlikely (byte_size.size() != data.size())
-            byte_size.resize(data.size());
+    void countSerializeByteSize(PaddedPODArray<size_t> & byte_size) const override;
+    void countSerializeByteSizeForColumnArray(
+        PaddedPODArray<size_t> & byte_size,
+        const IColumn::Offsets & array_offsets) const override;
 
-        size_t size = byte_size.size();
-        for (size_t i = 0; i < size; ++i)
-            byte_size[i] += sizeof(T);
-    }
-
-    void serializeToPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end, bool has_null) const override
-    {
-        if (has_null)
-            serializeToPosImpl<true>(pos, start, end);
-        else
-            serializeToPosImpl<false>(pos, start, end);
-    }
-
+    void serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t length, bool has_null) const override;
     template <bool has_null>
-    void serializeToPosImpl(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end) const
-    {
-        if unlikely (pos.size() != data.size())
-            pos.resize(data.size());
+    void serializeToPosImpl(PaddedPODArray<char *> & pos, size_t start, size_t length) const;
 
-        for (size_t i = start; i < end; ++i)
-        {
-            if constexpr (has_null)
-            {
-                if (pos[i] == nullptr)
-                    continue;
-            }
-            std::memcpy(pos[i], &data[i], sizeof(T));
-            pos[i] += sizeof(T);
-        }
-    }
-
-    void serializeToPosNew(
-        PaddedPODArray<UInt8 *> & pos,
-        size_t pos_start,
-        size_t data_start,
+    void serializeToPosForColumnArray(
+        PaddedPODArray<char *> & pos,
+        size_t start,
         size_t length,
-        bool has_null) const override
-    {
-        if (has_null)
-            serializeToPosNewImpl<true>(pos, pos_start, data_start, length);
-        else
-            serializeToPosNewImpl<false>(pos, pos_start, data_start, length);
-    }
-
+        bool has_null,
+        const IColumn::Offsets & array_offsets) const override;
     template <bool has_null>
-    void serializeToPosNewImpl(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length) const
-    {
-        for (size_t i = 0; i < length; ++i)
-        {
-            if constexpr (has_null)
-            {
-                if (pos[i + pos_start] == nullptr)
-                    continue;
-            }
-            std::memcpy(pos[i + pos_start], &data[i + data_start], sizeof(T));
-            pos[i + pos_start] += sizeof(T);
-        }
-    }
+    void serializeToPosForColumnArrayImpl(
+        PaddedPODArray<char *> & pos,
+        size_t start,
+        size_t length,
+        const IColumn::Offsets & array_offsets) const;
 
-    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, ColumnsAlignBufferAVX2 & align_buffer) override;
+    void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos, bool use_nt_align_buffer) override;
+    void deserializeAndInsertFromPosForColumnArray(
+        PaddedPODArray<char *> & pos,
+        const IColumn::Offsets & array_offsets,
+        bool use_nt_align_buffer) override;
 
-    void flushAlignBuffer(ColumnsAlignBufferAVX2 & align_buffer, bool from_join) override;
+    void flushNTAlignBuffer() override;
 
     void updateHashWithValue(size_t n, SipHash & hash, const TiDB::TiDBCollatorPtr &, String &) const override;
     void updateHashWithValues(IColumn::HashValues & hash_values, const TiDB::TiDBCollatorPtr &, String &)
@@ -481,6 +448,7 @@ public:
 
 protected:
     Container data;
+    std::unique_ptr<ColumnNTAlignBufferAVX2> align_buffer_ptr;
 };
 
 

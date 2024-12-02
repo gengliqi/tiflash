@@ -264,7 +264,6 @@ void LogBlockInputStream::readData(
 
     type.deserializeBinaryBulkWithMultipleStreams(
         column,
-        nullptr,
         stream_getter,
         max_rows_to_read,
         0,

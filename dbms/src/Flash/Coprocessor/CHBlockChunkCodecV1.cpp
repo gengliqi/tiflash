@@ -20,8 +20,9 @@
 #include <IO/Buffer/ReadBufferFromString.h>
 #include <IO/Compression/CompressionCodecFactory.h>
 #include <IO/Compression/CompressionInfo.h>
-
-#include "Common/ColumnsAlignBuffer.h"
+#include <IO/ReadHelpers.h>
+#include <IO/VarInt.h>
+#include <IO/WriteHelpers.h>
 
 namespace DB
 {
@@ -126,7 +127,6 @@ static inline void decodeColumnsByBlock(ReadBuffer & istr, Block & res, size_t r
             //#endif
         }
     }
-    //ColumnsAlignBufferAVX2 align_buffer;
     // Contain columns of multi blocks
     size_t decode_rows = 0;
     for (size_t sz = 0; decode_rows < rows_to_read; decode_rows += sz)
@@ -135,25 +135,19 @@ static inline void decodeColumnsByBlock(ReadBuffer & istr, Block & res, size_t r
 
         assert(sz > 0);
 
-        //align_buffer.resetIndex();
         // Decode columns of one block
         for (size_t i = 0; i < column_size; ++i)
         {
             /// Data
             res.getByPosition(i).type->deserializeBinaryBulkWithMultipleStreams(
                 *mutable_columns[i],
-                nullptr,
                 [&](const IDataType::SubstreamPath &) { return &istr; },
                 sz,
                 0,
-                {},
+                /*position_independent_encoding=*/true,
                 {});
         }
     }
-
-    //align_buffer.resetIndex();
-    //for (size_t i = 0; i < column_size; ++i)
-    //    mutable_columns[i]->flushAlignBuffer(align_buffer, false);
 
     assert(decode_rows == rows_to_read);
 

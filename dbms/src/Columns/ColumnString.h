@@ -51,9 +51,12 @@ private:
     /// For convenience, every string ends with terminating zero byte. Note that strings could contain zero bytes in the middle.
     Chars_t chars;
 
+    std::unique_ptr<ColumnNTAlignBufferAVX2[]> align_buffer_ptrs;
+
+    /// offset[-1] is 0 which is a guarantee from PODArray.
     size_t ALWAYS_INLINE offsetAt(ssize_t i) const { return offsets[i - 1]; }
 
-    /// Size of i-th element, including terminating zero.
+    /// Size of i-th element, including terminating zero. offset[-1] is 0 which is a guarantee from PODArray.
     size_t ALWAYS_INLINE sizeAt(ssize_t i) const { return offsets[i] - offsets[i - 1]; }
 
     template <bool positive>
@@ -165,8 +168,13 @@ public:
             insertFromImpl(src, position);
     }
 
-    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec, ColumnsAlignBufferAVX2 * align_buffer)
-        override;
+    void insertDisjunctFrom(const IColumn & src_, const Offsets & position_vec) override
+    {
+        const auto & src = static_cast<const ColumnString &>(src_);
+        offsets.reserve(offsets.size() + position_vec.size());
+        for (auto position : position_vec)
+            insertFromImpl(src, position);
+    }
 
     template <bool add_terminating_zero>
     ALWAYS_INLINE inline void insertDataImpl(const char * pos, size_t length)
@@ -242,83 +250,35 @@ public:
         return pos + string_size;
     }
 
-    void countSerializeByteSize(PaddedPODArray<size_t> & byte_size) const override
-    {
-        if unlikely (byte_size.size() != offsets.size())
-            byte_size.resize(offsets.size());
+    void countSerializeByteSize(PaddedPODArray<size_t> & byte_size) const override;
+    void countSerializeByteSizeForColumnArray(
+        PaddedPODArray<size_t> & byte_size,
+        const IColumn::Offsets & array_offsets) const override;
 
-        size_t size = byte_size.size();
-        for (size_t i = 0; i < size; ++i)
-            byte_size[i] += sizeof(size_t) + sizeAt(i);
-    }
-
-    void serializeToPos(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end, bool has_null) const override
-    {
-        if (has_null)
-            serializeToPosImpl<true>(pos, start, end);
-        else
-            serializeToPosImpl<false>(pos, start, end);
-    }
-
+    void serializeToPos(PaddedPODArray<char *> & pos, size_t start, size_t length, bool has_null) const override;
     template <bool has_null>
-    void serializeToPosImpl(PaddedPODArray<UInt8 *> & pos, size_t start, size_t end) const
-    {
-        if unlikely (pos.size() != offsets.size())
-            pos.resize(offsets.size());
+    void serializeToPosImpl(PaddedPODArray<char *> & pos, size_t start, size_t length) const;
 
-        for (size_t i = start; i < end; ++i)
-        {
-            if constexpr (has_null)
-            {
-                if (pos[i] == nullptr)
-                    continue;
-            }
-
-            UInt32 str_size = sizeAt(i);
-            std::memcpy(pos[i], &str_size, sizeof(UInt32));
-            pos[i] += sizeof(UInt32);
-            inline_memcpy(pos[i], &chars[offsetAt(i)], str_size);
-            pos[i] += str_size;
-        }
-    }
-
-    void serializeToPosNew(
-        PaddedPODArray<UInt8 *> & pos,
-        size_t pos_start,
-        size_t data_start,
+    void serializeToPosForColumnArray(
+        PaddedPODArray<char *> & pos,
+        size_t start,
         size_t length,
-        bool has_null) const override
-    {
-        if (has_null)
-            serializeToPosNewImpl<true>(pos, pos_start, data_start, length);
-        else
-            serializeToPosNewImpl<false>(pos, pos_start, data_start, length);
-    }
-
+        bool has_null,
+        const IColumn::Offsets & array_offsets) const override;
     template <bool has_null>
-    void serializeToPosNewImpl(PaddedPODArray<UInt8 *> & pos, size_t pos_start, size_t data_start, size_t length) const
-    {
-        for (size_t i = 0; i < length; ++i)
-        {
-            if constexpr (has_null)
-            {
-                if (pos[i + pos_start] == nullptr)
-                    continue;
-            }
+    void serializeToPosForColumnArrayImpl(
+        PaddedPODArray<char *> & pos,
+        size_t start,
+        size_t length,
+        const IColumn::Offsets & array_offsets) const;
 
-            size_t pos_index = i + pos_start;
-            size_t data_index = i + data_start;
-            UInt32 str_size = sizeAt(data_index);
-            std::memcpy(pos[pos_index], &str_size, sizeof(UInt32));
-            pos[pos_index] += sizeof(UInt32);
-            inline_memcpy(pos[pos_index], &chars[offsetAt(data_index)], str_size);
-            pos[pos_index] += str_size;
-        }
-    }
+    void deserializeAndInsertFromPos(PaddedPODArray<char *> & pos, bool use_nt_align_buffer) override;
+    void deserializeAndInsertFromPosForColumnArray(
+        PaddedPODArray<char *> & pos,
+        const IColumn::Offsets & array_offsets,
+        bool use_nt_align_buffer) override;
 
-    void deserializeAndInsertFromPos(PaddedPODArray<UInt8 *> & pos, ColumnsAlignBufferAVX2 & align_buffer) override;
-
-    void flushAlignBuffer(ColumnsAlignBufferAVX2 & align_buffer, bool) override;
+    void flushNTAlignBuffer() override;
 
     void updateHashWithValue(
         size_t n,

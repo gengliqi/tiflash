@@ -15,7 +15,6 @@
 #pragma once
 
 #include <Common/COWPtr.h>
-#include <Common/ColumnsAlignBuffer.h>
 #include <Core/Field.h>
 
 #include <boost/noncopyable.hpp>
@@ -102,7 +101,7 @@ public:
         /// Index of tuple element, starting at 1.
         String tuple_element_name;
 
-        Substream(Type type)
+        Substream(Type type) // NOLINT(google-explicit-constructor)
             : type(type)
         {}
     };
@@ -125,6 +124,8 @@ public:
       * offset must be not greater than size of column.
       * offset + limit could be greater than size of column
       *  - in that case, column is serialized till the end.
+      * `position_independent_encoding` - provide better performance when it is false, but it requires not to be
+      *     deserialized the data into a column with existing data.
       */
     virtual void serializeBinaryBulkWithMultipleStreams(
         const IColumn & column,
@@ -150,11 +151,12 @@ public:
     }
 
     /** Read no more than limit values and append them into column.
-      * avg_value_size_hint - if not zero, may be used to avoid reallocations while reading column of String type.
+      * `avg_value_size_hint` - if not zero, may be used to avoid reallocations while reading column of String type.
+      * `position_independent_encoding` - provide better performance when it is false, but it requires not to be
+      *     deserialized the data into a column with existing data.
       */
     virtual void deserializeBinaryBulkWithMultipleStreams(
         IColumn & column,
-        ColumnsAlignBufferAVX2 * align_buffer,
         const InputStreamGetter & getter,
         size_t limit,
         double avg_value_size_hint,
@@ -162,12 +164,11 @@ public:
         SubstreamPath & path) const
     {
         if (ReadBuffer * stream = getter(path))
-            deserializeBinaryBulk(column, align_buffer, *stream, limit, avg_value_size_hint);
+            deserializeBinaryBulk(column, *stream, limit, avg_value_size_hint);
     }
 
     void deserializeBinaryBulkWithMultipleStreams(
         IColumn & column,
-        ColumnsAlignBufferAVX2 * align_buffer,
         const InputStreamGetter & getter,
         size_t limit,
         double avg_value_size_hint,
@@ -176,7 +177,6 @@ public:
     {
         deserializeBinaryBulkWithMultipleStreams(
             column,
-            align_buffer,
             getter,
             limit,
             avg_value_size_hint,
@@ -187,16 +187,12 @@ public:
     /** Override these methods for data types that require just single stream (most of data types).
       */
     virtual void serializeBinaryBulk(const IColumn & column, WriteBuffer & ostr, size_t offset, size_t limit) const;
-    virtual void deserializeBinaryBulk(
-        IColumn & column,
-        ColumnsAlignBufferAVX2 * align_buffer,
-        ReadBuffer & istr,
-        size_t limit,
-        double avg_value_size_hint) const;
+    virtual void deserializeBinaryBulk(IColumn & column, ReadBuffer & istr, size_t limit, double avg_value_size_hint)
+        const;
 
     /** Serialization/deserialization of individual values.
       *
-      * These are helper methods for implementation of various formats to input/output for user (like CSV, JSON, etc.).
+      * These are helper methods for implementation of various formats to input/output for user (like TEXT, JSON, etc.).
       * There is no one-to-one correspondence between formats and these methods.
       * For example, TabSeparated and Pretty formats could use same helper method serializeTextEscaped.
       *
@@ -230,15 +226,6 @@ public:
 
     virtual void deserializeTextQuoted(IColumn & column, ReadBuffer & istr) const = 0;
 
-    /** Text serialization for the CSV format.
-      */
-    virtual void serializeTextCSV(const IColumn & column, size_t row_num, WriteBuffer & ostr) const = 0;
-
-    /** delimiter - the delimiter we expect when reading a string value that is not double-quoted
-      * (the delimiter is not consumed).
-      */
-    virtual void deserializeTextCSV(IColumn & column, ReadBuffer & istr, const char delimiter) const = 0;
-
     /** Text serialization for displaying on a terminal or saving into a text file, and the like.
       * Without escaping or quoting.
       */
@@ -254,13 +241,6 @@ public:
         const FormatSettingsJSON & settings) const
         = 0;
     virtual void deserializeTextJSON(IColumn & column, ReadBuffer & istr) const = 0;
-
-    /** Text serialization for putting into the XML format.
-      */
-    virtual void serializeTextXML(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
-    {
-        serializeText(column, row_num, ostr);
-    }
 
     /** Create empty column for corresponding type.
       */
@@ -284,8 +264,7 @@ public:
     /// Checks that two instances belong to the same type
     virtual bool equals(const IDataType & rhs) const = 0;
 
-    virtual ~IDataType() {}
-
+    virtual ~IDataType() = default;
 
     /// Various properties on behaviour of data type.
 

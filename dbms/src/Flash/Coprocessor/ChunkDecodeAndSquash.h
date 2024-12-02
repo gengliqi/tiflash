@@ -37,7 +37,6 @@ private:
     CHBlockChunkCodec codec;
     std::optional<Block> accumulated_block;
     size_t rows_limit;
-    //ColumnsAlignBufferAVX2 align_buffer;
 };
 
 

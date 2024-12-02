@@ -179,7 +179,6 @@ static NO_INLINE void deserializeBinarySSE2(
 
 void DataTypeString::deserializeBinaryBulk(
     IColumn & column,
-    ColumnsAlignBufferAVX2 * align_buffer [[maybe_unused]],
     ReadBuffer & istr,
     size_t limit,
     double avg_value_size_hint) const
@@ -199,19 +198,19 @@ void DataTypeString::deserializeBinaryBulk(
     }
 
     size_t size_to_reserve = chars.size() + static_cast<size_t>(std::ceil(limit * avg_chars_size));
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-    chars.reserve(size_to_reserve, FULL_VECTOR_SIZE_AVX2);
-#else
+    //#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    //    chars.reserve(size_to_reserve, FULL_VECTOR_SIZE_AVX2);
+    //#else
     chars.reserve(size_to_reserve);
-#endif
+    //#endif
 
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
-    offsets.reserve(offsets.size() + limit, FULL_VECTOR_SIZE_AVX2);
-#else
+    //#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    //    offsets.reserve(offsets.size() + limit, FULL_VECTOR_SIZE_AVX2);
+    //#else
     offsets.reserve(offsets.size() + limit);
-#endif
+    //#endif
 
-#ifdef TIFLASH_ENABLE_AVX_SUPPORT
+    /*#ifdef TIFLASH_ENABLE_AVX_SUPPORT
     if (align_buffer)
     {
         size_t prev_size = offsets.size();
@@ -354,7 +353,7 @@ void DataTypeString::deserializeBinaryBulk(
         }
         throw Exception("AlignBuffer is not used due to unaligned data");
     }
-#endif
+#endif*/
     if (avg_chars_size >= 64)
         deserializeBinarySSE2<4>(chars, offsets, istr, limit);
     else if (avg_chars_size >= 48)
@@ -434,24 +433,6 @@ void DataTypeString::serializeTextJSON(
 void DataTypeString::deserializeTextJSON(IColumn & column, ReadBuffer & istr) const
 {
     read(column, [&](ColumnString::Chars_t & data) { readJSONStringInto(data, istr); });
-}
-
-
-void DataTypeString::serializeTextXML(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
-{
-    writeXMLString(static_cast<const ColumnString &>(column).getDataAt(row_num), ostr);
-}
-
-
-void DataTypeString::serializeTextCSV(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
-{
-    writeCSVString<>(static_cast<const ColumnString &>(column).getDataAt(row_num), ostr);
-}
-
-
-void DataTypeString::deserializeTextCSV(IColumn & column, ReadBuffer & istr, const char /*delimiter*/) const
-{
-    read(column, [&](ColumnString::Chars_t & data) { readCSVStringInto(data, istr); });
 }
 
 

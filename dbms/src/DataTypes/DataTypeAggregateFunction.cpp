@@ -127,7 +127,6 @@ void DataTypeAggregateFunction::serializeBinaryBulk(
 
 void DataTypeAggregateFunction::deserializeBinaryBulk(
     IColumn & column,
-    ColumnsAlignBufferAVX2 *,
     ReadBuffer & istr,
     size_t limit,
     double /*avg_value_size_hint*/) const
@@ -243,26 +242,6 @@ void DataTypeAggregateFunction::deserializeTextJSON(IColumn & column, ReadBuffer
 {
     String s;
     readJSONString(s, istr);
-    deserializeFromString(function, column, s);
-}
-
-
-void DataTypeAggregateFunction::serializeTextXML(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
-{
-    writeXMLString(serializeToString(function, column, row_num), ostr);
-}
-
-
-void DataTypeAggregateFunction::serializeTextCSV(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
-{
-    writeCSV(serializeToString(function, column, row_num), ostr);
-}
-
-
-void DataTypeAggregateFunction::deserializeTextCSV(IColumn & column, ReadBuffer & istr, const char delimiter) const
-{
-    String s;
-    readCSV(s, istr, delimiter);
     deserializeFromString(function, column, s);
 }
 
