@@ -14,8 +14,6 @@
 
 #include <Interpreters/JoinV2/HashJoinKey.h>
 
-#include "Interpreters/JoinV2/HashJoinRowLayout.h"
-
 namespace DB
 {
 
