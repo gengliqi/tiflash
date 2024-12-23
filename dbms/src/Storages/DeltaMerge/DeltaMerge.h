@@ -556,7 +556,10 @@ private:
         {
             // Simply return columns in current stable block.
             for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
+            {
+                RUNTIME_ASSERT(cur_stable_block_columns[column_id]->use_count() <= 1, "column {} use count {}", column_id, cur_stable_block_columns[column_id]->use_count());
                 output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
+            }
 
             // Let's return current stable block directly. No more expending.
             output_write_limit = 0;
