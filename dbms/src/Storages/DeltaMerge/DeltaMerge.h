@@ -431,6 +431,13 @@ private:
         cur_stable_block_pos = 0;
         cur_stable_block_start_offset = 0;
         auto block = stable_input_stream->read();
+
+        for (size_t column_id = 0; column_id < num_columns; ++column_id)
+            RUNTIME_ASSERT(
+                block.getByPosition(column_id).column->use_count() <= 1,
+                "block column {} use count {}",
+                column_id,
+                block.getByPosition(column_id).column->use_count());
         if (!block || !block.rows())
             return false;
 
@@ -557,7 +564,11 @@ private:
             // Simply return columns in current stable block.
             for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
             {
-                RUNTIME_ASSERT(cur_stable_block_columns[column_id]->use_count() <= 1, "column {} use count {}", column_id, cur_stable_block_columns[column_id]->use_count());
+                RUNTIME_ASSERT(
+                    cur_stable_block_columns[column_id]->use_count() <= 1,
+                    "cur_stable_block_columns column {} use count {}",
+                    column_id,
+                    cur_stable_block_columns[column_id]->use_count());
                 output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
             }
 
