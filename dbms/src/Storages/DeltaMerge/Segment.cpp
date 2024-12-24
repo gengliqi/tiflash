@@ -1039,7 +1039,7 @@ BlockInputStreamPtr Segment::getInputStreamModeNormal(
     }
     else
     {
-        stream = getPlacedStream(
+        auto skip_stream = getPlacedStream<true>(
             dm_context,
             *read_info.read_columns,
             real_ranges,
@@ -1052,6 +1052,11 @@ BlockInputStreamPtr Segment::getInputStreamModeNormal(
             read_tag,
             start_ts,
             need_row_id);
+
+        size_t skip = 0;
+        skip_stream->getSkippedRows(skip);
+
+        stream = skip_stream;
     }
 
     stream = std::make_shared<DMRowKeyFilterBlockInputStream<true>>(stream, real_ranges, 0);

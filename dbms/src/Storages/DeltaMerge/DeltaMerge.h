@@ -133,11 +133,11 @@ public:
         , stable_rows(stable_rows_)
         , tracing_id(tracing_id_)
     {
-        if constexpr (skippable_place)
-        {
-            if (!rowkey_range.isEndInfinite())
-                throw Exception("The end of rowkey range should be +Inf in skippable_place mode");
-        }
+        //if constexpr (skippable_place)
+        //{
+        //    if (!rowkey_range.isEndInfinite())
+        //        throw Exception("The end of rowkey range should be +Inf in skippable_place mode");
+        //}
 
         header = stable_input_stream->getHeader();
         num_columns = header.columns();
