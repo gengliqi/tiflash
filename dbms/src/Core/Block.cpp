@@ -725,6 +725,9 @@ void Block::clear()
     info = BlockInfo();
     data.clear();
     index_by_name.clear();
+    start_offset = 0;
+    segment_row_id_col = nullptr;
+    rs_result = DM::RSResult::Some;
 }
 
 void Block::swap(Block & other) noexcept
