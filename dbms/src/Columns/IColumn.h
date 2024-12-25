@@ -150,6 +150,13 @@ public:
     /// Note: the source column and the destination column must be of the same type, can not ColumnXXX->insertDisjunctFrom(ConstColumnXXX, ...)
     virtual void insertDisjunctFrom(const IColumn & src, const std::vector<size_t> & position_vec) = 0;
 
+    virtual void insertManyRangeFrom(
+        const PaddedPODArray<const IColumn *> &,
+        const std::vector<std::pair<size_t, size_t>> &)
+    {
+        throw Exception("Method insertManyRangeFrom is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);
+    }
+
     /// Appends one field multiple times. Can be optimized in inherited classes.
     virtual void insertMany(const Field & field, size_t length)
     {

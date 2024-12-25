@@ -504,6 +504,20 @@ public:
         const RowKeyRange & segment_range,
         const RowKeyRange & relevant_range,
         UInt64 start_ts);
+
+    size_t fillInsertPreData(
+        size_t offset,
+        size_t limit,
+        std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
+        std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
+        std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
+        std::vector<UInt32> * row_ids = nullptr);
+
+    void fillInsertColumnPtrs(
+        std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
+        std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
+        std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
+        const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits);
 };
 
 class DeltaValueInputStream : public IBlockInputStream

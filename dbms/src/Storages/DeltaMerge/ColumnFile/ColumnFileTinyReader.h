@@ -63,6 +63,11 @@ public:
         size_t rows_limit,
         const RowKeyRange * range) override;
 
+    void fillInsertColumnPtrs(
+        std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
+        const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
+        const std::vector<size_t> & offsets_in_insert) override;
+
     Columns readFromDisk(
         const IColumnFileDataProviderPtr & data_provider,
         const std::span<const ColumnDefine> & column_defines) const;

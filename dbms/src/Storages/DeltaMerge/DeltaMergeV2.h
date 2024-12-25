@@ -28,6 +28,9 @@
 #include <Storages/DeltaMerge/RowKeyFilter.h>
 #include <Storages/DeltaMerge/SkippableBlockInputStream.h>
 
+#include "Common/PODArray.h"
+#include "common/logger_useful.h"
+
 namespace ProfileEvents
 {
 extern const Event DTDeltaIndexError;
@@ -44,8 +47,8 @@ namespace DB::DM
 /// Note that the columns in stable input stream and value space must exactly the same, including name, type, and id.
 /// The first column must be PK column.
 /// This class does not guarantee that the rows in the return blocks are filltered by range.
-template <bool skippable_place = false, bool need_row_id = false>
-class DeltaMergeBlockInputStream final
+template <bool need_row_id = false>
+class DeltaMergeV2BlockInputStream final
     : public SkippableBlockInputStream
     , Allocator<false>
 {
@@ -61,12 +64,6 @@ private:
     // > 0 : some rows are ignored by delta tree (deletes), should not write into output.
     // < 0 : some rows are filtered out by stable filter, should not write into output.
     ssize_t stable_ignore = 0;
-
-    /// Those vars are only used in skippable_place mode
-    size_t sk_call_status = 0; // 0: initial, 1: called once by getSkippedRows
-    size_t sk_skip_stable_rows = 0;
-    size_t sk_skip_total_rows = 0;
-    Block sk_first_block;
 
     DeltaValueReaderPtr delta_value_reader;
     DeltaIndexIterator delta_index_it;
@@ -113,8 +110,14 @@ private:
 
     const String tracing_id;
 
+    std::vector<Columns> insert_stable_columns;
+    std::vector<PaddedPODArray<const IColumn *>> insert_column_ptrs;
+    std::vector<std::pair<size_t, size_t>> insert_offset_and_limits;
+    std::vector<std::vector<size_t>> persisted_files_offsets_in_insert;
+    std::vector<std::vector<size_t>> mem_table_offsets_in_insert;
+
 public:
-    DeltaMergeBlockInputStream(
+    DeltaMergeV2BlockInputStream(
         const SkippableBlockInputStreamPtr & stable_input_stream_,
         const DeltaValueReaderPtr & delta_value_reader_,
         const DeltaIndexIterator & delta_index_start_,
@@ -134,14 +137,9 @@ public:
         , stable_rows(stable_rows_)
         , tracing_id(tracing_id_)
     {
-        //if constexpr (skippable_place)
-        //{
-        //    if (!rowkey_range.isEndInfinite())
-        //        throw Exception("The end of rowkey range should be +Inf in skippable_place mode");
-        //}
-
         header = stable_input_stream->getHeader();
         num_columns = header.columns();
+        insert_column_ptrs.resize(num_columns);
 
         if (delta_index_it == delta_index_end)
         {
@@ -162,24 +160,7 @@ public:
 
     bool getSkippedRows(size_t & skip_rows) override
     {
-        if constexpr (!skippable_place)
-        {
-            skip_rows = 0;
-            return true;
-        }
-
-        if (sk_call_status != 0)
-            throw Exception("Call #getSkippedRows() more than once");
-
-        stable_input_stream->getSkippedRows(sk_skip_stable_rows);
-        stable_ignore -= sk_skip_stable_rows;
-
-        sk_first_block = doRead();
-
-        skip_rows = sk_skip_total_rows;
-        sk_skip_stable_rows = 0;
-        sk_skip_total_rows = 0;
-        ++sk_call_status;
+        skip_rows = 0;
         return true;
     }
 
@@ -191,20 +172,6 @@ public:
 
     Block read() override
     {
-        if constexpr (skippable_place)
-        {
-            if (sk_call_status == 0)
-                throw Exception("Unexpected call #read() in status 0");
-            if (sk_call_status == 1 && sk_first_block)
-            {
-                Block tmp;
-                tmp.swap(sk_first_block);
-                beforeReturnBlock(tmp);
-                ++sk_call_status;
-                return tmp;
-            }
-        }
-
         auto block = doRead();
         if (block)
             beforeReturnBlock(block);
@@ -272,6 +239,11 @@ private:
             last_value = last_value_ref.toRowKeyValue();
             last_value_ref = last_value.toRowKeyValueRef();
 
+            if (last_value_ref > rowkey_range.getEnd())
+            {
+                is_finished = true;
+            }
+
             if constexpr (need_row_id)
             {
                 RUNTIME_CHECK_MSG(
@@ -313,11 +285,34 @@ private:
             if (limit == max_block_size)
                 continue;
 
+            if (!insert_offset_and_limits.empty())
+            {
+                size_t insert_offset_and_limits_size = insert_offset_and_limits.size();
+                for (size_t i = 0; i < num_columns; ++i)
+                    RUNTIME_CHECK_MSG(insert_column_ptrs[i].size() == insert_offset_and_limits_size, "size not equal");
+
+                delta_value_reader->fillInsertColumnPtrs(
+                    insert_column_ptrs,
+                    persisted_files_offsets_in_insert,
+                    mem_table_offsets_in_insert,
+                    insert_offset_and_limits);
+
+                for (size_t i = 0; i < num_columns; ++i)
+                    columns[i]->insertManyRangeFrom(insert_column_ptrs[i], insert_offset_and_limits);
+
+                insert_stable_columns.clear();
+                insert_stable_columns.emplace_back(cur_stable_block_columns);
+                insert_offset_and_limits.clear();
+                for (size_t i = 0; i < num_columns; ++i)
+                    insert_column_ptrs[i].clear();
+            }
+
             auto block = header.cloneWithColumns(std::move(columns));
             if constexpr (need_row_id)
             {
                 block.setSegmentRowIdCol(std::move(seg_row_id_col));
             }
+
             return block;
         }
         return {};
@@ -375,22 +370,9 @@ private:
                 else
                 {
                     // Insert.
-                    bool do_write = true;
-                    if constexpr (skippable_place)
-                    {
-                        if (delta_index_it.getSid() < sk_skip_stable_rows)
-                        {
-                            do_write = false;
-                            sk_skip_total_rows += delta_index_it.getCount();
-                        }
-                    }
-
-                    if (do_write)
-                    {
-                        use_delta_offset = delta_index_it.getValue();
-                        use_delta_rows = delta_index_it.getCount();
-                        writeInsertFromDelta(output_columns, output_write_limit);
-                    }
+                    use_delta_offset = delta_index_it.getValue();
+                    use_delta_rows = delta_index_it.getCount();
+                    writeInsertFromDelta(output_columns, output_write_limit);
                 }
             }
 
@@ -440,6 +422,8 @@ private:
         cur_stable_block_start_offset = block.startOffset();
         for (size_t column_id = 0; column_id < num_columns; ++column_id)
             cur_stable_block_columns.push_back(block.getByPosition(column_id).column);
+
+        insert_stable_columns.emplace_back(cur_stable_block_columns);
         return true;
     }
 
@@ -476,15 +460,11 @@ private:
             if (use_stable_rows > stable_ignore_abs)
             {
                 use_stable_rows += stable_ignore;
-                if constexpr (skippable_place)
-                    sk_skip_total_rows += stable_ignore_abs;
                 stable_ignore = 0;
             }
             else
             {
                 stable_ignore += use_stable_rows;
-                if constexpr (skippable_place)
-                    sk_skip_total_rows += use_stable_rows;
                 // Nothing to write, because those rows we want to write are skipped already.
                 use_stable_rows = 0;
             }
@@ -549,13 +529,12 @@ private:
         auto [final_offset, final_limit]
             = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], offset, limit);
 
-        if constexpr (skippable_place)
-        {
-            sk_skip_total_rows += final_offset - offset;
-        }
-
         if (!output_offset && !final_offset && final_limit == cur_stable_block_rows)
         {
+            RUNTIME_CHECK_MSG(
+                insert_offset_and_limits.empty(),
+                "insert_offset_and_limits does not empty, size {}",
+                insert_offset_and_limits.size());
             // Simply return columns in current stable block.
             for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
                 output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
@@ -571,11 +550,12 @@ private:
                 for (size_t column_id = 0; column_id < num_columns; ++column_id)
                     output_columns[column_id]->reserve(max_block_size);
             }
+
+            insert_offset_and_limits.emplace_back(final_offset, final_limit);
             for (size_t column_id = 0; column_id < num_columns; ++column_id)
-                output_columns[column_id]->insertRangeFrom(
-                    *cur_stable_block_columns[column_id],
-                    final_offset,
-                    final_limit);
+            {
+                insert_column_ptrs[column_id].emplace_back(cur_stable_block_columns[column_id].get());
+            }
 
             output_write_limit -= std::min(final_limit, output_write_limit);
         }
@@ -603,35 +583,31 @@ private:
         // Note that the rows between [use_delta_offset, use_delta_offset + write_rows) are guaranteed sorted,
         // otherwise we won't read them in the same range.
         size_t actual_write = 0;
-        bool is_out_of_range = false;
         if constexpr (need_row_id)
         {
             delta_row_ids.clear();
             delta_row_ids.reserve(write_rows);
-            actual_write = delta_value_reader->readRows(
-                output_columns,
+            actual_write = delta_value_reader->fillInsertPreData(
                 use_delta_offset,
                 write_rows,
-                &rowkey_range,
-                is_out_of_range,
+                insert_offset_and_limits,
+                persisted_files_offsets_in_insert,
+                mem_table_offsets_in_insert,
                 &delta_row_ids);
             fillSegmentRowId(delta_row_ids);
         }
         else
         {
-            actual_write = delta_value_reader
-                               ->readRows(output_columns, use_delta_offset, write_rows, &rowkey_range, is_out_of_range);
+            actual_write = delta_value_reader->fillInsertPreData(
+                use_delta_offset,
+                write_rows,
+                insert_offset_and_limits,
+                persisted_files_offsets_in_insert,
+                mem_table_offsets_in_insert);
         }
-
-        if constexpr (skippable_place)
-        {
-            sk_skip_total_rows += write_rows - actual_write;
-
-            if unlikely (is_out_of_range && sk_call_status > 0)
-            {
-                is_finished = true;
-            }
-        }
+        size_t sz = insert_offset_and_limits.size();
+        for (size_t column_id = 0; column_id < num_columns; ++column_id)
+            insert_column_ptrs[column_id].resize(sz);
 
         output_write_limit -= actual_write;
         use_delta_offset += write_rows;

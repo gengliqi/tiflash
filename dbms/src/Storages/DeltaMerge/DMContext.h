@@ -99,6 +99,7 @@ struct DMContext : private boost::noncopyable
     const bool read_stable_only;
     const bool enable_relevant_place;
     const bool enable_skippable_place;
+    const bool enable_delta_merge_v2;
 
     String tracing_id;
 

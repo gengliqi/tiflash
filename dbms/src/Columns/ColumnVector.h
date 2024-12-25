@@ -234,6 +234,36 @@ public:
         data.resize_fill(data.size() + length, static_cast<T>(field.get<T>()));
     }
 
+    void insertManyRangeFrom(
+        const PaddedPODArray<const IColumn *> & column_ptrs,
+        const std::vector<std::pair<size_t, size_t>> & offsets_and_limits) override
+    {
+        RUNTIME_CHECK_MSG(
+            column_ptrs.size() == offsets_and_limits.size(),
+            "column_ptrs size {} != offsets_and_limits size {}",
+            column_ptrs.size(),
+            offsets_and_limits.size());
+        size_t sz = column_ptrs.size();
+        size_t old_size = data.size();
+        for (size_t i = 0; i < sz; ++i)
+        {
+            size_t start = offsets_and_limits[i].first;
+            size_t length = offsets_and_limits[i].second;
+            data.resize(old_size + length);
+            const auto * src_vec = static_cast<const ColumnVector *>(column_ptrs[i]);
+            if (length <= 4)
+            {
+                for (size_t j = 0; j < length; ++j)
+                    std::memcpy(&data[old_size + j], &src_vec->data[start + j], sizeof(T));
+            }
+            else
+            {
+                memcpy(&data[old_size], &src_vec->data[start], length * sizeof(T));
+            }
+            old_size += length;
+        }
+    }
+
     void insertData(const char * pos, size_t /*length*/) override { data.push_back(*reinterpret_cast<const T *>(pos)); }
 
     bool decodeTiDBRowV2Datum(

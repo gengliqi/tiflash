@@ -142,12 +142,8 @@ size_t DeltaValueReader::readRows(
     if (persisted_files_start < persisted_files_end)
     {
         size_t expect_read = persisted_files_end - persisted_files_start;
-        persisted_read_rows = persisted_files_reader->readRows(
-            output_cols,
-            persisted_files_start,
-            expect_read,
-            range,
-            row_ids);
+        persisted_read_rows
+            = persisted_files_reader->readRows(output_cols, persisted_files_start, expect_read, range, row_ids);
         actual_read += persisted_read_rows;
 
         if (range && expect_read > persisted_read_rows)
@@ -163,7 +159,7 @@ size_t DeltaValueReader::readRows(
             range,
             row_ids);
         actual_read += mem_read_rows;
-        
+
         if (range && expect_read > mem_read_rows)
             is_out_of_range = true;
     }
@@ -178,6 +174,73 @@ size_t DeltaValueReader::readRows(
     }
 
     return actual_read;
+}
+
+size_t DeltaValueReader::fillInsertPreData(
+    size_t offset,
+    size_t limit,
+    std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
+    std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
+    std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
+    std::vector<UInt32> * row_ids)
+{
+    const auto mem_table_rows_offset = delta_snap->getMemTableSetRowsOffset();
+    const auto total_delta_rows = delta_snap->getRows();
+
+    const auto persisted_files_start = std::min(offset, mem_table_rows_offset);
+    const auto persisted_files_end = std::min(offset + limit, mem_table_rows_offset);
+    const auto mem_table_start = offset <= mem_table_rows_offset
+        ? 0
+        : std::min(offset - mem_table_rows_offset, total_delta_rows - mem_table_rows_offset);
+    const auto mem_table_end = offset + limit <= mem_table_rows_offset
+        ? 0
+        : std::min(offset + limit - mem_table_rows_offset, total_delta_rows - mem_table_rows_offset);
+
+    size_t actual_read = 0;
+    size_t persisted_read_rows = 0;
+    if (persisted_files_start < persisted_files_end)
+    {
+        persisted_read_rows = persisted_files_reader->fillInsertPreData(
+            persisted_files_start,
+            persisted_files_end - persisted_files_start,
+            insert_offset_and_limits,
+            persisted_files_offsets_in_insert,
+            row_ids);
+        actual_read += persisted_read_rows;
+    }
+    if (mem_table_start < mem_table_end)
+    {
+        actual_read += mem_table_reader->fillInsertPreData(
+            mem_table_start,
+            mem_table_end - mem_table_start,
+            insert_offset_and_limits,
+            mem_table_offsets_in_insert,
+            row_ids);
+    }
+
+    if (row_ids != nullptr)
+    {
+        std::transform(
+            row_ids->cbegin() + persisted_read_rows,
+            row_ids->cend(),
+            row_ids->begin() + persisted_read_rows, // write to the same location
+            [mem_table_rows_offset](UInt32 id) { return id + mem_table_rows_offset; });
+    }
+
+    return actual_read;
+}
+
+void DeltaValueReader::fillInsertColumnPtrs(
+    std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
+    std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
+    std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
+    const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits)
+{
+    persisted_files_reader->fillInsertColumnPtrs(
+        insert_column_ptrs,
+        persisted_files_offsets_in_insert,
+        insert_offset_and_limits);
+    mem_table_reader->fillInsertColumnPtrs(insert_column_ptrs, mem_table_offsets_in_insert, insert_offset_and_limits);
 }
 
 BlockOrDeletes DeltaValueReader::getPlaceItems(

@@ -679,7 +679,8 @@ public:
         size_t expected_block_size,
         ReadTag read_tag,
         UInt64 start_ts = std::numeric_limits<UInt64>::max(),
-        bool need_row_id = false);
+        bool need_row_id = false,
+        bool can_enable_delta_merge_v2 = false);
 
     /// Make sure that all delta packs have been placed.
     /// Note that the index returned could be partial index, and cannot be updated to shared index.

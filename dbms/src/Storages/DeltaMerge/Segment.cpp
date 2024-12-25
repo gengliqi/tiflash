@@ -34,6 +34,7 @@
 #include <Storages/DeltaMerge/DeltaMerge.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/DeltaMergeHelpers.h>
+#include <Storages/DeltaMerge/DeltaMergeV2.h>
 #include <Storages/DeltaMerge/DeltaPlace.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/File/DMFileBlockInputStream.h>
@@ -1039,7 +1040,7 @@ BlockInputStreamPtr Segment::getInputStreamModeNormal(
     }
     else
     {
-        auto skip_stream = getPlacedStream<true>(
+        auto skip_stream = getPlacedStream(
             dm_context,
             *read_info.read_columns,
             real_ranges,
@@ -1051,10 +1052,11 @@ BlockInputStreamPtr Segment::getInputStreamModeNormal(
             expected_block_size,
             read_tag,
             start_ts,
-            need_row_id);
+            need_row_id,
+            true);
 
-        size_t skip = 0;
-        skip_stream->getSkippedRows(skip);
+        //size_t skip = 0;
+        //skip_stream->getSkippedRows(skip);
 
         stream = skip_stream;
     }
@@ -2709,7 +2711,8 @@ SkippableBlockInputStreamPtr Segment::getPlacedStream(
     size_t expected_block_size,
     ReadTag read_tag,
     UInt64 start_ts,
-    bool need_row_id)
+    bool need_row_id,
+    bool can_enable_delta_merge_v2)
 {
     if (unlikely(rowkey_ranges.empty()))
         throw Exception("rowkey ranges shouldn't be empty", ErrorCodes::LOGICAL_ERROR);
@@ -2728,29 +2731,61 @@ SkippableBlockInputStreamPtr Segment::getPlacedStream(
     RowKeyRange rowkey_range = rowkey_ranges.size() == 1
         ? rowkey_ranges[0]
         : mergeRanges(rowkey_ranges, rowkey_ranges[0].is_common_handle, rowkey_ranges[0].rowkey_column_size);
-    if (!need_row_id)
+    if (can_enable_delta_merge_v2 && dm_context.enable_delta_merge_v2)
     {
-        return std::make_shared<DeltaMergeBlockInputStream<skippable_place, /*need_row_id*/ false>>( //
-            stable_input_stream,
-            delta_reader,
-            delta_index_begin,
-            delta_index_end,
-            rowkey_range,
-            expected_block_size,
-            stable_snap->getDMFilesRows(),
-            dm_context.tracing_id);
+        if (!need_row_id)
+        {
+            return std::make_shared<DeltaMergeV2BlockInputStream</*need_row_id*/ false>>( //
+                stable_input_stream,
+                delta_reader,
+                delta_index_begin,
+                delta_index_end,
+                rowkey_range,
+                expected_block_size,
+                stable_snap->getDMFilesRows(),
+                dm_context.tracing_id);
+        }
+        else
+        {
+            return std::make_shared<DeltaMergeV2BlockInputStream</*need_row_id*/ true>>( //
+                stable_input_stream,
+                delta_reader,
+                delta_index_begin,
+                delta_index_end,
+                rowkey_range,
+                expected_block_size,
+                stable_snap->getDMFilesRows(),
+                dm_context.tracing_id);
+        }
     }
     else
     {
-        return std::make_shared<DeltaMergeBlockInputStream<skippable_place, /*need_row_id*/ true>>( //
-            stable_input_stream,
-            delta_reader,
-            delta_index_begin,
-            delta_index_end,
-            rowkey_range,
-            expected_block_size,
-            stable_snap->getDMFilesRows(),
-            dm_context.tracing_id);
+        {
+            if (!need_row_id)
+            {
+                return std::make_shared<DeltaMergeBlockInputStream<skippable_place, /*need_row_id*/ false>>( //
+                    stable_input_stream,
+                    delta_reader,
+                    delta_index_begin,
+                    delta_index_end,
+                    rowkey_range,
+                    expected_block_size,
+                    stable_snap->getDMFilesRows(),
+                    dm_context.tracing_id);
+            }
+            else
+            {
+                return std::make_shared<DeltaMergeBlockInputStream<skippable_place, /*need_row_id*/ true>>( //
+                    stable_input_stream,
+                    delta_reader,
+                    delta_index_begin,
+                    delta_index_end,
+                    rowkey_range,
+                    expected_block_size,
+                    stable_snap->getDMFilesRows(),
+                    dm_context.tracing_id);
+            }
+        }
     }
 }
 
