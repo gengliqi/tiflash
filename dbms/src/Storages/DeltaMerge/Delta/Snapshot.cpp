@@ -111,6 +111,7 @@ size_t DeltaValueReader::readRows(
     size_t offset,
     size_t limit,
     const RowKeyRange * range,
+    bool & is_out_of_range,
     std::vector<UInt32> * row_ids)
 {
     // Note that DeltaMergeBlockInputStream could ask for rows with larger index than total_delta_rows,
@@ -140,22 +141,31 @@ size_t DeltaValueReader::readRows(
     size_t persisted_read_rows = 0;
     if (persisted_files_start < persisted_files_end)
     {
+        size_t expect_read = persisted_files_end - persisted_files_start;
         persisted_read_rows = persisted_files_reader->readRows(
             output_cols,
             persisted_files_start,
-            persisted_files_end - persisted_files_start,
+            expect_read,
             range,
             row_ids);
         actual_read += persisted_read_rows;
+
+        if (range && expect_read > persisted_read_rows)
+            is_out_of_range = true;
     }
     if (mem_table_start < mem_table_end)
     {
-        actual_read += mem_table_reader->readRows( //
+        size_t expect_read = mem_table_end - mem_table_start;
+        size_t mem_read_rows = mem_table_reader->readRows( //
             output_cols,
             mem_table_start,
-            mem_table_end - mem_table_start,
+            expect_read,
             range,
             row_ids);
+        actual_read += mem_read_rows;
+        
+        if (range && expect_read > mem_read_rows)
+            is_out_of_range = true;
     }
 
     if (row_ids != nullptr)

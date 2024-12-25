@@ -93,6 +93,7 @@ private:
 
     bool stable_done = false;
     bool delta_done = false;
+    bool is_finished = false;
 
     // How many times `read` is called.
     size_t num_read = 0;
@@ -169,7 +170,6 @@ public:
 
         if (sk_call_status != 0)
             throw Exception("Call #getSkippedRows() more than once");
-        ++sk_call_status;
 
         stable_input_stream->getSkippedRows(sk_skip_stable_rows);
         stable_ignore -= sk_skip_stable_rows;
@@ -179,6 +179,7 @@ public:
         skip_rows = sk_skip_total_rows;
         sk_skip_stable_rows = 0;
         sk_skip_total_rows = 0;
+        ++sk_call_status;
         return true;
     }
 
@@ -230,7 +231,7 @@ private:
                 auto rowkey_value = rowkey_column.getRowKeyValue(i);
                 auto version = version_column[i];
                 auto cmp_result = rowkey_value <=> last_value_ref;
-                if (cmp_result == std::strong_ordering::less
+                if unlikely (cmp_result == std::strong_ordering::less
                     || (cmp_result == std::strong_ordering::equal && version < last_version))
                 {
                     ProfileEvents::increment(ProfileEvents::DTDeltaIndexError);
@@ -289,7 +290,7 @@ private:
             initOutputColumns(columns);
 
             size_t limit = max_block_size;
-            while (limit)
+            while (limit > 0 && !is_finished)
             {
                 if (stable_done)
                 {
@@ -322,7 +323,7 @@ private:
     }
 
 private:
-    inline bool finished() { return stable_done && delta_done; }
+    inline bool finished() { return is_finished || (stable_done && delta_done); }
 
     inline void fillSegmentRowId(UInt64 start, UInt64 limit)
     {
@@ -601,22 +602,28 @@ private:
         // Note that the rows between [use_delta_offset, use_delta_offset + write_rows) are guaranteed sorted,
         // otherwise we won't read them in the same range.
         size_t actual_write = 0;
+        bool is_out_of_range = false;
         if constexpr (need_row_id)
         {
             delta_row_ids.clear();
             delta_row_ids.reserve(write_rows);
             actual_write = delta_value_reader
-                               ->readRows(output_columns, use_delta_offset, write_rows, &rowkey_range, &delta_row_ids);
+                               ->readRows(output_columns, use_delta_offset, write_rows, &rowkey_range, is_out_of_range, &delta_row_ids);
             fillSegmentRowId(delta_row_ids);
         }
         else
         {
-            actual_write = delta_value_reader->readRows(output_columns, use_delta_offset, write_rows, &rowkey_range);
+            actual_write = delta_value_reader->readRows(output_columns, use_delta_offset, write_rows, &rowkey_range, is_out_of_range);
         }
 
         if constexpr (skippable_place)
         {
             sk_skip_total_rows += write_rows - actual_write;
+
+            if unlikely (is_out_of_range && sk_call_status > 0)
+            {
+                is_finished = true;
+            }
         }
 
         output_write_limit -= actual_write;

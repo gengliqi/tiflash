@@ -489,6 +489,7 @@ public:
         size_t offset,
         size_t limit,
         const RowKeyRange * range,
+        bool & is_out_of_range,
         std::vector<UInt32> * row_ids = nullptr);
 
     // Get blocks or delete_ranges of `ExtraHandleColumn` and `VersionColumn`.
