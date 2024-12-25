@@ -88,6 +88,9 @@ private:
     size_t cur_stable_block_pos = 0;
     UInt64 cur_stable_block_start_offset = 0;
 
+    size_t cur_stable_block_range_begin;
+    size_t cur_stable_block_range_end;
+
     bool stable_done = false;
     bool delta_done = false;
     bool is_finished = false;
@@ -424,6 +427,20 @@ private:
             cur_stable_block_columns.push_back(block.getByPosition(column_id).column);
 
         insert_stable_columns.emplace_back(cur_stable_block_columns);
+
+        size_t rows = cur_stable_block_columns[0]->size();
+        auto rowkey_column = RowKeyColumnContainer(cur_stable_block_columns[0], is_common_handle);
+        if (rowkey_range.getStart() <= rowkey_column.getRowKeyValue(0) && rowkey_range.getEnd() >= rowkey_column.getRowKeyValue(rows - 1))
+        {
+            cur_stable_block_range_begin = 0;
+            cur_stable_block_range_end = rows;
+        }
+        else 
+        {
+            std::tie(cur_stable_block_range_begin, cur_stable_block_range_end)
+                = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], 0, rows);
+            cur_stable_block_range_end += cur_stable_block_range_begin;
+        }
         return true;
     }
 
@@ -526,8 +543,10 @@ private:
         // Note: Actually, it is not necessary, since handle column RoughSetFilter can filter out the packs out of range,
         // and the DMRowKeyFilterBlockInputStream can filter out the rest rows out of range.
         // TODO: Remove this.
-        auto [final_offset, final_limit]
-            = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], offset, limit);
+        //auto [final_offset, final_limit]
+        //    = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], offset, limit);
+        size_t final_offset = std::max(offset, cur_stable_block_range_begin);
+        size_t final_limit = std::min(offset + limit, cur_stable_block_range_end) - final_offset;
 
         if (!output_offset && !final_offset && final_limit == cur_stable_block_rows)
         {
