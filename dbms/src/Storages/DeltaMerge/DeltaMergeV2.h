@@ -242,11 +242,6 @@ private:
             last_value = last_value_ref.toRowKeyValue();
             last_value_ref = last_value.toRowKeyValueRef();
 
-            if (last_value_ref > rowkey_range.getEnd())
-            {
-                is_finished = true;
-            }
-
             if constexpr (need_row_id)
             {
                 RUNTIME_CHECK_MSG(
@@ -314,6 +309,13 @@ private:
             if constexpr (need_row_id)
             {
                 block.setSegmentRowIdCol(std::move(seg_row_id_col));
+            }
+
+            auto rowkey_column = RowKeyColumnContainer(block.getByPosition(0).column, is_common_handle);
+            size_t rows = block.rows();
+            if (rows > 0 && rowkey_column.getRowKeyValue(rows - 1) > rowkey_range.getEnd())
+            {
+                is_finished = true;
             }
 
             return block;
@@ -430,12 +432,13 @@ private:
 
         size_t rows = cur_stable_block_columns[0]->size();
         auto rowkey_column = RowKeyColumnContainer(cur_stable_block_columns[0], is_common_handle);
-        if (rowkey_range.getStart() <= rowkey_column.getRowKeyValue(0) && rowkey_range.getEnd() >= rowkey_column.getRowKeyValue(rows - 1))
+        if (rowkey_range.getStart() <= rowkey_column.getRowKeyValue(0)
+            && rowkey_range.getEnd() >= rowkey_column.getRowKeyValue(rows - 1))
         {
             cur_stable_block_range_begin = 0;
             cur_stable_block_range_end = rows;
         }
-        else 
+        else
         {
             std::tie(cur_stable_block_range_begin, cur_stable_block_range_end)
                 = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], 0, rows);
@@ -554,6 +557,7 @@ private:
                 insert_offset_and_limits.empty(),
                 "insert_offset_and_limits does not empty, size {}",
                 insert_offset_and_limits.size());
+            insert_stable_columns.clear();
             // Simply return columns in current stable block.
             for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
                 output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
