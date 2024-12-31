@@ -201,12 +201,15 @@ size_t ColumnFileSetReader::fillInsertPreData(
     size_t offset,
     size_t limit,
     std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
-    std::vector<std::vector<size_t>> & offsets_in_insert,
+    std::vector<std::vector<const IColumn *>> & insert_column_ptrs,
+    std::vector<Columns> & columns_data_cache,
     std::vector<UInt32> * row_ids)
 {
-    if unlikely (offsets_in_insert.empty())
-        offsets_in_insert.resize(column_file_readers.size());
-    RUNTIME_CHECK(offsets_in_insert.size() == column_file_readers.size());
+    if unlikely (columns_data_cache.empty())
+    {
+        for (const auto & column_file_reader : column_file_readers)
+            column_file_reader->fillColumnsDataCache(columns_data_cache, col_defs->size());
+    }
 
     auto total_delta_rows = snapshot->getRows();
 
@@ -218,6 +221,7 @@ size_t ColumnFileSetReader::fillInsertPreData(
     auto [start_file_index, rows_start_in_start_file] = locatePosByAccumulation(column_file_rows_end, start);
     auto [end_file_index, rows_end_in_end_file] = locatePosByAccumulation(column_file_rows_end, end);
 
+    size_t columns = col_defs->size();
     for (size_t file_index = start_file_index; file_index <= end_file_index; ++file_index)
     {
         size_t rows_start_in_file = file_index == start_file_index ? rows_start_in_start_file : 0;
@@ -228,45 +232,25 @@ size_t ColumnFileSetReader::fillInsertPreData(
         if (rows_in_file_limit == 0)
             continue;
 
-        offsets_in_insert[file_index].emplace_back(insert_offset_and_limits.size());
         insert_offset_and_limits.emplace_back(rows_start_in_file, rows_in_file_limit);
+        for (size_t i = 0; i < columns; ++i)
+            insert_column_ptrs[i].emplace_back(columns_data_cache[file_index][i].get());
 
         if (row_ids != nullptr)
         {
             auto rows_before_cur_file = file_index == 0 ? 0 : column_file_rows_end[file_index - 1];
             auto start_row_id = rows_start_in_file + rows_before_cur_file;
-            auto row_ids_offset = row_ids->size();
-            row_ids->resize(row_ids->size() + rows_in_file_limit);
+            //auto row_ids_offset = row_ids->size();
+            row_ids->reserve(row_ids->size() + rows_in_file_limit);
             for (size_t i = 0; i < rows_in_file_limit; ++i)
             {
-                (*row_ids)[row_ids_offset + i] = start_row_id + i;
+                row_ids->emplace_back(start_row_id + i);
+                //(*row_ids)[row_ids_offset + i] = start_row_id + i;
             }
         }
     }
 
     return end - start;
-}
-
-void ColumnFileSetReader::fillInsertColumnPtrs(
-    std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-    std::vector<std::vector<size_t>> & offsets_in_insert,
-    const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits)
-{
-    if unlikely (offsets_in_insert.empty())
-        return;
-    size_t sz = column_file_readers.size();
-    RUNTIME_CHECK(offsets_in_insert.size() == sz);
-    for (size_t i = 0; i < sz; ++i)
-    {
-        if (!offsets_in_insert[i].empty())
-        {
-            column_file_readers[i]->fillInsertColumnPtrs(
-                insert_column_ptrs,
-                insert_offset_and_limits,
-                offsets_in_insert[i]);
-            offsets_in_insert[i].clear();
-        }
-    }
 }
 
 void ColumnFileSetReader::getPlaceItems(

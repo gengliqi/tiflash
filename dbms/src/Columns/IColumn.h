@@ -151,7 +151,7 @@ public:
     virtual void insertDisjunctFrom(const IColumn & src, const std::vector<size_t> & position_vec) = 0;
 
     virtual void insertManyRangeFrom(
-        const PaddedPODArray<const IColumn *> &,
+        const std::vector<const IColumn *> &,
         const std::vector<std::pair<size_t, size_t>> &)
     {
         throw Exception("Method insertManyRangeFrom is not supported for " + getName(), ErrorCodes::NOT_IMPLEMENTED);

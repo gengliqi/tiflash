@@ -199,19 +199,16 @@ public:
         size_t rows_limit,
         const RowKeyRange * range) override;
 
+    bool fillColumnsDataCache(std::vector<Columns> &, size_t) override
+    {
+        throw Exception("fillColumnsDataCache is not implemented for ColumnFileBig", ErrorCodes::NOT_IMPLEMENTED);
+    }
+
     Block readNextBlock() override;
 
     size_t skipNextBlock() override;
 
     ColumnFileReaderPtr createNewReader(const ColumnDefinesPtr & new_col_defs, ReadTag) override;
-
-    void fillInsertColumnPtrs(
-        std::vector<PaddedPODArray<const IColumn *>> &,
-        const std::vector<std::pair<size_t, size_t>> &,
-        const std::vector<size_t> &) override
-    {
-        throw Exception("fillInsertColumnPtrs is not implemented for ColumnFileBig", ErrorCodes::NOT_IMPLEMENTED);
-    }
 };
 
 } // namespace DB::DM

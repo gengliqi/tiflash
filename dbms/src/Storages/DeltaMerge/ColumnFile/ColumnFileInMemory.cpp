@@ -126,20 +126,12 @@ std::pair<size_t, size_t> ColumnFileInMemoryReader::readRows(
     return copyColumnsData(cols_data_cache, pk_col, output_cols, rows_offset, rows_limit, range);
 }
 
-void ColumnFileInMemoryReader::fillInsertColumnPtrs(
-    std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-    const std::vector<std::pair<size_t, size_t>> &,
-    const std::vector<size_t> & offsets_in_insert)
+bool ColumnFileInMemoryReader::fillColumnsDataCache(std::vector<Columns> & columns_data_cache, size_t column_size)
 {
-    const size_t read_columns = insert_column_ptrs.size();
-    memory_file.fillColumns(*col_defs, read_columns, cols_data_cache);
-    for (size_t offset : offsets_in_insert)
-    {
-        for (size_t i = 0; i < read_columns; ++i)
-        {
-            insert_column_ptrs[i][offset] = cols_data_cache[i].get();
-        }
-    }
+    memory_file.fillColumns(*col_defs, column_size, cols_data_cache);
+
+    columns_data_cache.emplace_back(cols_data_cache);
+    return true;
 }
 
 Block ColumnFileInMemoryReader::readNextBlock()

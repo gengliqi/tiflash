@@ -88,13 +88,9 @@ public:
         size_t offset,
         size_t limit,
         std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
-        std::vector<std::vector<size_t>> & offsets_in_insert,
+        std::vector<std::vector<const IColumn *>> & insert_column_ptrs,
+        std::vector<Columns> & columns_data_cache,
         std::vector<UInt32> * row_ids = nullptr);
-
-    void fillInsertColumnPtrs(
-        std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-        std::vector<std::vector<size_t>> & offsets_in_insert,
-        const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits);
 };
 
 } // namespace DB::DM

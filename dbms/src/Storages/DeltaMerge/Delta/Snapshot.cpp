@@ -180,8 +180,9 @@ size_t DeltaValueReader::fillInsertPreData(
     size_t offset,
     size_t limit,
     std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
-    std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
-    std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
+    std::vector<std::vector<const IColumn *>> & insert_column_ptrs,
+    std::vector<Columns> & persisted_files_columns_data_cache,
+    std::vector<Columns> & mem_table_columns_data_cache,
     std::vector<UInt32> * row_ids)
 {
     const auto mem_table_rows_offset = delta_snap->getMemTableSetRowsOffset();
@@ -204,7 +205,8 @@ size_t DeltaValueReader::fillInsertPreData(
             persisted_files_start,
             persisted_files_end - persisted_files_start,
             insert_offset_and_limits,
-            persisted_files_offsets_in_insert,
+            insert_column_ptrs,
+            persisted_files_columns_data_cache,
             row_ids);
         actual_read += persisted_read_rows;
     }
@@ -214,7 +216,8 @@ size_t DeltaValueReader::fillInsertPreData(
             mem_table_start,
             mem_table_end - mem_table_start,
             insert_offset_and_limits,
-            mem_table_offsets_in_insert,
+            insert_column_ptrs,
+            mem_table_columns_data_cache,
             row_ids);
     }
 
@@ -228,19 +231,6 @@ size_t DeltaValueReader::fillInsertPreData(
     }
 
     return actual_read;
-}
-
-void DeltaValueReader::fillInsertColumnPtrs(
-    std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-    std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
-    std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
-    const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits)
-{
-    persisted_files_reader->fillInsertColumnPtrs(
-        insert_column_ptrs,
-        persisted_files_offsets_in_insert,
-        insert_offset_and_limits);
-    mem_table_reader->fillInsertColumnPtrs(insert_column_ptrs, mem_table_offsets_in_insert, insert_offset_and_limits);
 }
 
 BlockOrDeletes DeltaValueReader::getPlaceItems(

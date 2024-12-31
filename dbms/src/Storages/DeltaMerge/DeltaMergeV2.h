@@ -83,7 +83,7 @@ private:
     size_t use_delta_offset = 0;
     size_t use_delta_rows = 0;
 
-    Columns cur_stable_block_columns;
+    Block cur_stable_block;
     size_t cur_stable_block_rows = 0;
     size_t cur_stable_block_pos = 0;
     UInt64 cur_stable_block_start_offset = 0;
@@ -113,11 +113,13 @@ private:
 
     const String tracing_id;
 
-    std::vector<Columns> insert_stable_columns;
-    std::vector<PaddedPODArray<const IColumn *>> insert_column_ptrs;
+    bool use_cur_stable_block_directly = false;
+    std::vector<Block> insert_stable_blocks;
+    std::vector<std::vector<const IColumn *>> insert_column_ptrs;
     std::vector<std::pair<size_t, size_t>> insert_offset_and_limits;
-    std::vector<std::vector<size_t>> persisted_files_offsets_in_insert;
-    std::vector<std::vector<size_t>> mem_table_offsets_in_insert;
+
+    std::vector<Columns> persisted_files_columns_data_cache;
+    std::vector<Columns> mem_table_columns_data_cache;
 
 public:
     DeltaMergeV2BlockInputStream(
@@ -277,35 +279,29 @@ private:
                     else
                         next<false, false>(columns, limit);
                 }
+                if unlikely (insert_offset_and_limits.size() >= 1024)
+                    flushInsertBuffer(columns);
             }
 
             // Empty means we are out of data.
             if (limit == max_block_size)
                 continue;
 
-            if (!insert_offset_and_limits.empty())
+            Block block;
+            if (use_cur_stable_block_directly)
             {
-                size_t insert_offset_and_limits_size = insert_offset_and_limits.size();
-                for (size_t i = 0; i < num_columns; ++i)
-                    RUNTIME_CHECK_MSG(insert_column_ptrs[i].size() == insert_offset_and_limits_size, "size not equal");
+                RUNTIME_CHECK(insert_offset_and_limits.empty());
+                use_cur_stable_block_directly = false;
+                block = cur_stable_block;
+            }
+            else
+            {
+                if (!insert_offset_and_limits.empty())
+                    flushInsertBuffer(columns);
 
-                delta_value_reader->fillInsertColumnPtrs(
-                    insert_column_ptrs,
-                    persisted_files_offsets_in_insert,
-                    mem_table_offsets_in_insert,
-                    insert_offset_and_limits);
-
-                for (size_t i = 0; i < num_columns; ++i)
-                    columns[i]->insertManyRangeFrom(insert_column_ptrs[i], insert_offset_and_limits);
-
-                insert_stable_columns.clear();
-                insert_stable_columns.emplace_back(cur_stable_block_columns);
-                insert_offset_and_limits.clear();
-                for (size_t i = 0; i < num_columns; ++i)
-                    insert_column_ptrs[i].clear();
+                block = header.cloneWithColumns(std::move(columns));
             }
 
-            auto block = header.cloneWithColumns(std::move(columns));
             if constexpr (need_row_id)
             {
                 block.setSegmentRowIdCol(std::move(seg_row_id_col));
@@ -412,36 +408,32 @@ private:
 
     inline bool fillStableBlockIfNeeded()
     {
-        if (!cur_stable_block_columns.empty() && cur_stable_block_pos < cur_stable_block_rows)
+        if (cur_stable_block.columns() != 0 && cur_stable_block_pos < cur_stable_block_rows)
             return true;
 
-        cur_stable_block_columns.clear();
+        insert_stable_blocks.emplace_back(cur_stable_block);
         cur_stable_block_rows = 0;
         cur_stable_block_pos = 0;
         cur_stable_block_start_offset = 0;
-        auto block = stable_input_stream->read();
-        if (!block || !block.rows())
+        cur_stable_block = stable_input_stream->read();
+        if (!cur_stable_block || !cur_stable_block.rows())
             return false;
 
-        cur_stable_block_rows = block.rows();
-        cur_stable_block_start_offset = block.startOffset();
-        for (size_t column_id = 0; column_id < num_columns; ++column_id)
-            cur_stable_block_columns.push_back(block.getByPosition(column_id).column);
+        cur_stable_block_rows = cur_stable_block.rows();
+        cur_stable_block_start_offset = cur_stable_block.startOffset();
 
-        insert_stable_columns.emplace_back(cur_stable_block_columns);
-
-        size_t rows = cur_stable_block_columns[0]->size();
-        auto rowkey_column = RowKeyColumnContainer(cur_stable_block_columns[0], is_common_handle);
+        const auto & pk_column = cur_stable_block.getByPosition(0).column;
+        auto rowkey_column = RowKeyColumnContainer(pk_column, is_common_handle);
         if (rowkey_range.getStart() <= rowkey_column.getRowKeyValue(0)
-            && rowkey_range.getEnd() >= rowkey_column.getRowKeyValue(rows - 1))
+            && rowkey_range.getEnd() >= rowkey_column.getRowKeyValue(cur_stable_block_rows - 1))
         {
             cur_stable_block_range_begin = 0;
-            cur_stable_block_range_end = rows;
+            cur_stable_block_range_end = cur_stable_block_rows;
         }
         else
         {
             std::tie(cur_stable_block_range_begin, cur_stable_block_range_end)
-                = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], 0, rows);
+                = RowKeyFilter::getPosRangeOfSorted(rowkey_range, pk_column, 0, cur_stable_block_rows);
             cur_stable_block_range_end += cur_stable_block_range_begin;
         }
         return true;
@@ -557,13 +549,15 @@ private:
                 insert_offset_and_limits.empty(),
                 "insert_offset_and_limits does not empty, size {}",
                 insert_offset_and_limits.size());
-            insert_stable_columns.clear();
+            RUNTIME_CHECK(insert_stable_blocks.empty());
+
             // Simply return columns in current stable block.
-            for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
-                output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
+            //for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
+            //    output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
 
             // Let's return current stable block directly. No more expending.
             output_write_limit = 0;
+            use_cur_stable_block_directly = true;
         }
         else if (final_limit)
         {
@@ -577,7 +571,7 @@ private:
             insert_offset_and_limits.emplace_back(final_offset, final_limit);
             for (size_t column_id = 0; column_id < num_columns; ++column_id)
             {
-                insert_column_ptrs[column_id].emplace_back(cur_stable_block_columns[column_id].get());
+                insert_column_ptrs[column_id].emplace_back(cur_stable_block.getByPosition(column_id).column.get());
             }
 
             output_write_limit -= std::min(final_limit, output_write_limit);
@@ -614,8 +608,9 @@ private:
                 use_delta_offset,
                 write_rows,
                 insert_offset_and_limits,
-                persisted_files_offsets_in_insert,
-                mem_table_offsets_in_insert,
+                insert_column_ptrs,
+                persisted_files_columns_data_cache,
+                mem_table_columns_data_cache,
                 &delta_row_ids);
             fillSegmentRowId(delta_row_ids);
         }
@@ -625,12 +620,10 @@ private:
                 use_delta_offset,
                 write_rows,
                 insert_offset_and_limits,
-                persisted_files_offsets_in_insert,
-                mem_table_offsets_in_insert);
+                insert_column_ptrs,
+                persisted_files_columns_data_cache,
+                mem_table_columns_data_cache);
         }
-        size_t sz = insert_offset_and_limits.size();
-        for (size_t column_id = 0; column_id < num_columns; ++column_id)
-            insert_column_ptrs[column_id].resize(sz);
 
         output_write_limit -= actual_write;
         use_delta_offset += write_rows;
@@ -659,6 +652,17 @@ private:
         {
             use_stable_rows = delta_index_it.getSid() - prev_sid;
         }
+    }
+
+    inline void flushInsertBuffer(MutableColumns & output_columns)
+    {
+        for (size_t i = 0; i < num_columns; ++i)
+            output_columns[i]->insertManyRangeFrom(insert_column_ptrs[i], insert_offset_and_limits);
+
+        insert_stable_blocks.clear();
+        insert_offset_and_limits.clear();
+        for (size_t i = 0; i < num_columns; ++i)
+            insert_column_ptrs[i].clear();
     }
 };
 

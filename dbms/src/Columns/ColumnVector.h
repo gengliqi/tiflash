@@ -235,7 +235,7 @@ public:
     }
 
     void insertManyRangeFrom(
-        const PaddedPODArray<const IColumn *> & column_ptrs,
+        const std::vector<const IColumn *> & column_ptrs,
         const std::vector<std::pair<size_t, size_t>> & offsets_and_limits) override
     {
         RUNTIME_CHECK_MSG(

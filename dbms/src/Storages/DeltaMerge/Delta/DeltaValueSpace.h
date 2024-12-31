@@ -509,15 +509,10 @@ public:
         size_t offset,
         size_t limit,
         std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
-        std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
-        std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
+        std::vector<std::vector<const IColumn *>> & insert_column_ptrs,
+        std::vector<Columns> & persisted_files_columns_data_cache,
+        std::vector<Columns> & mem_table_columns_data_cache,
         std::vector<UInt32> * row_ids = nullptr);
-
-    void fillInsertColumnPtrs(
-        std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-        std::vector<std::vector<size_t>> & persisted_files_offsets_in_insert,
-        std::vector<std::vector<size_t>> & mem_table_offsets_in_insert,
-        const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits);
 };
 
 class DeltaValueInputStream : public IBlockInputStream

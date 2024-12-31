@@ -172,11 +172,7 @@ public:
         const RowKeyRange * range)
         = 0;
 
-    virtual void fillInsertColumnPtrs(
-        std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-        const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
-        const std::vector<size_t> & offsets_in_insert)
-        = 0;
+    virtual bool fillColumnsDataCache(std::vector<Columns> & columns_data_cache, size_t column_size) = 0;
 
     /// This method is only used to read raw data.
     virtual Block readNextBlock() = 0;

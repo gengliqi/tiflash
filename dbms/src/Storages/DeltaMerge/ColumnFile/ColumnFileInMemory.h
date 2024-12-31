@@ -136,10 +136,7 @@ public:
         size_t rows_limit,
         const RowKeyRange * range) override;
 
-    void fillInsertColumnPtrs(
-        std::vector<PaddedPODArray<const IColumn *>> & insert_column_ptrs,
-        const std::vector<std::pair<size_t, size_t>> & insert_offset_and_limits,
-        const std::vector<size_t> & offsets_in_insert) override;
+    bool fillColumnsDataCache(std::vector<Columns> & columns_data_cache, size_t column_size) override;
 
     Block readNextBlock() override;
 
