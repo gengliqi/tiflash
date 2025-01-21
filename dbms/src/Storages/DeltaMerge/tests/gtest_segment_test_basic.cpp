@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #include <Common/CurrentMetrics.h>
-#include <Core/Defines.h>
 #include <DataStreams/ConcatBlockInputStream.h>
 #include <DataStreams/OneBlockInputStream.h>
 #include <Interpreters/Context.h>
@@ -36,7 +35,6 @@
 namespace CurrentMetrics
 {
 extern const Metric DT_SnapshotOfReadRaw;
-extern const Metric DT_SnapshotOfRead;
 extern const Metric DT_SnapshotOfBitmapFilter;
 } // namespace CurrentMetrics
 
@@ -85,15 +83,7 @@ size_t SegmentTestBasic::getSegmentRowNum(PageIdU64 segment_id)
 {
     RUNTIME_CHECK(segments.find(segment_id) != segments.end());
     auto segment = segments[segment_id];
-    auto snap = segment->createSnapshot(*dm_context, /*for_update*/ false, CurrentMetrics::DT_SnapshotOfRead);
-    auto in = segment->getInputStreamModeNormal(
-        *dm_context,
-        *tableColumns(),
-        snap,
-        {segment->getRowKeyRange()},
-        {},
-        std::numeric_limits<UInt64>::max(),
-        DEFAULT_BLOCK_SIZE);
+    auto in = segment->getInputStreamModeNormal(*dm_context, *tableColumns(), {segment->getRowKeyRange()});
     return getInputStreamNRows(in);
 }
 

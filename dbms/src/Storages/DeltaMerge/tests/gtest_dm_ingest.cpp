@@ -19,6 +19,7 @@
 #include <Storages/DeltaMerge/tests/gtest_dm_simple_pk_test_basic.h>
 #include <TestUtils/InputStreamTestUtils.h>
 
+#include <future>
 #include <random>
 
 namespace DB

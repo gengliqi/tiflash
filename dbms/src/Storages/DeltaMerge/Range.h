@@ -82,6 +82,9 @@ struct Range
         return (last_include >= end && checkEnd(max_start)) || (last_include < end && max_start <= last_include);
     }
 
+    // [first, last_include]
+    inline bool include(T first, T last_include) const { return check(first) && check(last_include); }
+
     inline bool checkStart(T value) const { return start == MIN || start <= value; }
 
     inline bool checkEnd(T value) const { return end == MAX || value < end; }
@@ -119,7 +122,7 @@ using HandleRanges = std::vector<HandleRange>;
 inline String toDebugString(const HandleRanges & ranges)
 {
     String s = "{";
-    for (const auto & r : ranges)
+    for (auto & r : ranges)
     {
         s += r.toDebugString() + ",";
     }
