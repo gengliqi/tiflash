@@ -3157,6 +3157,8 @@ struct Range
 };
 
 std::pair<std::vector<Range>, std::vector<IdSetPtr>> parseDMFilePackInfo(
+    const LoggerPtr & log,
+    PageIdU64 segment_id,
     const DMFiles & dmfiles,
     const DMFilePackFilterResults & pack_filter_result,
     UInt64 start_ts,
@@ -3201,6 +3203,15 @@ std::pair<std::vector<Range>, std::vector<IdSetPtr>> parseDMFilePackInfo(
             if (handle_res[pack_id] == RSResult::Some || pack_stat.not_clean > 0
                 || pack_filter->getMaxVersion(dmfile, pack_id, file_provider, dm_context.scan_context) > start_ts)
             {
+                LOG_DEBUG(
+                    log,
+                    "parseDMFilePackInfo pack_id={}, segment_id={}, handle_res={}, not_clean={}, max_version={}, start_ts={}",
+                    pack_id,
+                    segment_id,
+                    handle_res[pack_id],
+                    pack_stat.not_clean,
+                    pack_filter->getMaxVersion(dmfile, pack_id, file_provider, dm_context.scan_context),
+                    start_ts);
                 // We need to read this pack to do RowKey or MVCC filter.
                 some_packs_set->insert(pack_id);
                 continue;
@@ -3248,7 +3259,7 @@ BitmapFilterPtr Segment::buildBitmapFilterStableOnly(
         return elapse_ns / 1'000'000.0;
     };
 
-    auto [skipped_ranges, some_packs_sets] = parseDMFilePackInfo(dmfiles, pack_filter_results, start_ts, dm_context);
+    auto [skipped_ranges, some_packs_sets] = parseDMFilePackInfo(segment_snap->log, segment_id, dmfiles, pack_filter_results, start_ts, dm_context);
     if (skipped_ranges.size() == 1 && skipped_ranges[0].offset == 0
         && skipped_ranges[0].rows == segment_snap->stable->getDMFilesRows())
     {
