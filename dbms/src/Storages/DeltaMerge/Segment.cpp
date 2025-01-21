@@ -3482,6 +3482,13 @@ RowKeyRanges Segment::shrinkRowKeyRanges(const RowKeyRanges & read_ranges) const
         if (!real_range.none())
             real_ranges.emplace_back(std::move(real_range));
     }
+    LOG_DEBUG(
+        log,
+        "shrinkRowKeyRanges segment_id={}, segment_range={}, before_ranges={}, after ranges={}",
+        segment_id,
+        DB::DM::toDebugString({rowkey_range}),
+        DB::DM::toDebugString(read_ranges),
+        DB::DM::toDebugString(real_ranges));
     return real_ranges;
 }
 
