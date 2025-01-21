@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <IO/FileProvider/ChecksumReadBufferBuilder.h>
 #include <Storages/DeltaMerge/File/ColumnStream.h>
 #include <Storages/DeltaMerge/File/DMFileReader.h>
 #include <Storages/Page/PageUtil.h>
@@ -158,7 +157,7 @@ std::unique_ptr<CompressedSeekableReaderBuffer> ColumnReadStream::buildColDataRe
 
     // Try to get the largest buffer size of reading continuous packs
     size_t buffer_size = 0;
-    const auto & pack_res = reader.pack_filter->getPackRes();
+    const auto & pack_res = reader.pack_filter.getPackResConst();
     for (size_t i = 0; i < n_packs; /*empty*/)
     {
         if (!pack_res[i].isUse())

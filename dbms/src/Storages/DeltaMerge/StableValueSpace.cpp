@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <Interpreters/Context.h>
 #include <Interpreters/SharedContexts/Disagg.h>
 #include <Storages/DeltaMerge/ConcatSkippableBlockInputStream.h>
 #include <Storages/DeltaMerge/DMVersionFilterBlockInputStream.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/File/DMFileBlockInputStream.h>
+#include <Storages/DeltaMerge/Filter/FilterHelper.h>
 #include <Storages/DeltaMerge/Remote/DataStore/DataStore.h>
 #include <Storages/DeltaMerge/RestoreDMFile.h>
 #include <Storages/DeltaMerge/RowKeyFilter.h>
@@ -47,15 +49,24 @@ void StableValueSpace::setFiles(const DMFiles & files_, const RowKeyRange & rang
     }
     else if (dm_context != nullptr)
     {
+        auto index_cache = dm_context->global_context.getGlobalContext().getMinMaxIndexCache();
         for (const auto & file : files_)
         {
-            auto match = DMFilePackFilter::loadValidRowsAndBytes(
-                *dm_context,
+            auto pack_filter = DMFilePackFilter::loadFrom(
                 file,
+                index_cache,
                 /*set_cache_if_miss*/ true,
-                {range});
-            rows += match.match_rows;
-            bytes += match.match_bytes;
+                {range},
+                EMPTY_RS_OPERATOR,
+                {},
+                dm_context->global_context.getFileProvider(),
+                dm_context->getReadLimiter(),
+                dm_context->scan_context,
+                dm_context->tracing_id,
+                ReadTag::Internal);
+            auto [file_valid_rows, file_valid_bytes] = pack_filter.validRowsAndBytes();
+            rows += file_valid_rows;
+            bytes += file_valid_bytes;
         }
     }
 
@@ -298,7 +309,7 @@ void StableValueSpace::recordRemovePacksPages(WriteBatches & wbs) const
 }
 
 void StableValueSpace::calculateStableProperty(
-    const DMContext & dm_context,
+    const DMContext & context,
     const RowKeyRange & rowkey_range,
     bool is_common_handle)
 {
@@ -333,13 +344,13 @@ void StableValueSpace::calculateStableProperty(
             //
             // If we pass `segment_range` instead,
             // then the returned stream is a `SkippableBlockInputStream` which will complicate the implementation
-            DMFileBlockInputStreamBuilder builder(dm_context.global_context);
+            DMFileBlockInputStreamBuilder builder(context.global_context);
             BlockInputStreamPtr data_stream
                 = builder
                       .setRowsThreshold(std::numeric_limits<UInt64>::max()) // because we just read one pack at a time
                       .onlyReadOnePackEveryTime()
-                      .setTracingID(fmt::format("{}-calculateStableProperty", dm_context.tracing_id))
-                      .build(file, read_columns, RowKeyRanges{rowkey_range}, dm_context.scan_context);
+                      .setTracingID(fmt::format("{}-calculateStableProperty", context.tracing_id))
+                      .build(file, read_columns, RowKeyRanges{rowkey_range}, context.scan_context);
             auto mvcc_stream = std::make_shared<DMVersionFilterBlockInputStream<DMVersionFilterMode::COMPACT>>(
                 data_stream,
                 read_columns,
@@ -366,18 +377,23 @@ void StableValueSpace::calculateStableProperty(
             mvcc_stream->readSuffix();
         }
         auto pack_filter = DMFilePackFilter::loadFrom(
-            dm_context,
             file,
+            context.global_context.getMinMaxIndexCache(),
             /*set_cache_if_miss*/ false,
             {rowkey_range},
             EMPTY_RS_OPERATOR,
-            {});
-        const auto & pack_res = pack_filter->getPackRes();
+            {},
+            context.global_context.getFileProvider(),
+            context.getReadLimiter(),
+            context.scan_context,
+            context.tracing_id,
+            ReadTag::Internal);
+        const auto & pack_res = pack_filter.getPackResConst();
         size_t new_pack_properties_index = 0;
         const bool use_new_pack_properties = pack_properties.property_size() == 0;
         if (use_new_pack_properties)
         {
-            const size_t use_packs_count = pack_filter->countUsePack();
+            const size_t use_packs_count = pack_filter.countUsePack();
 
             RUNTIME_CHECK_MSG(
                 static_cast<size_t>(new_pack_properties.property_size()) == use_packs_count,
@@ -442,73 +458,14 @@ void StableValueSpace::drop(const FileProviderPtr & file_provider)
 }
 
 SkippableBlockInputStreamPtr StableValueSpace::Snapshot::getInputStream(
-    const DMContext & dm_context,
+    const DMContext & context,
     const ColumnDefines & read_columns,
     const RowKeyRanges & rowkey_ranges,
+    const RSOperatorPtr & filter,
     UInt64 max_data_version,
     size_t expected_block_size,
     bool enable_handle_clean_read,
     ReadTag read_tag,
-    const DMFilePackFilterResults & pack_filter_results,
-    bool is_fast_scan,
-    bool enable_del_clean_read,
-    const std::vector<IdSetPtr> & read_packs,
-    bool need_row_id)
-{
-    LOG_DEBUG(
-        log,
-        "StableVS getInputStream"
-        " start_ts={} enable_handle_clean_read={} is_fast_mode={} enable_del_clean_read={}",
-        max_data_version,
-        enable_handle_clean_read,
-        is_fast_scan,
-        enable_del_clean_read);
-    SkippableBlockInputStreams streams;
-    std::vector<size_t> rows;
-    streams.reserve(stable->files.size());
-    rows.reserve(stable->files.size());
-
-    for (size_t i = 0; i < stable->files.size(); ++i)
-    {
-        DMFileBlockInputStreamBuilder builder(dm_context.global_context);
-        builder.enableCleanRead(enable_handle_clean_read, is_fast_scan, enable_del_clean_read, max_data_version)
-            .enableColumnCacheLongTerm(dm_context.pk_col_id)
-            .setDMFilePackFilterResult(!pack_filter_results.empty() ? pack_filter_results[i] : nullptr)
-            .setColumnCache(column_caches[i])
-            .setTracingID(dm_context.tracing_id)
-            .setRowsThreshold(expected_block_size)
-            .setReadPacks(read_packs.size() > i ? read_packs[i] : nullptr)
-            .setReadTag(read_tag);
-
-        streams.push_back(builder.build(stable->files[i], read_columns, rowkey_ranges, dm_context.scan_context));
-        rows.push_back(stable->files[i]->getRows());
-    }
-    if (need_row_id)
-    {
-        return std::make_shared<ConcatSkippableBlockInputStream</*need_row_id*/ true>>(
-            streams,
-            std::move(rows),
-            dm_context.scan_context);
-    }
-    else
-    {
-        return std::make_shared<ConcatSkippableBlockInputStream</*need_row_id*/ false>>(
-            streams,
-            std::move(rows),
-            dm_context.scan_context);
-    }
-}
-
-SkippableBlockInputStreamPtr StableValueSpace::Snapshot::tryGetInputStreamWithVectorIndex(
-    const DMContext & dm_context,
-    const ColumnDefines & read_columns,
-    const RowKeyRanges & rowkey_ranges,
-    const ANNQueryInfoPtr & ann_query_info,
-    UInt64 max_data_version,
-    size_t expected_block_size,
-    bool enable_handle_clean_read,
-    ReadTag read_tag,
-    const DMFilePackFilterResults & pack_filter_results,
     bool is_fast_scan,
     bool enable_del_clean_read,
     const std::vector<IdSetPtr> & read_packs,
@@ -517,8 +474,7 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::tryGetInputStreamWithVe
 {
     LOG_DEBUG(
         log,
-        "StableVS tryGetInputStreamWithVectorIndex"
-        " start_ts={} enable_handle_clean_read={} is_fast_mode={} enable_del_clean_read={}",
+        "start_ts: {}, enable_handle_clean_read: {}, is_fast_mode: {}, enable_del_clean_read: {}",
         max_data_version,
         enable_handle_clean_read,
         is_fast_scan,
@@ -530,21 +486,20 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::tryGetInputStreamWithVe
 
     size_t last_rows = 0;
 
-    for (size_t i = 0; i < stable->files.size(); ++i)
+    for (size_t i = 0; i < stable->files.size(); i++)
     {
-        DMFileBlockInputStreamBuilder builder(dm_context.global_context);
+        DMFileBlockInputStreamBuilder builder(context.global_context);
         builder.enableCleanRead(enable_handle_clean_read, is_fast_scan, enable_del_clean_read, max_data_version)
-            .enableColumnCacheLongTerm(dm_context.pk_col_id)
-            .setAnnQureyInfo(ann_query_info)
-            .setDMFilePackFilterResult(!pack_filter_results.empty() ? pack_filter_results[i] : nullptr)
+            .enableColumnCacheLongTerm(context.pk_col_id)
+            .setRSOperator(filter)
             .setColumnCache(column_caches[i])
-            .setTracingID(dm_context.tracing_id)
+            .setTracingID(context.tracing_id)
             .setRowsThreshold(expected_block_size)
             .setReadPacks(read_packs.size() > i ? read_packs[i] : nullptr)
             .setReadTag(read_tag);
         if (bitmap_filter)
         {
-            builder.setBitmapFilter(
+            builder = builder.setBitmapFilter(
                 BitmapFilterView(bitmap_filter, last_rows, last_rows + stable->files[i]->getRows()));
             last_rows += stable->files[i]->getRows();
         }
@@ -553,7 +508,7 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::tryGetInputStreamWithVe
             stable->files[i],
             read_columns,
             rowkey_ranges,
-            dm_context.scan_context));
+            context.scan_context));
         rows.push_back(stable->files[i]->getRows());
     }
     if (need_row_id)
@@ -561,18 +516,18 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::tryGetInputStreamWithVe
         return std::make_shared<ConcatSkippableBlockInputStream</*need_row_id*/ true>>(
             streams,
             std::move(rows),
-            dm_context.scan_context);
+            context.scan_context);
     }
     else
     {
         return std::make_shared<ConcatSkippableBlockInputStream</*need_row_id*/ false>>(
             streams,
             std::move(rows),
-            dm_context.scan_context);
+            context.scan_context);
     }
 }
 
-RowsAndBytes StableValueSpace::Snapshot::getApproxRowsAndBytes(const DMContext & dm_context, const RowKeyRange & range)
+RowsAndBytes StableValueSpace::Snapshot::getApproxRowsAndBytes(const DMContext & context, const RowKeyRange & range)
     const
 {
     // Avoid unnecessary reading IO
@@ -585,13 +540,31 @@ RowsAndBytes StableValueSpace::Snapshot::getApproxRowsAndBytes(const DMContext &
     // Usually, this method will be called for some "cold" key ranges.
     // Loading the index into cache may pollute the cache and make the hot index cache invalid.
     // So don't refill the cache if the index does not exist.
-    constexpr bool set_cache_if_miss = false;
     for (auto & f : stable->files)
     {
-        auto match = DMFilePackFilter::loadValidRowsAndBytes(dm_context, f, set_cache_if_miss, {range});
-        match_packs += match.match_packs;
-        total_match_rows += match.match_rows;
-        total_match_bytes += match.match_bytes;
+        auto filter = DMFilePackFilter::loadFrom(
+            f,
+            context.global_context.getMinMaxIndexCache(),
+            /*set_cache_if_miss*/ false,
+            {range},
+            RSOperatorPtr{},
+            IdSetPtr{},
+            context.global_context.getFileProvider(),
+            context.getReadLimiter(),
+            context.scan_context,
+            context.tracing_id,
+            ReadTag::Internal);
+        const auto & pack_stats = f->getPackStats();
+        const auto & pack_res = filter.getPackResConst();
+        for (size_t i = 0; i < pack_stats.size(); ++i)
+        {
+            if (pack_res[i].isUse())
+            {
+                ++match_packs;
+                total_match_rows += pack_stats[i].rows;
+                total_match_bytes += pack_stats[i].bytes;
+            }
+        }
     }
     if (!total_match_rows || !match_packs)
         return {0, 0};
@@ -605,20 +578,29 @@ RowsAndBytes StableValueSpace::Snapshot::getApproxRowsAndBytes(const DMContext &
 }
 
 StableValueSpace::Snapshot::AtLeastRowsAndBytesResult //
-StableValueSpace::Snapshot::getAtLeastRowsAndBytes(const DMContext & dm_context, const RowKeyRange & range) const
+StableValueSpace::Snapshot::getAtLeastRowsAndBytes(const DMContext & context, const RowKeyRange & range) const
 {
     AtLeastRowsAndBytesResult ret{};
 
     // Usually, this method will be called for some "cold" key ranges.
     // Loading the index into cache may pollute the cache and make the hot index cache invalid.
     // So don't refill the cache if the index does not exist.
-    constexpr bool set_cache_if_miss = false;
     for (size_t file_idx = 0; file_idx < stable->files.size(); ++file_idx)
     {
         const auto & file = stable->files[file_idx];
-        auto filter
-            = DMFilePackFilter::loadFrom(dm_context, file, set_cache_if_miss, {range}, RSOperatorPtr{}, IdSetPtr{});
-        const auto & handle_filter_result = filter->getHandleRes();
+        auto filter = DMFilePackFilter::loadFrom(
+            file,
+            context.global_context.getMinMaxIndexCache(),
+            /*set_cache_if_miss*/ false,
+            {range},
+            RSOperatorPtr{},
+            IdSetPtr{},
+            context.global_context.getFileProvider(),
+            context.getReadLimiter(),
+            context.scan_context,
+            context.tracing_id,
+            ReadTag::Internal);
+        const auto & handle_filter_result = filter.getHandleRes();
         if (file_idx == 0)
         {
             // TODO: this check may not be correct when support multiple files in a stable, let's just keep it now for simplicity

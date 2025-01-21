@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <Interpreters/Context.h>
 #include <Interpreters/SharedContexts/Disagg.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileBig.h>
 #include <Storages/DeltaMerge/DMContext.h>
@@ -37,13 +38,22 @@ ColumnFileBig::ColumnFileBig(const DMContext & dm_context, const DMFilePtr & fil
 
 void ColumnFileBig::calculateStat(const DMContext & dm_context)
 {
-    auto m = DMFilePackFilter::loadValidRowsAndBytes(
-        dm_context,
+    auto index_cache = dm_context.global_context.getMinMaxIndexCache();
+
+    auto pack_filter = DMFilePackFilter::loadFrom(
         file,
+        index_cache,
         /*set_cache_if_miss*/ false,
-        {segment_range});
-    valid_rows = m.match_rows;
-    valid_bytes = m.match_bytes;
+        {segment_range},
+        EMPTY_RS_OPERATOR,
+        {},
+        dm_context.global_context.getFileProvider(),
+        dm_context.getReadLimiter(),
+        dm_context.scan_context,
+        /*tracing_id*/ dm_context.tracing_id,
+        ReadTag::Internal);
+
+    std::tie(valid_rows, valid_bytes) = pack_filter.validRowsAndBytes();
 }
 
 void ColumnFileBig::removeData(WriteBatches & wbs) const
