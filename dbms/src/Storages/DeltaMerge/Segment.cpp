@@ -3206,6 +3206,7 @@ std::pair<std::vector<Range>, std::vector<IdSetPtr>> parseDMFilePackInfo(
                 LOG_DEBUG(
                     log,
                     "parseDMFilePackInfo pack_id={}, max_version={}, start_ts={}",
+                    pack_id,
                     pack_filter->getMaxVersion(dmfile, pack_id, file_provider, dm_context.scan_context),
                     start_ts);
                 some_packs_set->insert(pack_id);
