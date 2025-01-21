@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #include <DataTypes/DataTypeString.h>
-#include <DataTypes/DataTypesNumber.h>
 #include <Storages/KVStore/Decode/DecodingStorageSchemaSnapshot.h>
 #include <TiDB/Schema/TiDB.h>
 
@@ -42,13 +41,13 @@ DecodingStorageSchemaSnapshot::DecodingStorageSchemaSnapshot(
     for (size_t i = 0; i < column_defines->size(); i++)
     {
         auto & cd = (*column_defines)[i];
-        if (cd.id != MutSup::version_col_id || with_version_column)
+        if (cd.id != VersionColumnID || with_version_column)
         {
             col_id_to_block_pos.insert({cd.id, index_in_block++});
         }
         col_id_to_def_pos.insert({cd.id, i});
 
-        if (cd.id != MutSup::extra_handle_id && cd.id != MutSup::version_col_id && cd.id != MutSup::delmark_col_id)
+        if (cd.id != TiDBPkColumnID && cd.id != VersionColumnID && cd.id != DelMarkColumnID)
         {
             const auto & columns = table_info_.columns;
             column_infos.push_back(columns[column_lut.at(cd.id)]);
@@ -132,11 +131,11 @@ Block createBlockSortByColumnID(DecodingStorageSchemaSnapshotConstPtr schema_sna
     {
         // col_id == cd.id
         // Including some internal columns:
-        // - (MutSup::version_col_id, _INTERNAL_VERSION, u64)
-        // - (MutSup::delmark_col_id, _INTERNAL_DELMARK, u8)
-        // - (MutSup::extra_handle_id, _tidb_rowid, i64)
+        // - (VersionColumnID, _INTERNAL_VERSION, u64)
+        // - (DelMarkColumnID, _INTERNAL_DELMARK, u8)
+        // - (TiDBPkColumnID, _tidb_rowid, i64)
         auto & cd = (*(schema_snapshot->column_defines))[def_pos];
-        if (!with_version_column && cd.id == MutSup::version_col_id)
+        if (!with_version_column && cd.id == VersionColumnID)
             continue;
         block.insert({cd.type->createColumn(), cd.type, cd.name, col_id});
     }

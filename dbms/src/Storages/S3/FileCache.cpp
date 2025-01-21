@@ -601,11 +601,11 @@ FileType FileCache::getFileTypeOfColData(const std::filesystem::path & p)
     auto col_id = std::stol(str_col_id);
     switch (col_id)
     {
-    case MutSup::extra_handle_id:
+    case EXTRA_HANDLE_COLUMN_ID:
         return FileType::HandleColData;
-    case MutSup::version_col_id:
+    case VERSION_COLUMN_ID:
         return FileType::VersionColData;
-    case MutSup::delmark_col_id:
+    case TAG_COLUMN_ID:
         return FileType::DeleteMarkColData;
     default:
         return FileType::ColData;

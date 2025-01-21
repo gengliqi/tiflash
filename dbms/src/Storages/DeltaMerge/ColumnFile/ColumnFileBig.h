@@ -176,14 +176,14 @@ public:
     {
         if (col_defs_->size() == 1)
         {
-            if ((*col_defs)[0].id == MutSup::extra_handle_id)
+            if ((*col_defs)[0].id == EXTRA_HANDLE_COLUMN_ID)
             {
                 pk_ver_only = true;
             }
         }
         else if (col_defs_->size() == 2)
         {
-            if ((*col_defs)[0].id == MutSup::extra_handle_id && (*col_defs)[1].id == MutSup::version_col_id)
+            if ((*col_defs)[0].id == EXTRA_HANDLE_COLUMN_ID && (*col_defs)[1].id == VERSION_COLUMN_ID)
             {
                 pk_ver_only = true;
             }

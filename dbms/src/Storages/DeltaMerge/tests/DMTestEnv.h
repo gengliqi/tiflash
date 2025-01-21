@@ -170,8 +170,7 @@ public:
             columns->emplace_back(getExtraHandleColumnDefine(/*is_common_handle=*/true));
             break;
         case PkType::PkIsHandleInt64:
-            columns->emplace_back(
-                ColumnDefine{PK_ID_PK_IS_HANDLE, PK_NAME_PK_IS_HANDLE, MutSup::getExtraHandleColumnIntType()});
+            columns->emplace_back(ColumnDefine{PK_ID_PK_IS_HANDLE, PK_NAME_PK_IS_HANDLE, EXTRA_HANDLE_COLUMN_INT_TYPE});
             break;
         case PkType::PkIsHandleInt32:
             columns->emplace_back(
@@ -197,19 +196,18 @@ public:
         switch (pk_type)
         {
         case PkType::HiddenTiDBRowID:
-            columns.push_back({MutSup::extra_handle_column_name, MutSup::getExtraHandleColumnIntType()});
+            columns.push_back({EXTRA_HANDLE_COLUMN_NAME, EXTRA_HANDLE_COLUMN_INT_TYPE});
             break;
         case PkType::CommonHandle:
             columns.push_back(
                 {PK_NAME_PK_IS_HANDLE,
-                 MutSup::
-                     getExtraHandleColumnStringType()}); // For common handle, there must be a user-given primary key.
+                 EXTRA_HANDLE_COLUMN_STRING_TYPE}); // For common handle, there must be a user-given primary key.
             columns.push_back(
-                {MutSup::extra_handle_column_name,
-                 MutSup::getExtraHandleColumnStringType()}); // For common handle, a _tidb_rowid is also constructed.
+                {EXTRA_HANDLE_COLUMN_NAME,
+                 EXTRA_HANDLE_COLUMN_STRING_TYPE}); // For common handle, a _tidb_rowid is also constructed.
             break;
         case PkType::PkIsHandleInt64:
-            columns.emplace_back(PK_NAME_PK_IS_HANDLE, MutSup::getExtraHandleColumnIntType());
+            columns.emplace_back(PK_NAME_PK_IS_HANDLE, EXTRA_HANDLE_COLUMN_INT_TYPE);
             break;
         case PkType::PkIsHandleInt32:
             throw Exception("PkIsHandleInt32 is unsupported");
@@ -268,10 +266,10 @@ public:
         switch (pk_type)
         {
         case PkType::HiddenTiDBRowID:
-            name = MutSup::extra_handle_column_name;
+            name = EXTRA_HANDLE_COLUMN_NAME;
             break;
         case PkType::CommonHandle:
-            name = MutSup::extra_handle_column_name;
+            name = EXTRA_HANDLE_COLUMN_NAME;
             break;
         case PkType::PkIsHandleInt64:
             name = PK_NAME_PK_IS_HANDLE;
@@ -299,8 +297,8 @@ public:
         bool reversed,
         UInt64 tso = 2,
         const String & pk_name_ = pk_name,
-        ColumnID pk_col_id = MutSup::extra_handle_id,
-        DataTypePtr pk_type = MutSup::getExtraHandleColumnIntType(),
+        ColumnID pk_col_id = EXTRA_HANDLE_COLUMN_ID,
+        DataTypePtr pk_type = EXTRA_HANDLE_COLUMN_INT_TYPE,
         bool is_common_handle = false,
         size_t rowkey_column_size = 1,
         bool with_internal_columns = true,
@@ -329,15 +327,15 @@ public:
                 pk_name_,
                 pk_col_id});
             // add extra column if need
-            if (pk_col_id != MutSup::extra_handle_id)
+            if (pk_col_id != EXTRA_HANDLE_COLUMN_ID)
             {
                 block.insert(ColumnWithTypeAndName{
                     DB::tests::makeColumn<Int64>(
-                        MutSup::getExtraHandleColumnIntType(),
+                        EXTRA_HANDLE_COLUMN_INT_TYPE,
                         createNumbers<Int64>(beg, end, reversed)),
-                    MutSup::getExtraHandleColumnIntType(),
-                    MutSup::extra_handle_column_name,
-                    MutSup::extra_handle_id});
+                    EXTRA_HANDLE_COLUMN_INT_TYPE,
+                    EXTRA_HANDLE_COLUMN_NAME,
+                    EXTRA_HANDLE_COLUMN_ID});
             }
         }
         if (with_internal_columns)
@@ -345,13 +343,13 @@ public:
             // version_col
             block.insert(DB::tests::createColumn<UInt64>(
                 std::vector<UInt64>(num_rows, tso),
-                MutSup::version_column_name,
-                MutSup::version_col_id));
+                VERSION_COLUMN_NAME,
+                VERSION_COLUMN_ID));
             // tag_col
             block.insert(DB::tests::createColumn<UInt8>(
                 std::vector<UInt64>(num_rows, is_deleted),
-                MutSup::delmark_column_name,
-                MutSup::delmark_col_id));
+                TAG_COLUMN_NAME,
+                TAG_COLUMN_ID));
         }
         if (with_nullable_uint64)
         {
@@ -371,8 +369,8 @@ public:
             /*reversed*/ false,
             /*tso*/ 2,
             pk_name,
-            MutSup::extra_handle_id,
-            MutSup::getExtraHandleColumnIntType(),
+            EXTRA_HANDLE_COLUMN_ID,
+            EXTRA_HANDLE_COLUMN_INT_TYPE,
             /* is_common_handle */ false,
             /* rowkey_column_size */ 1,
             /*with_internal_columns*/ true,
@@ -403,9 +401,9 @@ public:
                 end,
                 reversed,
                 tso,
-                MutSup::extra_handle_column_name,
-                MutSup::extra_handle_id,
-                MutSup::getExtraHandleColumnIntType(),
+                EXTRA_HANDLE_COLUMN_NAME,
+                EXTRA_HANDLE_COLUMN_ID,
+                EXTRA_HANDLE_COLUMN_INT_TYPE,
                 false,
                 1,
                 with_internal_columns);
@@ -415,9 +413,9 @@ public:
                 end,
                 reversed,
                 tso,
-                MutSup::extra_handle_column_name,
-                MutSup::extra_handle_id,
-                MutSup::getExtraHandleColumnStringType(),
+                EXTRA_HANDLE_COLUMN_NAME,
+                EXTRA_HANDLE_COLUMN_ID,
+                EXTRA_HANDLE_COLUMN_STRING_TYPE,
                 true,
                 1,
                 with_internal_columns);
@@ -429,7 +427,7 @@ public:
                 tso,
                 PK_NAME_PK_IS_HANDLE,
                 PK_ID_PK_IS_HANDLE,
-                MutSup::getExtraHandleColumnIntType(),
+                EXTRA_HANDLE_COLUMN_INT_TYPE,
                 false,
                 1,
                 with_internal_columns);
@@ -461,18 +459,17 @@ public:
         Block block;
         const size_t num_rows = (ts_end - ts_beg);
         // int64 pk_col
-        block.insert(
-            DB::tests::createColumn<Int64>(std::vector<Int64>(num_rows, pk), pk_name, MutSup::extra_handle_id));
+        block.insert(DB::tests::createColumn<Int64>(std::vector<Int64>(num_rows, pk), pk_name, EXTRA_HANDLE_COLUMN_ID));
         // version_col
         block.insert(DB::tests::createColumn<UInt64>(
             createNumbers<UInt64>(ts_beg, ts_end, reversed),
-            MutSup::version_column_name,
-            MutSup::version_col_id));
+            VERSION_COLUMN_NAME,
+            VERSION_COLUMN_ID));
         // tag_col
         block.insert(DB::tests::createColumn<UInt8>(
             std::vector<UInt64>(num_rows, deleted ? 1 : 0),
-            MutSup::delmark_column_name,
-            MutSup::delmark_col_id));
+            TAG_COLUMN_NAME,
+            TAG_COLUMN_ID));
         return block;
     }
 
@@ -493,24 +490,22 @@ public:
         if (is_common_handle)
         {
             Strings values{genMockCommonHandle(pk, rowkey_column_size)};
-            block.insert(DB::tests::createColumn<String>(std::move(values), pk_name, MutSup::extra_handle_id));
+            block.insert(DB::tests::createColumn<String>(std::move(values), pk_name, EXTRA_HANDLE_COLUMN_ID));
         }
         else
         {
             // int64 pk_col
             block.insert(
-                DB::tests::createColumn<Int64>(std::vector<Int64>(num_rows, pk), pk_name, MutSup::extra_handle_id));
+                DB::tests::createColumn<Int64>(std::vector<Int64>(num_rows, pk), pk_name, EXTRA_HANDLE_COLUMN_ID));
         }
         // version_col
         block.insert(DB::tests::createColumn<UInt64>(
             std::vector<UInt64>(num_rows, tso),
-            MutSup::version_column_name,
-            MutSup::version_col_id));
+            VERSION_COLUMN_NAME,
+            VERSION_COLUMN_ID));
         // tag_col
-        block.insert(DB::tests::createColumn<UInt8>(
-            std::vector<UInt64>(num_rows, mark),
-            MutSup::delmark_column_name,
-            MutSup::delmark_col_id));
+        block.insert(
+            DB::tests::createColumn<UInt8>(std::vector<UInt64>(num_rows, mark), TAG_COLUMN_NAME, TAG_COLUMN_ID));
         // string column
         block.insert(DB::tests::createColumn<String>(
             Strings{value},
@@ -547,18 +542,15 @@ public:
         // int64 pk_col
         block.insert(DB::tests::createColumn<Int64>(
             createNumbers<Int64>(start_pk, start_pk + rows),
-            MutSup::extra_handle_column_name,
-            MutSup::extra_handle_id));
+            EXTRA_HANDLE_COLUMN_NAME,
+            EXTRA_HANDLE_COLUMN_ID));
         // version_col
         block.insert(DB::tests::createColumn<UInt64>(
             createNumbers<UInt64>(start_ts, start_ts + rows),
-            MutSup::version_column_name,
-            MutSup::version_col_id));
+            VERSION_COLUMN_NAME,
+            VERSION_COLUMN_ID));
         // tag_col
-        block.insert(DB::tests::createColumn<UInt8>(
-            std::vector<UInt64>(rows, 0),
-            MutSup::delmark_column_name,
-            MutSup::delmark_col_id));
+        block.insert(DB::tests::createColumn<UInt8>(std::vector<UInt64>(rows, 0), TAG_COLUMN_NAME, TAG_COLUMN_ID));
         return block;
     }
 

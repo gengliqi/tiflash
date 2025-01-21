@@ -159,7 +159,7 @@ static inline std::tuple<ReadFromStreamResult, PrehandleResult> executeTransform
         // Read from SSTs and refine the boundary of blocks output to DTFiles
         auto bounded_stream = std::make_shared<DM::BoundedSSTFilesToBlockInputStream>(
             sst_stream,
-            MutSup::extra_handle_id,
+            ::DB::TiDBPkColumnID,
             opts.schema_snap,
             split_id);
 

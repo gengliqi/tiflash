@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <Common/EventRecorder.h>
 #include <IO/Buffer/ReadBufferFromString.h>
 #include <IO/Compression/CompressedReadBuffer.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileDataProvider.h>
@@ -20,6 +19,7 @@
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileTinyVectorIndexReader.h>
 #include <Storages/DeltaMerge/Index/VectorIndexCache.h>
 #include <Storages/DeltaMerge/Index/VectorSearchPerf.h>
+
 
 namespace DB::DM
 {

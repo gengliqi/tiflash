@@ -157,7 +157,7 @@ ColumnFileTinyPtr ColumnFileTinyLocalIndexWriter::buildIndexForFile(
             break;
 
         RUNTIME_CHECK(block.columns() == read_columns->size());
-        RUNTIME_CHECK(block.getByPosition(0).column_id == MutSup::delmark_col_id);
+        RUNTIME_CHECK(block.getByPosition(0).column_id == TAG_COLUMN_ID);
 
         auto del_mark_col = block.safeGetByPosition(0).column;
         RUNTIME_CHECK(del_mark_col != nullptr);
@@ -256,7 +256,7 @@ ColumnFileTinys ColumnFileTinyLocalIndexWriter::build(ProceedCheckFn should_proc
             column_defines = getColumnDefinesFromBlock(schema->getSchema());
             const auto del_cd_iter
                 = std::find_if(column_defines.cbegin(), column_defines.cend(), [](const ColumnDefine & cd) {
-                      return cd.id == MutSup::delmark_col_id;
+                      return cd.id == TAG_COLUMN_ID;
                   });
             RUNTIME_CHECK_MSG(
                 del_cd_iter != column_defines.cend(),

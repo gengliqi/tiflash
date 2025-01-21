@@ -73,9 +73,9 @@ BlockInputStreamPtr getVersionFilterInputStream(
     bool is_common_handle)
 {
     ColumnDefine handle_define(
-        MutSup::extra_handle_id,
+        TiDBPkColumnID,
         DMTestEnv::pk_name,
-        is_common_handle ? MutSup::getExtraHandleColumnStringType() : MutSup::getExtraHandleColumnIntType());
+        is_common_handle ? EXTRA_HANDLE_COLUMN_STRING_TYPE : EXTRA_HANDLE_COLUMN_INT_TYPE);
     return std::make_shared<DMVersionFilterBlockInputStream<MODE>>(
         std::make_shared<DebugBlockInputStream>(blocks, is_common_handle),
         columns,
@@ -92,9 +92,9 @@ BlockInputStreamPtr getVersionFilterInputStreamWithRowKeyFilterStream(
     const RowKeyRanges & read_ranges)
 {
     ColumnDefine handle_define(
-        MutSup::extra_handle_id,
+        TiDBPkColumnID,
         DMTestEnv::pk_name,
-        is_common_handle ? MutSup::getExtraHandleColumnStringType() : MutSup::getExtraHandleColumnIntType());
+        is_common_handle ? EXTRA_HANDLE_COLUMN_STRING_TYPE : EXTRA_HANDLE_COLUMN_INT_TYPE);
 
     BlockInputStreamPtr rowkey_filter_stream = std::make_shared<DMRowKeyFilterBlockInputStream<is_block_sorted>>(
         std::make_shared<DebugBlockInputStream>(blocks, is_common_handle),

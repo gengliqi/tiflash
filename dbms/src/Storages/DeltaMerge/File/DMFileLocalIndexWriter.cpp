@@ -98,7 +98,7 @@ size_t DMFileLocalIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutab
 
     const auto column_defines = dm_file_mutable->getColumnDefines();
     const auto del_cd_iter = std::find_if(column_defines.cbegin(), column_defines.cend(), [](const ColumnDefine & cd) {
-        return cd.id == MutSup::delmark_col_id;
+        return cd.id == TAG_COLUMN_ID;
     });
     RUNTIME_CHECK_MSG(
         del_cd_iter != column_defines.cend(),
@@ -197,7 +197,7 @@ size_t DMFileLocalIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutab
             break;
 
         RUNTIME_CHECK(block.columns() == num_cols);
-        RUNTIME_CHECK(block.getByPosition(0).column_id == MutSup::delmark_col_id);
+        RUNTIME_CHECK(block.getByPosition(0).column_id == TAG_COLUMN_ID);
 
         auto del_mark_col = block.safeGetByPosition(0).column;
         RUNTIME_CHECK(del_mark_col != nullptr);

@@ -48,9 +48,9 @@ private:
 BlockInputStreamPtr genColumnProjInputStream(BlocksList & blocks, const ColumnDefines & columns, bool is_common_handle)
 {
     ColumnDefine handle_define(
-        MutSup::extra_handle_id,
+        TiDBPkColumnID,
         DMTestEnv::pk_name,
-        is_common_handle ? MutSup::getExtraHandleColumnStringType() : MutSup::getExtraHandleColumnIntType());
+        is_common_handle ? EXTRA_HANDLE_COLUMN_STRING_TYPE : EXTRA_HANDLE_COLUMN_INT_TYPE);
 
     return std::make_shared<DMColumnProjectionBlockInputStream>(
         std::make_shared<DebugBlockInputStream>(blocks, is_common_handle),
@@ -63,9 +63,9 @@ BlockInputStreamPtr genDeleteFilterInputStream(
     bool is_common_handle)
 {
     ColumnDefine handle_define(
-        MutSup::extra_handle_id,
+        TiDBPkColumnID,
         DMTestEnv::pk_name,
-        is_common_handle ? MutSup::getExtraHandleColumnStringType() : MutSup::getExtraHandleColumnIntType());
+        is_common_handle ? EXTRA_HANDLE_COLUMN_STRING_TYPE : EXTRA_HANDLE_COLUMN_INT_TYPE);
 
     return std::make_shared<DMDeleteFilterBlockInputStream>(
         std::make_shared<DebugBlockInputStream>(blocks, is_common_handle),

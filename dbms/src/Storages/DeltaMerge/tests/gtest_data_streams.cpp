@@ -61,13 +61,13 @@ TEST(PKSquashTest, WithExtraSort)
     // Sorted by pk, tso asc
     SortDescription sort //
         = SortDescription{//
-                          SortColumnDescription{MutSup::extra_handle_column_name, 1, 0},
-                          SortColumnDescription{MutSup::version_column_name, 1, 0}};
+                          SortColumnDescription{EXTRA_HANDLE_COLUMN_NAME, 1, 0},
+                          SortColumnDescription{VERSION_COLUMN_NAME, 1, 0}};
 
     {
         auto in = std::make_shared<PKSquashingBlockInputStream</*need_extra_sort*/ true>>(
             std::make_shared<BlocksListBlockInputStream>(blocks.begin(), blocks.end()),
-            MutSup::extra_handle_id,
+            TiDBPkColumnID,
             false);
         size_t num_blocks_read = 0;
         size_t num_rows_read = 0;

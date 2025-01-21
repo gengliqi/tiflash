@@ -192,7 +192,8 @@ protected:
     void waitForBgDownload(const FileCache & file_cache)
     {
         Stopwatch sw;
-        while (file_cache.bg_downloading_count.load(std::memory_order_relaxed) > 0)
+        UInt64 downloading = 0;
+        while ((downloading = file_cache.bg_downloading_count.load(std::memory_order_relaxed)) > 0)
         {
             std::this_thread::sleep_for(1000ms);
         }
@@ -429,19 +430,15 @@ try
     auto handle_fname = fmt::format(
         "{}/{}.dat",
         s3_fname,
-        IDataType::getFileNameForStream(std::to_string(MutSup::extra_handle_id), {}));
+        IDataType::getFileNameForStream(std::to_string(EXTRA_HANDLE_COLUMN_ID), {}));
     ASSERT_EQ(FileCache::getFileType(handle_fname), FileType::HandleColData);
     auto vec_index_fname = fmt::format("{}/idx_{}.vector", s3_fname, /*index_id*/ 50); // DMFile::vectorIndexFileName
     ASSERT_EQ(FileCache::getFileType(vec_index_fname), FileType::VectorIndex);
-    auto version_fname = fmt::format(
-        "{}/{}.dat",
-        s3_fname,
-        IDataType::getFileNameForStream(std::to_string(MutSup::version_col_id), {}));
+    auto version_fname
+        = fmt::format("{}/{}.dat", s3_fname, IDataType::getFileNameForStream(std::to_string(VERSION_COLUMN_ID), {}));
     ASSERT_EQ(FileCache::getFileType(version_fname), FileType::VersionColData);
-    auto delmark_fname = fmt::format(
-        "{}/{}.dat",
-        s3_fname,
-        IDataType::getFileNameForStream(std::to_string(MutSup::delmark_col_id), {}));
+    auto delmark_fname
+        = fmt::format("{}/{}.dat", s3_fname, IDataType::getFileNameForStream(std::to_string(TAG_COLUMN_ID), {}));
     ASSERT_EQ(FileCache::getFileType(delmark_fname), FileType::DeleteMarkColData);
     auto unknow_fname0 = fmt::format("{}/123456", s3_fname);
     ASSERT_EQ(FileCache::getFileType(unknow_fname0), FileType::Unknow);

@@ -2026,9 +2026,9 @@ try
             num_rows_write / 2,
             false,
             2,
-            MutSup::extra_handle_column_name,
-            MutSup::extra_handle_id,
-            MutSup::getExtraHandleColumnStringType(),
+            EXTRA_HANDLE_COLUMN_NAME,
+            EXTRA_HANDLE_COLUMN_ID,
+            EXTRA_HANDLE_COLUMN_STRING_TYPE,
             is_common_handle,
             rowkey_column_size);
         Block block2 = DMTestEnv::prepareSimpleWriteBlock(
@@ -2036,9 +2036,9 @@ try
             num_rows_write,
             false,
             2,
-            MutSup::extra_handle_column_name,
-            MutSup::extra_handle_id,
-            MutSup::getExtraHandleColumnStringType(),
+            EXTRA_HANDLE_COLUMN_NAME,
+            EXTRA_HANDLE_COLUMN_ID,
+            EXTRA_HANDLE_COLUMN_STRING_TYPE,
             is_common_handle,
             rowkey_column_size);
         auto stream = std::make_shared<DMFileBlockOutputStream>(dbContext(), dm_file, *cols);
@@ -2105,9 +2105,9 @@ try
                 pk_end,
                 false,
                 2,
-                MutSup::extra_handle_column_name,
-                MutSup::extra_handle_id,
-                MutSup::getExtraHandleColumnStringType(),
+                EXTRA_HANDLE_COLUMN_NAME,
+                EXTRA_HANDLE_COLUMN_ID,
+                EXTRA_HANDLE_COLUMN_STRING_TYPE,
                 is_common_handle,
                 rowkey_column_size);
             stream->write(block, block_property);
