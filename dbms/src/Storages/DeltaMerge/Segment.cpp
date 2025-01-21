@@ -3235,9 +3235,11 @@ BitmapFilterPtr Segment::buildBitmapFilterStableOnly(
         auto elapse_ms = commit_elapse();
         LOG_DEBUG(
             segment_snap->log,
-            "buildBitmapFilterStableOnly all match, total_rows={}, cost={:.3f}ms",
+            "buildBitmapFilterStableOnly all match, total_rows={}, cost={:.3f}ms, segment_id={}, range={}",
             segment_snap->stable->getDMFilesRows(),
-            elapse_ms);
+            elapse_ms,
+            segment_id,
+            DB::DM::toDebugString({rowkey_range}));
         return std::make_shared<BitmapFilter>(segment_snap->stable->getDMFilesRows(), /*default_value*/ true);
     }
 
@@ -3301,10 +3303,12 @@ BitmapFilterPtr Segment::buildBitmapFilterStableOnly(
     auto elapse_ms = commit_elapse();
     LOG_DEBUG(
         segment_snap->log,
-        "buildBitmapFilterStableOnly read_packs={} total_rows={} cost={:.3f}ms",
+        "buildBitmapFilterStableOnly read_packs={} total_rows={} cost={:.3f}ms, segment_id={}, range={}",
         some_packs_sets.size(),
         segment_snap->stable->getDMFilesRows(),
-        elapse_ms);
+        elapse_ms,
+        segment_id,
+        DB::DM::toDebugString({rowkey_range}));
     return bitmap_filter;
 }
 
