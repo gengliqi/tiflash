@@ -972,7 +972,7 @@ String DAGExpressionAnalyzer::buildFilterColumn(
     return filter_column_name;
 }
 
-std::tuple<ExpressionActionsPtr, String, ExpressionActionsPtr> DAGExpressionAnalyzer::buildPushDownExecutor(
+std::tuple<ExpressionActionsPtr, String, ExpressionActionsPtr> DAGExpressionAnalyzer::buildPushDownFilter(
     const google::protobuf::RepeatedPtrField<tipb::Expr> & conditions,
     bool null_as_false)
 {

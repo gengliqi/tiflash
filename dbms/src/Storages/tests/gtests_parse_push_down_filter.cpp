@@ -19,7 +19,7 @@
 #include <Flash/Statistics/traverseExecutors.h>
 #include <Interpreters/Context.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
-#include <Storages/DeltaMerge/Filter/PushDownExecutor.h>
+#include <Storages/DeltaMerge/Filter/PushDownFilter.h>
 #include <Storages/DeltaMerge/FilterParser/FilterParser.h>
 #include <Storages/DeltaMerge/tests/gtest_segment_test_basic.h>
 #include <Storages/StorageDeltaMerge.h>
@@ -29,14 +29,13 @@
 #include <common/logger_useful.h>
 #include <tipb/executor.pb.h>
 
-#include <memory>
 #include <regex>
 
 
 namespace DB::tests
 {
 
-class ParsePushDownExecutorTest : public ::testing::Test
+class ParsePushDownFilterTest : public ::testing::Test
 {
 public:
     static void SetUpTestCase()
@@ -55,13 +54,13 @@ protected:
     LoggerPtr log = Logger::get();
     ContextPtr ctx = DB::tests::TiFlashTestEnv::getContext();
     TimezoneInfo default_timezone_info = DB::tests::TiFlashTestEnv::getContext()->getTimezoneInfo();
-    DM::PushDownExecutorPtr generatePushDownExecutor(
+    DM::PushDownFilterPtr generatePushDownFilter(
         const String & table_info_json,
         const String & query,
         TimezoneInfo & timezone_info);
 };
 
-DM::PushDownExecutorPtr generatePushDownExecutor(
+DM::PushDownFilterPtr generatePushDownFilter(
     Context & ctx,
     const String & table_info_json,
     const String & query,
@@ -125,27 +124,21 @@ DM::PushDownExecutorPtr generatePushDownExecutor(
 
     auto rs_operator
         = DM::FilterParser::parseDAGQuery(*dag_query, table_info.columns, std::move(create_attr_by_column_id), log);
-    auto push_down_executor = DM::PushDownExecutor::build(
-        rs_operator,
-        std::make_shared<tipb::ANNQueryInfo>(dag_query->ann_query_info),
-        table_info.columns,
-        pushed_down_filters,
-        columns_to_read,
-        ctx,
-        log);
-    return push_down_executor;
+    auto push_down_filter
+        = DM::PushDownFilter::build(rs_operator, table_info.columns, pushed_down_filters, columns_to_read, ctx, log);
+    return push_down_filter;
 }
 
-DM::PushDownExecutorPtr ParsePushDownExecutorTest::generatePushDownExecutor(
+DM::PushDownFilterPtr ParsePushDownFilterTest::generatePushDownFilter(
     const String & table_info_json,
     const String & query,
     TimezoneInfo & timezone_info)
 {
-    return ::DB::tests::generatePushDownExecutor(*ctx, table_info_json, query, timezone_info);
+    return ::DB::tests::generatePushDownFilter(*ctx, table_info_json, query, timezone_info);
 }
 
 // Test cases for col and literal
-TEST_F(ParsePushDownExecutorTest, ColAndLiteral)
+TEST_F(ParsePushDownFilterTest, ColAndLiteral)
 try
 {
     const String table_info_json = R"json({
@@ -159,7 +152,7 @@ try
 
     {
         // Equal between col and literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 = 666",
             default_timezone_info);
@@ -181,7 +174,7 @@ try
 
     {
         // Greater between col and literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 > 666",
             default_timezone_info);
@@ -203,7 +196,7 @@ try
 
     {
         // GreaterEqual between col and literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 >= 667",
             default_timezone_info);
@@ -225,7 +218,7 @@ try
 
     {
         // Less between col and literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 < 777",
             default_timezone_info);
@@ -247,7 +240,7 @@ try
 
     {
         // LessEqual between col and literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 <= 776",
             default_timezone_info);
@@ -269,7 +262,7 @@ try
 }
 CATCH
 
-TEST_F(ParsePushDownExecutorTest, LiteralAndCol)
+TEST_F(ParsePushDownFilterTest, LiteralAndCol)
 try
 {
     const String table_info_json = R"json({
@@ -283,7 +276,7 @@ try
     // Test cases for literal and col (inverse direction)
     {
         // Equal between literal and col (take care of direction)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where 667 = col_2",
             default_timezone_info);
@@ -305,7 +298,7 @@ try
 
     {
         // NotEqual between literal and col (take care of direction)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where 667 != col_2",
             default_timezone_info);
@@ -327,7 +320,7 @@ try
 
     {
         // Greater between literal and col (take care of direction)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where 667 < col_2",
             default_timezone_info);
@@ -349,7 +342,7 @@ try
 
     {
         // GreaterEqual between literal and col (take care of direction)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where 667 <= col_2",
             default_timezone_info);
@@ -371,7 +364,7 @@ try
 
     {
         // Less between literal and col (take care of direction)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where 777 > col_2",
             default_timezone_info);
@@ -393,7 +386,7 @@ try
 
     {
         // LessEqual between literal and col (take care of direction)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where 777 >= col_2",
             default_timezone_info);
@@ -416,7 +409,7 @@ try
 CATCH
 
 // Test cases for Logic operator
-TEST_F(ParsePushDownExecutorTest, LogicOperator)
+TEST_F(ParsePushDownFilterTest, LogicOperator)
 try
 {
     const String table_info_json = R"json({
@@ -431,7 +424,7 @@ try
 })json";
     {
         // Not
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select col_1, col_2 from default.t_111 where NOT col_2=666",
             default_timezone_info);
@@ -458,7 +451,7 @@ try
 
     {
         // And
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_1 = 'test1' and col_2 = 666",
             default_timezone_info);
@@ -485,7 +478,7 @@ try
 
     {
         // OR
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 = 789 or col_2 = 777",
             default_timezone_info);
@@ -515,7 +508,7 @@ try
     // More complicated
     {
         // And with "not supported"
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_1 = 'test1' and not col_2 = 666",
             default_timezone_info);
@@ -542,7 +535,7 @@ try
 
     {
         // And with not
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 = 789 and not col_3 = 666",
             default_timezone_info);
@@ -571,7 +564,7 @@ try
 
     {
         // And with or
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 = 789 and (col_3 = 666 or col_3 = 678)",
             default_timezone_info);
@@ -602,7 +595,7 @@ try
 
     {
         // Or with "not supported"
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_1 = 'test1' or col_2 = 666",
             default_timezone_info);
@@ -629,7 +622,7 @@ try
 
     {
         // Or with not
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_1 = 'test1' or not col_2 = 666",
             default_timezone_info);
@@ -656,7 +649,7 @@ try
 
     {
         // And between col and literal (not supported since And only support when child is ColumnExpr)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 and 1",
             default_timezone_info);
@@ -681,7 +674,7 @@ try
 
     {
         // Or between col and literal (not supported since Or only support when child is ColumnExpr)
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             "select * from default.t_111 where col_2 or 1",
             default_timezone_info);
@@ -709,7 +702,7 @@ try
 CATCH
 
 // Test cases for date,datetime,timestamp column
-TEST_F(ParsePushDownExecutorTest, TimestampColumn)
+TEST_F(ParsePushDownFilterTest, TimestampColumn)
 try
 {
     const String table_info_json = R"json({
@@ -739,7 +732,7 @@ try
         convertTimeZone(origin_time_stamp, converted_time, *timezone_info.timezone, time_zone_utc);
         // converted_time: 0
 
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             String("select * from default.t_111 where col_timestamp > cast_string_datetime('") + datetime
                 + String("')"),
@@ -788,7 +781,7 @@ try
         convertTimeZone(origin_time_stamp, converted_time, *timezone_info.timezone, time_zone_utc);
         // converted_time: 1802216518491045888
 
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             String("select * from default.t_111 where col_timestamp > cast_string_datetime('") + datetime
                 + String("')"),
@@ -844,7 +837,7 @@ try
         convertTimeZoneByOffset(origin_time_stamp, converted_time, false, timezone_info.timezone_offset);
         // converted_time: 0
 
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             String("select * from default.t_111 where col_timestamp > cast_string_datetime('") + datetime
                 + String("')"),
@@ -894,7 +887,7 @@ try
 
     {
         // Greater between Datetime col and Datetime literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             String("select * from default.t_111 where col_datetime > cast_string_datetime('") + datetime + String("')"),
             default_timezone_info);
@@ -942,7 +935,7 @@ try
 
     {
         // Greater between Date col and Datetime literal
-        auto filter = generatePushDownExecutor(
+        auto filter = generatePushDownFilter(
             table_info_json,
             String("select * from default.t_111 where col_date > cast_string_datetime('") + datetime + String("')"),
             default_timezone_info);

@@ -77,8 +77,7 @@ public:
         , bitmap_filter(bitmap_filter_)
     {}
 
-    // Returns <InputStream, is_vector_stream>
-    static std::tuple<SkippableBlockInputStreamPtr, bool> build(
+    static SkippableBlockInputStreamPtr build(
         const BitmapFilterPtr & bitmap_filter,
         std::shared_ptr<ConcatSkippableBlockInputStream<false>> stream,
         const ANNQueryInfoPtr & ann_query_info);

@@ -15,6 +15,7 @@
 #include <Columns/countBytesInFilter.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileSetWithVectorIndexInputStream.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileTiny.h>
+#include <Storages/DeltaMerge/Filter/WithANNQueryInfo.h>
 
 
 namespace DB::DM

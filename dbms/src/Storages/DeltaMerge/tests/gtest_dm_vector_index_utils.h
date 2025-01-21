@@ -150,7 +150,7 @@ public:
         store->write(*db_context, db_context->getSettingsRef(), block);
     }
 
-    void read(const RowKeyRange & range, const PushDownExecutorPtr & filter, const ColumnWithTypeAndName & out)
+    void read(const RowKeyRange & range, const PushDownFilterPtr & filter, const ColumnWithTypeAndName & out)
     {
         auto in = store->read(
             *db_context,

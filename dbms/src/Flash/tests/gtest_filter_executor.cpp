@@ -235,7 +235,7 @@ try
 }
 CATCH
 
-TEST_F(FilterExecutorTestRunner, convertBool)
+TEST_F(FilterExecutorTestRunner, convert_bool)
 try
 {
     {
@@ -282,7 +282,7 @@ try
 }
 CATCH
 
-TEST_F(FilterExecutorTestRunner, PushDownExecutor)
+TEST_F(FilterExecutorTestRunner, PushDownFilter)
 try
 {
     context.mockStorage()->setUseDeltaMerge(true);

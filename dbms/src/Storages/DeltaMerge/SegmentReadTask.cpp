@@ -259,7 +259,7 @@ void SegmentReadTask::initColumnFileDataProvider(const Remote::RNLocalPageCacheG
 void SegmentReadTask::initInputStream(
     const ColumnDefines & columns_to_read,
     UInt64 start_ts,
-    const PushDownExecutorPtr & push_down_executor,
+    const PushDownFilterPtr & push_down_filter,
     ReadMode read_mode,
     size_t expected_block_size,
     bool enable_delta_index_error_fallback)
@@ -267,7 +267,7 @@ void SegmentReadTask::initInputStream(
     if (likely(doInitInputStreamWithErrorFallback(
             columns_to_read,
             start_ts,
-            push_down_executor,
+            push_down_filter,
             read_mode,
             expected_block_size,
             enable_delta_index_error_fallback)))
@@ -282,20 +282,20 @@ void SegmentReadTask::initInputStream(
     {
         cache->setDeltaIndex(read_snapshot->delta->getSharedDeltaIndex());
     }
-    doInitInputStream(columns_to_read, start_ts, push_down_executor, read_mode, expected_block_size);
+    doInitInputStream(columns_to_read, start_ts, push_down_filter, read_mode, expected_block_size);
 }
 
 bool SegmentReadTask::doInitInputStreamWithErrorFallback(
     const ColumnDefines & columns_to_read,
     UInt64 start_ts,
-    const PushDownExecutorPtr & push_down_executor,
+    const PushDownFilterPtr & push_down_filter,
     ReadMode read_mode,
     size_t expected_block_size,
     bool enable_delta_index_error_fallback)
 {
     try
     {
-        doInitInputStream(columns_to_read, start_ts, push_down_executor, read_mode, expected_block_size);
+        doInitInputStream(columns_to_read, start_ts, push_down_filter, read_mode, expected_block_size);
         return true;
     }
     catch (const Exception & e)
@@ -315,7 +315,7 @@ bool SegmentReadTask::doInitInputStreamWithErrorFallback(
 void SegmentReadTask::doInitInputStream(
     const ColumnDefines & columns_to_read,
     UInt64 start_ts,
-    const PushDownExecutorPtr & push_down_executor,
+    const PushDownFilterPtr & push_down_filter,
     ReadMode read_mode,
     size_t expected_block_size)
 {
@@ -332,7 +332,7 @@ void SegmentReadTask::doInitInputStream(
         columns_to_read,
         read_snapshot,
         ranges,
-        push_down_executor,
+        push_down_filter,
         start_ts,
         expected_block_size);
 }

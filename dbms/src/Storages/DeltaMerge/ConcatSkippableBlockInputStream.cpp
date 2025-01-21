@@ -266,12 +266,13 @@ Block ConcatVectorIndexBlockInputStream::read()
     return block;
 }
 
-std::tuple<SkippableBlockInputStreamPtr, bool> ConcatVectorIndexBlockInputStream::build(
+SkippableBlockInputStreamPtr ConcatVectorIndexBlockInputStream::build(
     const BitmapFilterPtr & bitmap_filter,
     std::shared_ptr<ConcatSkippableBlockInputStream<false>> stream,
     const ANNQueryInfoPtr & ann_query_info)
 {
-    assert(ann_query_info != nullptr);
+    if (!ann_query_info)
+        return stream;
     bool has_vector_index_stream = false;
     std::vector<VectorIndexBlockInputStream *> index_streams;
     index_streams.reserve(stream->children.size());
@@ -286,16 +287,13 @@ std::tuple<SkippableBlockInputStreamPtr, bool> ConcatVectorIndexBlockInputStream
         index_streams.push_back(nullptr);
     }
     if (!has_vector_index_stream)
-        return {stream, false};
+        return stream;
 
-    return {
-        std::make_shared<ConcatVectorIndexBlockInputStream>(
-            bitmap_filter,
-            stream,
-            std::move(index_streams),
-            ann_query_info->top_k()),
-        true,
-    };
+    return std::make_shared<ConcatVectorIndexBlockInputStream>(
+        bitmap_filter,
+        stream,
+        std::move(index_streams),
+        ann_query_info->top_k());
 }
 
 } // namespace DB::DM

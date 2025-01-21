@@ -34,7 +34,7 @@
 #include <Operators/UnorderedSourceOp.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/DeltaMergeStore.h>
-#include <Storages/DeltaMerge/Filter/PushDownExecutor.h>
+#include <Storages/DeltaMerge/Filter/PushDownFilter.h>
 #include <Storages/DeltaMerge/Filter/RSOperator.h>
 #include <Storages/DeltaMerge/FilterParser/FilterParser.h>
 #include <Storages/DeltaMerge/ReadThread/UnorderedInputStream.h>
@@ -514,16 +514,9 @@ std::variant<DM::Remote::RNWorkersPtr, DM::SegmentReadTaskPoolPtr> StorageDisagg
 {
     const auto & executor_id = table_scan.getTableScanExecutorID();
 
-    // build the rough set operator
     auto rs_operator = buildRSOperator(db_context, column_defines);
-    // build ANN query info
-    DM::ANNQueryInfoPtr ann_query_info = nullptr;
-    if (table_scan.getANNQueryInfo().query_type() != tipb::ANNQueryType::InvalidQueryType)
-        ann_query_info = std::make_shared<tipb::ANNQueryInfo>(table_scan.getANNQueryInfo());
-    // build push down executor
-    auto push_down_executor = DM::PushDownExecutor::build(
+    auto push_down_filter = DM::PushDownFilter::build(
         rs_operator,
-        ann_query_info,
         table_scan.getColumns(),
         table_scan.getPushedDownFilters(),
         *column_defines,
@@ -533,7 +526,7 @@ std::variant<DM::Remote::RNWorkersPtr, DM::SegmentReadTaskPoolPtr> StorageDisagg
         db_context,
         table_scan.isFastScan(),
         table_scan.keepOrder(),
-        push_down_executor);
+        push_down_filter);
     const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
     const auto enable_read_thread = db_context.getSettingsRef().dt_enable_read_thread;
     LOG_INFO(
@@ -553,7 +546,7 @@ std::variant<DM::Remote::RNWorkersPtr, DM::SegmentReadTaskPoolPtr> StorageDisagg
         return std::make_shared<DM::SegmentReadTaskPool>(
             extra_table_id_index,
             *column_defines,
-            push_down_executor,
+            push_down_filter,
             start_ts,
             db_context.getSettingsRef().max_block_size,
             read_mode,
@@ -573,7 +566,7 @@ std::variant<DM::Remote::RNWorkersPtr, DM::SegmentReadTaskPoolPtr> StorageDisagg
                 .log = log->getChild(executor_id),
                 .columns_to_read = column_defines,
                 .start_ts = start_ts,
-                .push_down_executor = push_down_executor,
+                .push_down_filter = push_down_filter,
                 .read_mode = read_mode,
             },
             num_streams);
