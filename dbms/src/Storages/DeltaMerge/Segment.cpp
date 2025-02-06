@@ -2791,7 +2791,8 @@ SkippableBlockInputStreamPtr Segment::getPlacedStream(
                 rowkey_range,
                 expected_block_size,
                 stable_snap->getDMFilesRows(),
-                dm_context.tracing_id);
+                dm_context.tracing_id,
+                dm_context.delta_merge_v2_batch_size);
         }
         else
         {
@@ -2803,7 +2804,8 @@ SkippableBlockInputStreamPtr Segment::getPlacedStream(
                 rowkey_range,
                 expected_block_size,
                 stable_snap->getDMFilesRows(),
-                dm_context.tracing_id);
+                dm_context.tracing_id,
+                dm_context.delta_merge_v2_batch_size);
         }
     }
     else

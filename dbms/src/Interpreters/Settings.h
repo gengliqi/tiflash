@@ -337,7 +337,8 @@ struct Settings
     M(SettingUInt64, join_v2_probe_prefetch_step, 16, "hash join v2 probe prefetch length")                                                                                                                                             \
     M(SettingUInt64, join_v2_probe_insert_batch_size, 128, "hash join v2 probe insert batch size")                                                                                                                                      \
     M(SettingBool, join_v2_enable_tagged_pointer, true, "hash join v2 enable tagged pointer")                                                                                                                                           \
-    M(SettingBool, enable_delta_merge_v2, true, "")
+    M(SettingBool, enable_delta_merge_v2, false, "") \
+    M(SettingUInt64, delta_merge_v2_batch_size, 1024, "")
 
 
 // clang-format on

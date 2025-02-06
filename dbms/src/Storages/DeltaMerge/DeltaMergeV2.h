@@ -88,8 +88,8 @@ private:
     size_t cur_stable_block_pos = 0;
     UInt64 cur_stable_block_start_offset = 0;
 
-    size_t cur_stable_block_range_begin;
-    size_t cur_stable_block_range_end;
+    size_t cur_stable_block_range_begin = 0;
+    size_t cur_stable_block_range_end = 0;
 
     bool stable_done = false;
     bool delta_done = false;
@@ -112,8 +112,10 @@ private:
     std::vector<UInt32> delta_row_ids;
 
     const String tracing_id;
+    const size_t insert_batch_size;
 
     bool use_cur_stable_block_directly = false;
+    size_t insert_rows = 0;
     std::vector<Block> insert_stable_blocks;
     std::vector<std::vector<const IColumn *>> insert_column_ptrs;
     std::vector<std::pair<size_t, size_t>> insert_offset_and_limits;
@@ -130,7 +132,8 @@ public:
         const RowKeyRange rowkey_range_,
         size_t max_block_size_,
         UInt64 stable_rows_,
-        const String & tracing_id_)
+        const String & tracing_id_,
+        size_t insert_batch_size_)
         : stable_input_stream(stable_input_stream_)
         , delta_value_reader(delta_value_reader_)
         , delta_index_it(delta_index_start_)
@@ -141,6 +144,7 @@ public:
         , max_block_size(max_block_size_)
         , stable_rows(stable_rows_)
         , tracing_id(tracing_id_)
+        , insert_batch_size(insert_batch_size_)
     {
         header = stable_input_stream->getHeader();
         num_columns = header.columns();
@@ -270,16 +274,16 @@ private:
                     if (delta_done)
                         break;
                     else
-                        next<true, false>(columns, limit);
+                        next<true, false>(limit);
                 }
                 else
                 {
                     if (delta_done)
-                        next<false, true>(columns, limit);
+                        next<false, true>(limit);
                     else
-                        next<false, false>(columns, limit);
+                        next<false, false>(limit);
                 }
-                if unlikely (insert_offset_and_limits.size() >= 1024)
+                if unlikely (insert_offset_and_limits.size() >= insert_batch_size)
                     flushInsertBuffer(columns);
             }
 
@@ -344,13 +348,13 @@ private:
         }
     }
     template <bool c_stable_done, bool c_delta_done>
-    inline void next(MutableColumns & output_columns, size_t & output_write_limit)
+    inline void next(size_t & output_write_limit)
     {
         if constexpr (!c_stable_done)
         {
             if (use_stable_rows)
             {
-                writeFromStable<c_delta_done>(output_columns, output_write_limit);
+                writeFromStable<c_delta_done>(output_write_limit);
                 return;
             }
         }
@@ -359,7 +363,7 @@ private:
         {
             if (use_delta_rows)
             {
-                writeInsertFromDelta(output_columns, output_write_limit);
+                writeInsertFromDelta(output_write_limit);
             }
             else
             {
@@ -373,7 +377,7 @@ private:
                     // Insert.
                     use_delta_offset = delta_index_it.getValue();
                     use_delta_rows = delta_index_it.getCount();
-                    writeInsertFromDelta(output_columns, output_write_limit);
+                    writeInsertFromDelta(output_write_limit);
                 }
             }
 
@@ -440,7 +444,7 @@ private:
     }
 
     template <bool c_delta_done>
-    void writeFromStable(MutableColumns & output_columns, size_t & output_write_limit)
+    void writeFromStable(size_t & output_write_limit)
     {
         // First let's do skip caused by stable_ignore.
         while (stable_ignore > 0)
@@ -489,7 +493,7 @@ private:
         {
             if (curStableBlockRemaining())
             {
-                writeCurStableBlock(output_columns, output_write_limit);
+                writeCurStableBlock(output_write_limit);
                 continue;
             }
 
@@ -525,10 +529,8 @@ private:
         }
     }
 
-    inline void writeCurStableBlock(MutableColumns & output_columns, size_t & output_write_limit)
+    inline void writeCurStableBlock(size_t & output_write_limit)
     {
-        auto output_offset = output_columns.at(0)->size();
-
         size_t copy_rows = std::min(output_write_limit, use_stable_rows);
         copy_rows = std::min(copy_rows, cur_stable_block_rows - cur_stable_block_pos);
         auto offset = cur_stable_block_pos;
@@ -543,37 +545,29 @@ private:
         size_t final_offset = std::max(offset, cur_stable_block_range_begin);
         size_t final_limit = std::min(offset + limit, cur_stable_block_range_end) - final_offset;
 
-        if (!output_offset && !final_offset && final_limit == cur_stable_block_rows)
+        if (!final_offset && final_limit == cur_stable_block_rows)
         {
-            RUNTIME_CHECK_MSG(
-                insert_offset_and_limits.empty(),
-                "insert_offset_and_limits does not empty, size {}",
-                insert_offset_and_limits.size());
-
+            output_write_limit = 0;
+            if (!insert_offset_and_limits.empty())
+                return;
             // Simply return columns in current stable block.
             //for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
             //    output_columns[column_id] = (*std::move(cur_stable_block_columns[column_id])).mutate();
 
             // Let's return current stable block directly. No more expending.
-            output_write_limit = 0;
+
             use_cur_stable_block_directly = true;
         }
         else if (final_limit)
         {
-            // Prevent frequently reallocation.
-            if (output_columns[0]->empty())
-            {
-                for (size_t column_id = 0; column_id < num_columns; ++column_id)
-                    output_columns[column_id]->reserve(max_block_size);
-            }
-
             insert_offset_and_limits.emplace_back(final_offset, final_limit);
             for (size_t column_id = 0; column_id < num_columns; ++column_id)
             {
                 insert_column_ptrs[column_id].emplace_back(cur_stable_block.getByPosition(column_id).column.get());
             }
 
-            output_write_limit -= std::min(final_limit, output_write_limit);
+            insert_rows += final_limit;
+            output_write_limit -= final_limit;
         }
 
         if constexpr (need_row_id)
@@ -585,16 +579,9 @@ private:
         use_stable_rows -= copy_rows;
     }
 
-    inline void writeInsertFromDelta(MutableColumns & output_columns, size_t & output_write_limit)
+    inline void writeInsertFromDelta(size_t & output_write_limit)
     {
         auto write_rows = std::min(output_write_limit, use_delta_rows);
-
-        // Prevent frequently reallocation.
-        if (output_columns[0]->empty())
-        {
-            for (size_t column_id = 0; column_id < num_columns; ++column_id)
-                output_columns[column_id]->reserve(max_block_size);
-        }
 
         // Note that the rows between [use_delta_offset, use_delta_offset + write_rows) are guaranteed sorted,
         // otherwise we won't read them in the same range.
@@ -624,6 +611,7 @@ private:
                 mem_table_columns_data_cache);
         }
 
+        insert_rows += actual_write;
         output_write_limit -= actual_write;
         use_delta_offset += write_rows;
         use_delta_rows -= write_rows;
@@ -656,8 +644,12 @@ private:
     inline void flushInsertBuffer(MutableColumns & output_columns)
     {
         for (size_t i = 0; i < num_columns; ++i)
+        {
+            output_columns[i]->reserve(insert_rows);
             output_columns[i]->insertManyRangeFrom(insert_column_ptrs[i], insert_offset_and_limits);
+        }
 
+        insert_rows = 0;
         insert_stable_blocks.clear();
         insert_offset_and_limits.clear();
         for (size_t i = 0; i < num_columns; ++i)

@@ -100,6 +100,7 @@ struct DMContext : private boost::noncopyable
     const bool enable_relevant_place;
     const bool enable_skippable_place;
     const bool enable_delta_merge_v2;
+    const size_t delta_merge_v2_batch_size;
 
     String tracing_id;
 
