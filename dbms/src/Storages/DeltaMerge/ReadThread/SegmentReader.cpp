@@ -97,7 +97,7 @@ private:
         }
         catch (std::exception & e)
         {
-            LOG_ERROR(log, "ErrMsg: {}", e.what());
+            LOG_ERROR(log, "ErrMsg: {}, name: {}", e.what(), typeid(e).name());
             if (merged_task != nullptr)
             {
                 merged_task->setException(DB::Exception(e.what()));
