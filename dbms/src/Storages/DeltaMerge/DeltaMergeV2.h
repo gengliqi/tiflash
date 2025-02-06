@@ -549,7 +549,6 @@ private:
                 insert_offset_and_limits.empty(),
                 "insert_offset_and_limits does not empty, size {}",
                 insert_offset_and_limits.size());
-            RUNTIME_CHECK(insert_stable_blocks.empty());
 
             // Simply return columns in current stable block.
             //for (size_t column_id = 0; column_id < output_columns.size(); ++column_id)
