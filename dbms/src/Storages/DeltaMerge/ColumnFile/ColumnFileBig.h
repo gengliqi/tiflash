@@ -19,6 +19,7 @@
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/Remote/Serializer_fwd.h>
 #include <Storages/DeltaMerge/SkippableBlockInputStream.h>
+#include "Common/Exception.h"
 
 namespace DB::DM
 {
@@ -202,7 +203,7 @@ public:
 
     bool fillColumnsDataCache(std::vector<Columns> &, size_t) override
     {
-        throw Exception("fillColumnsDataCache is not implemented for ColumnFileBig", ErrorCodes::NOT_IMPLEMENTED);
+        RUNTIME_CHECK_MSG(false, "fillColumnsDataCache is not implemented for ColumnFileBig");
     }
 
     Block readNextBlock() override;
