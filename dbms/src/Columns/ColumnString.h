@@ -215,6 +215,26 @@ public:
             insertFromImpl(src, position);
     }
 
+    void insertManyRangeFrom(
+        const std::vector<const IColumn *> & column_ptrs,
+        const std::vector<std::pair<size_t, size_t>> & offsets_and_limits) override
+    {
+        RUNTIME_CHECK_MSG(
+            column_ptrs.size() == offsets_and_limits.size(),
+            "column_ptrs size {} != offsets_and_limits size {}",
+            column_ptrs.size(),
+            offsets_and_limits.size());
+        size_t sz = column_ptrs.size();
+        for (size_t i = 0; i < sz; ++i)
+        {
+            size_t start = offsets_and_limits[i].first;
+            size_t length = offsets_and_limits[i].second;
+            const auto * src = static_cast<const ColumnString *>(column_ptrs[i]);
+            for (size_t j = 0; j < length; ++j)
+                insertFromImpl(*src, start + j);
+        }
+    }
+
     void insertSelectiveFrom(const IColumn & src_, const Offsets & selective_offsets) override
     {
         const auto & src = static_cast<const ColumnString &>(src_);
