@@ -415,7 +415,8 @@ private:
         if (cur_stable_block.columns() != 0 && cur_stable_block_pos < cur_stable_block_rows)
             return true;
 
-        insert_stable_blocks.emplace_back(cur_stable_block);
+        if (!insert_offset_and_limits.empty())
+            insert_stable_blocks.emplace_back(cur_stable_block);
         cur_stable_block_rows = 0;
         cur_stable_block_pos = 0;
         cur_stable_block_start_offset = 0;
