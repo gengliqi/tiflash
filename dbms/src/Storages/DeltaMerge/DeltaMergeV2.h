@@ -544,7 +544,10 @@ private:
         //auto [final_offset, final_limit]
         //    = RowKeyFilter::getPosRangeOfSorted(rowkey_range, cur_stable_block_columns[0], offset, limit);
         size_t final_offset = std::max(offset, cur_stable_block_range_begin);
-        size_t final_limit = std::min(offset + limit, cur_stable_block_range_end) - final_offset;
+        size_t final_end = std::min(offset + limit, cur_stable_block_range_end);
+        size_t final_limit = 0;
+        if (final_end > final_offset)
+            final_limit = final_end - final_offset;
 
         if (!final_offset && final_limit == cur_stable_block_rows)
         {
