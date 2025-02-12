@@ -14,12 +14,12 @@
 
 #pragma once
 
+#include <Common/Exception.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFile.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFilePersisted.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/Remote/Serializer_fwd.h>
 #include <Storages/DeltaMerge/SkippableBlockInputStream.h>
-#include <Common/Exception.h>
 
 namespace DB::DM
 {

@@ -16,6 +16,7 @@
 
 #include <Interpreters/Context.h>
 #include <Storages/DeltaMerge/DMContext.h>
+#include <Storages/DeltaMerge/Delta/DeltaValueSpace.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/File/DMFilePackFilterResult.h>
 #include <Storages/DeltaMerge/File/DMFilePackFilter_fwd.h>
@@ -126,6 +127,14 @@ public:
         const DMFiles & dmfiles,
         const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts);
+
+    static std::pair<std::vector<Range>, DMFilePackFilterResults> getSkippedRangeAndFilterForBitmapNormal(
+        const DMContext & dm_context,
+        const DMFiles & dmfiles,
+        const DMFilePackFilterResults & pack_filter_results,
+        UInt64 start_ts,
+        const DeltaIndexIterator & delta_index_begin,
+        const DeltaIndexIterator & delta_index_end);
 
 private:
     DMFilePackFilter(

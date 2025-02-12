@@ -164,7 +164,7 @@ public:
         last_value_ref = last_value.toRowKeyValueRef();
     }
 
-    String getName() const override { return "DeltaMerge"; }
+    String getName() const override { return "DeltaMergeV2"; }
     Block getHeader() const override { return header; }
 
     bool getSkippedRows(size_t & skip_rows) override
