@@ -418,9 +418,9 @@ std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFileP
         for (size_t pack_id = 0; pack_id < pack_stats.size(); ++pack_id)
         {
             const auto & pack_stat = pack_stats[pack_id];
-            while (preceded_rows >= delta_index_it.getSid())
+            while (preceded_rows >= delta_index_it.getSid() && delta_index_it != delta_index_end)
             {
-                RUNTIME_CHECK(delta_index_it != delta_index_end);
+                RUNTIME_CHECK(!delta_index_it.isDelete());
                 ++delta_index_it;
             }
             preceded_rows += pack_stat.rows;
@@ -429,7 +429,7 @@ std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFileP
 
             if (handle_res[pack_id] == RSResult::Some || pack_stat.not_clean > 0
                 || pack_filter->getMaxVersion(dmfile, pack_id, file_provider, dm_context.scan_context) > start_ts
-                || preceded_rows > delta_index_it.getSid())
+                || (preceded_rows > delta_index_it.getSid() && delta_index_it != delta_index_end))
             {
                 // `not_clean > 0` means there are more than one version for some rowkeys in this pack
                 // `pack.max_version > start_ts` means some rows will be filtered by MVCC reading
