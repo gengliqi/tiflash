@@ -1175,13 +1175,19 @@ std::pair<std::vector<DMFilePackFilter::Range>, BlockInputStreamPtr> Segment::ge
     auto read_info = getReadInfo(dm_context, columns_to_read, segment_snap, read_ranges, read_tag, start_ts);
 
     const auto & dmfiles = segment_snap->stable->getDMFiles();
-    auto [skipped_ranges, new_pack_filter_results] = DMFilePackFilter::getSkippedRangeAndFilterForBitmapNormal(
-        dm_context,
-        dmfiles,
-        pack_filter_results,
-        start_ts,
-        read_info.index_begin,
-        read_info.index_end);
+    std::vector<DMFilePackFilter::Range> skipped_ranges;
+    DMFilePackFilterResults new_pack_filter_results;
+    if (dm_context.enable_delta_merge_skippable)
+    {
+        std::tie(skipped_ranges, new_pack_filter_results) = DMFilePackFilter::getSkippedRangeAndFilterForBitmapNormal(
+            dm_context,
+            dmfiles,
+            pack_filter_results,
+            start_ts,
+            read_info.index_begin,
+            read_info.index_end);
+    }
+
 
     BlockInputStreamPtr stream = getPlacedStream(
         dm_context,
@@ -1193,7 +1199,7 @@ std::pair<std::vector<DMFilePackFilter::Range>, BlockInputStreamPtr> Segment::ge
         read_info.index_end,
         expected_block_size,
         read_tag,
-        new_pack_filter_results,
+        dm_context.enable_delta_merge_skippable ? new_pack_filter_results : pack_filter_results,
         start_ts,
         true,
         true);
