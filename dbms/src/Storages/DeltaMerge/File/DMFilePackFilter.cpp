@@ -441,7 +441,7 @@ std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFileP
             }
             if (delta_index_it != delta_index_end)
             {
-                if (preceded_rows > delta_index_it.getSid())
+                if (preceded_rows >= delta_index_it.getSid())
                     continue;
                 if (delta_index_it.isDelete() && preceded_rows - pack_stat.rows < prev_sid)
                     continue;
