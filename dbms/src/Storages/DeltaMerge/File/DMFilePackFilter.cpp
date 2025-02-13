@@ -404,6 +404,7 @@ std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFileP
     // The number of rows in the current range.
     size_t rows = 0;
     UInt32 preceded_rows = 0;
+    UInt64 prev_sid = 0;
 
     auto delta_index_it = delta_index_begin;
     auto file_provider = dm_context.global_context.getFileProvider();
@@ -420,21 +421,30 @@ std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFileP
             const auto & pack_stat = pack_stats[pack_id];
             while (preceded_rows >= delta_index_it.getSid() && delta_index_it != delta_index_end)
             {
-                RUNTIME_CHECK(!delta_index_it.isDelete());
+                prev_sid = delta_index_it.getSid();
+                if (delta_index_it.isDelete())
+                    prev_sid += delta_index_it.getCount();
                 ++delta_index_it;
             }
+
             preceded_rows += pack_stat.rows;
             if (!pack_res[pack_id].isUse())
                 continue;
 
             if (handle_res[pack_id] == RSResult::Some || pack_stat.not_clean > 0
-                || pack_filter->getMaxVersion(dmfile, pack_id, file_provider, dm_context.scan_context) > start_ts
-                || (preceded_rows > delta_index_it.getSid() && delta_index_it != delta_index_end))
+                || pack_filter->getMaxVersion(dmfile, pack_id, file_provider, dm_context.scan_context) > start_ts)
             {
                 // `not_clean > 0` means there are more than one version for some rowkeys in this pack
                 // `pack.max_version > start_ts` means some rows will be filtered by MVCC reading
                 // We need to read this pack to do RowKey or MVCC filter.
                 continue;
+            }
+            if (delta_index_it != delta_index_end)
+            {
+                if (preceded_rows > delta_index_it.getSid())
+                    continue;
+                if (delta_index_it.isDelete() && preceded_rows - pack_stat.rows < prev_sid)
+                    continue;
             }
 
             if unlikely (!new_pack_filter)
