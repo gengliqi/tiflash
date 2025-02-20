@@ -253,15 +253,6 @@ public:
         UInt64 start_ts = std::numeric_limits<UInt64>::max(),
         size_t expected_block_size = DEFAULT_BLOCK_SIZE);
 
-    std::pair<std::vector<DMFilePackFilter::Range>, BlockInputStreamPtr> getInputStreamModeForBitmap(
-        const DMContext & dm_context,
-        const ColumnDefines & columns_to_read,
-        const SegmentSnapshotPtr & segment_snap,
-        const RowKeyRanges & read_ranges,
-        const DMFilePackFilterResults & pack_filter_results,
-        UInt64 start_ts,
-        size_t expected_block_size);
-
     /**
      * Return a sorted stream which is suitable for exporting data. Unlike `getInputStream`, deletes will be preserved.
      * But outdated versions (exceeds GC safe point) will still be removed.
