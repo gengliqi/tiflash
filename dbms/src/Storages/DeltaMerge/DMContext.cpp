@@ -68,7 +68,7 @@ DMContext::DMContext(
     , enable_skippable_place(settings.dt_enable_skippable_place)
     , enable_delta_merge_v2(settings.enable_delta_merge_v2)
     , delta_merge_v2_batch_size(settings.delta_merge_v2_batch_size)
-    , enable_delta_merge_skippable(settings.enable_delta_merge_skippable)
+    , enable_bitmap_filter_skip_pack(settings.dt_enable_bitmap_filter_skip_pack)
     , tracing_id(tracing_id_)
     , scan_context(scan_context_ ? scan_context_ : std::make_shared<ScanContext>())
 {}
