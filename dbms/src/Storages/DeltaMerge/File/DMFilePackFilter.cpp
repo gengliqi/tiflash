@@ -380,7 +380,7 @@ std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFileP
     return {skipped_ranges, new_pack_filter_results};
 }
 
-std::tuple<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFilePackFilter::
+std::pair<std::vector<DMFilePackFilter::Range>, DMFilePackFilterResults> DMFilePackFilter::
     getSkippedRangeAndFilterForBitmapNormal(
         const DMContext & dm_context,
         const DMFiles & dmfiles,
