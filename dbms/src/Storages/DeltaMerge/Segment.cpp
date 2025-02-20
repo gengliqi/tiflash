@@ -3168,7 +3168,7 @@ BitmapFilterPtr Segment::buildBitmapFilterNormal(
     const auto & dmfiles = segment_snap->stable->getDMFiles();
     std::vector<DMFilePackFilter::Range> skipped_ranges;
     DMFilePackFilterResults new_pack_filter_results;
-    if (dm_context.enable_delta_merge_skippable)
+    if (dm_context.enable_bitmap_filter_skip_pack)
     {
         std::tie(skipped_ranges, new_pack_filter_results)
             = DMFilePackFilter::getSkippedRangeAndFilterForBitmapNormal(
@@ -3190,7 +3190,7 @@ BitmapFilterPtr Segment::buildBitmapFilterNormal(
         read_info.index_end,
         expected_block_size,
         read_tag,
-        dm_context.enable_delta_merge_skippable ? new_pack_filter_results : pack_filter_results,
+        dm_context.enable_bitmap_filter_skip_pack ? new_pack_filter_results : pack_filter_results,
         start_ts,
         true,
         true);

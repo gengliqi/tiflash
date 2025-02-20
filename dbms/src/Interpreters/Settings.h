@@ -339,7 +339,7 @@ struct Settings
     M(SettingBool, join_v2_enable_tagged_pointer, true, "hash join v2 enable tagged pointer")                                                                                                                                           \
     M(SettingBool, enable_delta_merge_v2, false, "") \
     M(SettingUInt64, delta_merge_v2_batch_size, 1024, "") \
-    M(SettingBool, enable_delta_merge_skippable, false, "")
+    M(SettingBool, dt_enable_bitmap_filter_skip_pack, false, "")
 
 // clang-format on
 #define DECLARE(TYPE, NAME, DEFAULT, DESCRIPTION) TYPE NAME{DEFAULT};
