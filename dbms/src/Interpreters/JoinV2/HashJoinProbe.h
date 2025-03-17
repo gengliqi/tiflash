@@ -206,7 +206,7 @@ private:
         if constexpr (late_materialization)
         {
             size_t idx = 0;
-            for (auto [_, is_nullable] : row_layout.raw_required_key_column_indexes)
+            for (auto [_, is_nullable] : row_layout.raw_key_column_indexes)
             {
                 IColumn * column = added_columns[idx].get();
                 if (has_null_map && is_nullable)
@@ -214,21 +214,21 @@ private:
                 column->deserializeAndInsertFromPos(wd.insert_batch, true);
                 ++idx;
             }
-            for (size_t i = 0; i < row_layout.other_required_count_for_other_condition; ++i)
+            for (size_t i = 0; i < row_layout.other_column_count_for_other_condition; ++i)
                 added_columns[idx++]->deserializeAndInsertFromPos(wd.insert_batch, true);
 
             wd.row_ptrs_for_lm.insert(wd.insert_batch.begin(), wd.insert_batch.end());
         }
         else
         {
-            for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+            for (auto [column_index, is_nullable] : row_layout.raw_key_column_indexes)
             {
                 IColumn * column = added_columns[column_index].get();
                 if (has_null_map && is_nullable)
                     column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
                 column->deserializeAndInsertFromPos(wd.insert_batch, true);
             }
-            for (auto [column_index, _] : row_layout.other_required_column_indexes)
+            for (auto [column_index, _] : row_layout.other_column_indexes)
                 added_columns[column_index]->deserializeAndInsertFromPos(wd.insert_batch, true);
         }
 
@@ -237,7 +237,7 @@ private:
             if constexpr (late_materialization)
             {
                 size_t idx = 0;
-                for (auto [_, is_nullable] : row_layout.raw_required_key_column_indexes)
+                for (auto [_, is_nullable] : row_layout.raw_key_column_indexes)
                 {
                     IColumn * column = added_columns[idx].get();
                     if (has_null_map && is_nullable)
@@ -245,19 +245,19 @@ private:
                     column->flushNTAlignBuffer();
                     ++idx;
                 }
-                for (size_t i = 0; i < row_layout.other_required_count_for_other_condition; ++i)
+                for (size_t i = 0; i < row_layout.other_column_count_for_other_condition; ++i)
                     added_columns[idx++]->flushNTAlignBuffer();
             }
             else
             {
-                for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+                for (auto [column_index, is_nullable] : row_layout.raw_key_column_indexes)
                 {
                     IColumn * column = added_columns[column_index].get();
                     if (has_null_map && is_nullable)
                         column = &static_cast<ColumnNullable &>(*added_columns[column_index]).getNestedColumn();
                     column->flushNTAlignBuffer();
                 }
-                for (auto [column_index, _] : row_layout.other_required_column_indexes)
+                for (auto [column_index, _] : row_layout.other_column_indexes)
                     added_columns[column_index]->flushNTAlignBuffer();
             }
         }
@@ -270,7 +270,7 @@ private:
     {
         if constexpr (has_null_map)
         {
-            for (auto [column_index, is_nullable] : row_layout.raw_required_key_column_indexes)
+            for (auto [column_index, is_nullable] : row_layout.raw_key_column_indexes)
             {
                 if (is_nullable)
                 {
@@ -295,5 +295,11 @@ private:
     const HashJoinPointerTable & pointer_table;
     const HashJoinRowLayout & row_layout;
 };
+
+const IColumn::Offsets BASE_OFFSETS = [] {
+    IColumn::Offsets offsets(DEFAULT_BLOCK_SIZE);
+    std::iota(offsets.begin(), offsets.end(), 0ULL);
+    return offsets;
+}();
 
 } // namespace DB

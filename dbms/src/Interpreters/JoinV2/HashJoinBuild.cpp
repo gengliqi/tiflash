@@ -38,7 +38,7 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
     static_assert(sizeof(HashValueType) <= sizeof(decltype(wd.hashes)::value_type));
 
     auto & key_getter = *static_cast<KeyGetterType *>(wd.key_getter.get());
-    key_getter.reset(key_columns, row_layout.raw_required_key_column_indexes.size());
+    key_getter.reset(key_columns, row_layout.raw_key_column_indexes.size());
 
     wd.row_sizes.clear();
     wd.row_sizes.resize_fill(rows, row_layout.other_column_fixed_size);
@@ -52,7 +52,7 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
     wd.partition_last_row_index.clear();
     wd.partition_last_row_index.resize_fill(part_count, -1);
 
-    for (const auto & [index, is_fixed_size] : row_layout.other_required_column_indexes)
+    for (const auto & [index, is_fixed_size] : row_layout.other_column_indexes)
     {
         if (!is_fixed_size)
             block.getByPosition(index).column->countSerializeByteSize(wd.row_sizes);
@@ -179,7 +179,7 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             key_getter.serializeJoinKey(key, ptr);
             ptr += key_getter.getJoinKeyByteSize(key);
         }
-        for (const auto & [index, _] : row_layout.other_required_column_indexes)
+        for (const auto & [index, _] : row_layout.other_column_indexes)
         {
             if constexpr (has_null_map && !need_record_null_rows)
                 block.getByPosition(index).column->serializeToPos(wd.row_ptrs, start, end - start, true);

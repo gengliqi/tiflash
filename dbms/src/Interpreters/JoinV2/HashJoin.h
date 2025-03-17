@@ -120,6 +120,10 @@ private:
     /// Block with columns from left-side and right-side table.
     Block all_sample_block_pruned;
 
+    /// Maps each column in all_sample_block_pruned to its index in output_block_after_finalize.
+    // <= 0 means the column is not in the output_block_after_finalize.
+    std::vector<ssize_t> output_column_indexes;
+
     NamesAndTypes output_columns;
     Block output_block;
     NamesAndTypes output_columns_after_finalize;
@@ -149,7 +153,6 @@ private:
     const JoinProfileInfoPtr profile_info = std::make_shared<JoinProfileInfo>();
 
     /// For other condition
-    const IColumn::Offsets base_offsets;
     BoolVec left_required_flag_for_other_condition;
 };
 

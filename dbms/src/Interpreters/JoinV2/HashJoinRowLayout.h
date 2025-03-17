@@ -79,14 +79,14 @@ struct alignas(CPU_CACHE_LINE_SIZE) MultipleRowContainer
 /// 3. Null join key row(For right anti/outer join): <All Required Columns>
 struct HashJoinRowLayout
 {
-    /// The raw join key are the same as the original data.
-    /// raw_required_key_column_index + is_nullable
-    std::vector<std::pair<size_t, bool>> raw_required_key_column_indexes;
-    /// other_required_column_index + is_fixed_size
-    std::vector<std::pair<size_t, bool>> other_required_column_indexes;
-    /// Number of columns at the beginning of `other_required_column_indexes`
+    /// The raw join key column are the same as the original data.
+    /// raw_key_column_index in HashJoin::right_sample_block_pruned + is_nullable.
+    std::vector<std::pair<size_t, bool>> raw_key_column_indexes;
+    /// other_column_index in HashJoin::right_sample_block_pruned + is_fixed_size
+    std::vector<std::pair<size_t, bool>> other_column_indexes;
+    /// Number of columns at the beginning of `output_other_column_indexes`
     /// that are used for evaluating the join other condition.
-    size_t other_required_count_for_other_condition = 0;
+    size_t other_column_count_for_other_condition = 0;
 
     size_t key_column_fixed_size = 0;
     size_t other_column_fixed_size = 0;

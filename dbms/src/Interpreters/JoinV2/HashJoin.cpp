@@ -97,15 +97,6 @@ StringCollatorKind getStringCollatorKind(const TiDB::TiDBCollators & collators)
     }
 }
 
-IColumn::Offsets initBaseOffsets(bool has_other_condition, size_t max_block_size)
-{
-    if (!has_other_condition)
-        return {};
-    IColumn::Offsets offset(max_block_size);
-    std::iota(offset.begin(), offset.end(), 0ULL);
-    return offset;
-}
-
 } // namespace
 
 HashJoin::HashJoin(
@@ -129,7 +120,6 @@ HashJoin::HashJoin(
     , log(Logger::get(join_req_id))
     , has_other_condition(non_equal_conditions.other_cond_expr != nullptr)
     , output_columns(output_columns_)
-    , base_offsets(initBaseOffsets(has_other_condition, settings.max_block_size))
 {
     RUNTIME_ASSERT(key_names_left.size() == key_names_right.size());
     output_block = Block(output_columns);
@@ -220,7 +210,7 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
                 {
                     raw_required_key_flag[i] = true;
                     raw_required_key_index_set.insert(index);
-                    row_layout.raw_required_key_column_indexes.push_back({index, key_columns[i].is_nullable});
+                    row_layout.raw_key_column_indexes.push_back({index, key_columns[i].is_nullable});
                     continue;
                 }
             }
@@ -240,7 +230,7 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
         key_names_right.swap(new_key_names_right);
     }
 
-    row_layout.other_required_count_for_other_condition = 0;
+    row_layout.other_column_count_for_other_condition = 0;
     size_t columns = right_sample_block_pruned.columns();
     BoolVec required_columns_flag(columns);
     for (size_t i = 0; i < columns; ++i)
@@ -253,16 +243,16 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
         auto & c = right_sample_block_pruned.safeGetByPosition(i);
         if (required_columns_names_set_for_other_condition.contains(c.name))
         {
-            ++row_layout.other_required_count_for_other_condition;
+            ++row_layout.other_column_count_for_other_condition;
             required_columns_flag[i] = true;
             if (c.column->valuesHaveFixedSize())
             {
                 row_layout.other_column_fixed_size += c.column->sizeOfValueIfFixed();
-                row_layout.other_required_column_indexes.push_back({i, true});
+                row_layout.other_column_indexes.push_back({i, true});
             }
             else
             {
-                row_layout.other_required_column_indexes.push_back({i, false});
+                row_layout.other_column_indexes.push_back({i, false});
             }
         }
     }
@@ -274,21 +264,23 @@ void HashJoin::initRowLayoutAndHashJoinMethod()
         if (c.column->valuesHaveFixedSize())
         {
             row_layout.other_column_fixed_size += c.column->sizeOfValueIfFixed();
-            row_layout.other_required_column_indexes.push_back({i, true});
+            row_layout.other_column_indexes.push_back({i, true});
         }
         else
         {
-            row_layout.other_required_column_indexes.push_back({i, false});
+            row_layout.other_column_indexes.push_back({i, false});
         }
+        RUNTIME_CHECK_MSG(
+            output_block_after_finalize.has(c.name),
+            "output_block_after_finalize does not contain {}",
+            c.name);
     }
-    RUNTIME_CHECK(
-        row_layout.raw_required_key_column_indexes.size() + row_layout.other_required_column_indexes.size() == columns);
+    RUNTIME_CHECK(row_layout.raw_key_column_indexes.size() + row_layout.other_column_indexes.size() == columns);
 }
 
 void HashJoin::initBuild(const Block & sample_block, size_t build_concurrency_)
 {
     RUNTIME_CHECK_MSG(!build_initialized, "Logical error: Join build has been initialized");
-    build_initialized = true;
     RUNTIME_CHECK_MSG(isFinalize(), "join should be finalized first");
 
     right_sample_block = materializeBlock(sample_block);
@@ -313,13 +305,14 @@ void HashJoin::initBuild(const Block & sample_block, size_t build_concurrency_)
         build_workers_data[i].key_getter = createHashJoinKeyGetter(method, collators);
     for (size_t i = 0; i < JOIN_BUILD_PARTITION_COUNT + 1; ++i)
         multi_row_containers.emplace_back(std::make_unique<MultipleRowContainer>());
+
+    build_initialized = true;
 }
 
 void HashJoin::initProbe(const Block & sample_block, size_t probe_concurrency_)
 {
     RUNTIME_CHECK_MSG(build_initialized, "join build should be initialized first");
     RUNTIME_CHECK_MSG(!probe_initialized, "Logical error: Join probe has been initialized");
-    probe_initialized = true;
     RUNTIME_CHECK_MSG(isFinalize(), "join should be finalized first");
 
     left_sample_block = materializeBlock(sample_block);
@@ -347,6 +340,18 @@ void HashJoin::initProbe(const Block & sample_block, size_t probe_concurrency_)
 
         all_sample_block_pruned.insert(std::move(new_column));
     }
+
+    size_t all_columns = all_sample_block_pruned.columns();
+    output_column_indexes.reserve(all_columns);
+    for (size_t i = 0; i < all_columns; ++i)
+    {
+        ssize_t output_index = -1;
+        const auto & name = all_sample_block_pruned.safeGetByPosition(i).name;
+        if (output_block_after_finalize.has(name))
+            output_index = output_block_after_finalize.getPositionByName(name);
+        output_column_indexes.push_back(output_index);
+    }
+
     if (has_other_condition)
     {
         left_required_flag_for_other_condition.resize(left_sample_block_pruned.columns());
@@ -366,6 +371,8 @@ void HashJoin::initProbe(const Block & sample_block, size_t probe_concurrency_)
     probe_concurrency = probe_concurrency_;
     active_probe_worker = probe_concurrency;
     probe_workers_data.resize(probe_concurrency);
+
+    probe_initialized = true;
 }
 
 bool HashJoin::finishOneBuildRow(size_t stream_index)
@@ -437,7 +444,7 @@ void HashJoin::workAfterBuildRowFinish()
     if (has_other_condition)
     {
         late_materialization
-            = row_layout.other_required_count_for_other_condition < row_layout.other_required_column_indexes.size();
+            = row_layout.other_column_count_for_other_condition < row_layout.other_column_indexes.size();
     }
     join_probe_helper = std::make_unique<JoinProbeBlockHelper>(this, late_materialization);
 }
@@ -598,14 +605,18 @@ void HashJoin::removeUselessColumn(Block & block) const
 
 Block HashJoin::removeUselessColumnForOutput(const Block & block) const
 {
+    RUNTIME_CHECK(probe_initialized);
+    RUNTIME_CHECK(block.columns() == all_sample_block_pruned.columns());
     // remove useless columns and adjust the order of columns
-    Block projected_block;
-    for (const auto & name_and_type : output_columns_after_finalize)
+    Block output_block = output_block_after_finalize.cloneEmpty();
+    size_t columns = block.columns();
+    for (size_t i = 0; i < columns; ++i)
     {
-        const auto & column = block.getByName(name_and_type.name);
-        projected_block.insert(std::move(column));
+        if (output_column_indexes[i] == -1)
+            continue;
+        output_block.safeGetByPosition(output_column_indexes[i]) = block.safeGetByPosition(i);
     }
-    return projected_block;
+    return output_block;
 }
 
 void HashJoin::finalize(const Names & parent_require)

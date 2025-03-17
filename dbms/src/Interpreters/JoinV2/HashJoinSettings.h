@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <Core/Defines.h>
 #include <Interpreters/Settings.h>
 
 namespace DB
@@ -22,7 +23,8 @@ namespace DB
 struct HashJoinSettings
 {
     explicit HashJoinSettings(const Settings & settings)
-        : max_block_size(std::min(settings.max_block_size, settings.join_v2_max_block_size))
+        : max_block_size(
+            std::min(DEFAULT_BLOCK_SIZE, std::min(settings.max_block_size, settings.join_v2_max_block_size)))
         , probe_enable_prefetch_threshold(settings.join_v2_probe_enable_prefetch_threshold)
         , probe_prefetch_step(settings.join_v2_probe_prefetch_step)
         , probe_insert_batch_size(settings.join_v2_probe_insert_batch_size)
