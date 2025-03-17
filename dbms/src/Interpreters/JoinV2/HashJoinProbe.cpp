@@ -699,7 +699,7 @@ Block JoinProbeBlockHelper::handleOtherConditions(JoinProbeContext & context, Jo
             {
                 auto other_column_indexes_start = row_layout.other_column_count_for_other_condition;
                 auto other_column_indexes_size = row_layout.other_column_indexes.size();
-                // Sanity check: all columns after other_column_indexes_start should be used for wd.result_block_for_other_condition.
+                // Sanity check: all columns after other_column_indexes_start should be included in wd.result_block_for_other_condition.
                 for (size_t i = other_column_indexes_start; i < other_column_indexes_size; ++i)
                 {
                     size_t column_index = row_layout.other_column_indexes[i].first;
