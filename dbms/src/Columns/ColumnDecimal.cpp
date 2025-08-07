@@ -443,23 +443,46 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
 #ifdef TIFLASH_ENABLE_AVX_SUPPORT
     if (use_nt_align_buffer)
     {
-        if constexpr ((FULL_VECTOR_SIZE_AVX2 % sizeof(T) == 0))
+        if constexpr (FULL_VECTOR_SIZE_AVX2 % sizeof(T) == 0)
         {
-            bool is_aligned = reinterpret_cast<std::uintptr_t>(&data[prev_size]) % FULL_VECTOR_SIZE_AVX2 == 0;
-            if likely (is_aligned)
+            size_t start_addr_is_aligned = reinterpret_cast<std::uintptr_t>(&data[0]) % FULL_VECTOR_SIZE_AVX2 == 0;
+            size_t align_gap
+                = FULL_VECTOR_SIZE_AVX2 - reinterpret_cast<std::uintptr_t>(&data[prev_size]) % FULL_VECTOR_SIZE_AVX2;
+            align_gap = align_gap == FULL_VECTOR_SIZE_AVX2 ? 0 : align_gap;
+            if likely (start_addr_is_aligned && align_gap % sizeof(T) == 0)
             {
-                if (align_buffer_ptr == nullptr)
+                if unlikely (align_buffer_ptr == nullptr)
                     align_buffer_ptr = std::make_unique<ColumnNTAlignBufferAVX2>();
 
                 NTAlignBufferAVX2 & buffer = align_buffer_ptr->getBuffer();
                 UInt8 buffer_size = align_buffer_ptr->getSize();
                 SCOPE_EXIT({ align_buffer_ptr->setSize(buffer_size); });
 
-                constexpr size_t avx2_width = FULL_VECTOR_SIZE_AVX2 / sizeof(T);
                 size_t i = 0;
-                if unlikely (buffer_size != 0)
+                if unlikely (align_gap > 0)
                 {
-                    size_t count = std::min(size, (FULL_VECTOR_SIZE_AVX2 - buffer_size) / sizeof(T));
+                    RUNTIME_CHECK_MSG(
+                        buffer_size == 0,
+                        "align_gap {} > 0 but align_buffer_size {} != 0",
+                        align_gap,
+                        buffer_size);
+                    size_t count = std::min(size, align_gap / sizeof(T));
+                    data.resize(prev_size + count, FULL_VECTOR_SIZE_AVX2);
+                    for (i < count; ++i)
+                    {
+                        tiflash_compiler_builtin_memcpy(&data[prev_size + i], pos[i], sizeof(T));
+                        pos[i] += sizeof(T);
+                    }
+                    if (i >= size)
+                        return;
+
+                    prev_size += count;
+                }
+
+                constexpr size_t avx2_width = FULL_VECTOR_SIZE_AVX2 / sizeof(T);
+                if (buffer_size != 0)
+                {
+                    size_t count = std::min(size - i, (FULL_VECTOR_SIZE_AVX2 - buffer_size) / sizeof(T));
                     for (; i < count; ++i)
                     {
                         tiflash_compiler_builtin_memcpy(&buffer.data[buffer_size], pos[i], sizeof(T));
