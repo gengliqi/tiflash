@@ -468,7 +468,7 @@ void ColumnDecimal<T>::deserializeAndInsertFromPos(
                         buffer_size);
                     size_t count = std::min(size, align_gap / sizeof(T));
                     data.resize(prev_size + count, FULL_VECTOR_SIZE_AVX2);
-                    for (i < count; ++i)
+                    for (; i < count; ++i)
                     {
                         tiflash_compiler_builtin_memcpy(&data[prev_size + i], pos[i], sizeof(T));
                         pos[i] += sizeof(T);
