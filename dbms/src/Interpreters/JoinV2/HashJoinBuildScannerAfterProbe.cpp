@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include <Interpreters/JoinV2/HashJoin.h>
-#include <Interpreters/JoinV2/HashJoinProbeBuildScanner.h>
+#include <Interpreters/JoinV2/HashJoinBuildScannerAfterProbe.h>
 #include <Interpreters/NullableUtils.h>
 #include <Parsers/ASTTablesInSelectQuery.h>
 
@@ -22,7 +22,7 @@ namespace DB
 
 using enum ASTTableJoin::Kind;
 
-JoinProbeBuildScanner::JoinProbeBuildScanner(HashJoin * join)
+JoinBuildScannerAfterProbe::JoinBuildScannerAfterProbe(HashJoin * join)
     : join(join)
 {
     join_key_getter = createHashJoinKeyGetter(join->method, join->collators);
@@ -68,9 +68,10 @@ JoinProbeBuildScanner::JoinProbeBuildScanner(HashJoin * join)
         RUNTIME_CHECK(need_row_data || need_other_block_data);
     }
 
-#define SET_FUNC_PTR(KeyGetter, JoinType, need_row_data, need_other_block_data)                                      \
-    {                                                                                                                \
-        scan_func_ptr = &JoinProbeBuildScanner::scanImpl<KeyGetter, JoinType, need_row_data, need_other_block_data>; \
+#define SET_FUNC_PTR(KeyGetter, JoinType, need_row_data, need_other_block_data)                                 \
+    {                                                                                                           \
+        scan_func_ptr                                                                                           \
+            = &JoinBuildScannerAfterProbe::scanImpl<KeyGetter, JoinType, need_row_data, need_other_block_data>; \
     }
 
 #define CALL2(KeyGetter, JoinType)                         \
@@ -120,13 +121,13 @@ JoinProbeBuildScanner::JoinProbeBuildScanner(HashJoin * join)
 #undef SET_FUNC_PTR
 }
 
-Block JoinProbeBuildScanner::scan(JoinProbeWorkerData & wd)
+Block JoinBuildScannerAfterProbe::scan(JoinProbeWorkerData & wd)
 {
     return (this->*scan_func_ptr)(wd);
 }
 
 template <typename KeyGetter, ASTTableJoin::Kind kind, bool need_row_data, bool need_other_block_data>
-Block JoinProbeBuildScanner::scanImpl(JoinProbeWorkerData & wd)
+Block JoinBuildScannerAfterProbe::scanImpl(JoinProbeWorkerData & wd)
 {
     static_assert(need_row_data || need_other_block_data);
 
@@ -207,18 +208,16 @@ Block JoinProbeBuildScanner::scanImpl(JoinProbeWorkerData & wd)
                 container = multi_row_containers[wd.current_scan_table_index]->getScanNext();
             if (container == nullptr)
             {
+                std::unique_lock lock(scan_build_lock);
+                for (size_t i = 0; i < JOIN_BUILD_PARTITION_COUNT; ++i)
                 {
-                    std::unique_lock lock(scan_build_lock);
-                    for (size_t i = 0; i < JOIN_BUILD_PARTITION_COUNT; ++i)
+                    scan_build_index = (scan_build_index + i) % JOIN_BUILD_PARTITION_COUNT;
+                    container = multi_row_containers[scan_build_index]->getScanNext();
+                    if (container != nullptr)
                     {
-                        scan_build_index = (scan_build_index + i) % JOIN_BUILD_PARTITION_COUNT;
-                        container = multi_row_containers[scan_build_index]->getScanNext();
-                        if (container != nullptr)
-                        {
-                            wd.current_scan_table_index = scan_build_index;
-                            scan_build_index = (scan_build_index + 1) % JOIN_BUILD_PARTITION_COUNT;
-                            break;
-                        }
+                        wd.current_scan_table_index = scan_build_index;
+                        scan_build_index = (scan_build_index + 1) % JOIN_BUILD_PARTITION_COUNT;
+                        break;
                     }
                 }
             }
@@ -229,6 +228,7 @@ Block JoinProbeBuildScanner::scanImpl(JoinProbeWorkerData & wd)
             }
         }
         size_t rows = container->size();
+        size_t original_index = index;
         while (index < rows)
         {
             RowPtr ptr = container->getRowPtr(index);
@@ -281,7 +281,7 @@ Block JoinProbeBuildScanner::scanImpl(JoinProbeWorkerData & wd)
             wd.selective_offsets.clear();
         }
 
-        scan_size += rows - index;
+        scan_size += index - original_index;
 
         if (index >= rows)
         {
@@ -331,7 +331,7 @@ Block JoinProbeBuildScanner::scanImpl(JoinProbeWorkerData & wd)
 }
 
 template <bool last_flush>
-void JoinProbeBuildScanner::flushInsertBatch(JoinProbeWorkerData & wd) const
+void JoinBuildScannerAfterProbe::flushInsertBatch(JoinProbeWorkerData & wd) const
 {
     const size_t left_columns = join->left_sample_block_pruned.columns();
     for (auto [column_index, is_nullable] : join->row_layout.raw_key_column_indexes)
@@ -389,7 +389,7 @@ void JoinProbeBuildScanner::flushInsertBatch(JoinProbeWorkerData & wd) const
     wd.insert_batch.clear();
 }
 
-void JoinProbeBuildScanner::fillNullMapWithZero(JoinProbeWorkerData & wd) const
+void JoinBuildScannerAfterProbe::fillNullMapWithZero(JoinProbeWorkerData & wd) const
 {
     size_t left_columns = join->left_sample_block_pruned.columns();
     for (auto [column_index, is_nullable] : join->row_layout.raw_key_column_indexes)
