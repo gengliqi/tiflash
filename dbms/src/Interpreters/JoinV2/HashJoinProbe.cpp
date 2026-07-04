@@ -867,6 +867,12 @@ void JoinProbeHelper::probeFillColumnsPrefetch(
             RowPtr next_ptr = getNextRowPtr(ptr);
             state->ptr = next_ptr;
 
+            if constexpr (!Adder::break_on_first_match)
+            {
+                if (next_ptr)
+                    PREFETCH_READ(next_ptr);
+            }
+
             const auto & key2 = key_getter.deserializeJoinKey(ptr + key_offset);
             bool key_is_equal = joinKeyIsEqual(key_getter, state->key, key2, state->hash, ptr);
             collision += !key_is_equal;
@@ -905,7 +911,8 @@ void JoinProbeHelper::probeFillColumnsPrefetch(
 
             if (next_ptr)
             {
-                PREFETCH_READ(next_ptr);
+                if constexpr (Adder::break_on_first_match)
+                    PREFETCH_READ(next_ptr);
                 ++k;
                 continue;
             }
