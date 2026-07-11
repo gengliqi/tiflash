@@ -85,16 +85,17 @@ inline bool containOtherTag(RowPtr ptr, UInt16 other_tag)
 
 inline void updateCommonPrefix(uintptr_t ptr, uintptr_t & common_ptr, Int8 & common_len)
 {
+    constexpr unsigned width = std::numeric_limits<uintptr_t>::digits;
+    constexpr uintptr_t all_ones = std::numeric_limits<uintptr_t>::max();
     if (common_len < 0)
     {
         common_ptr = ptr;
-        common_len = sizeof(uintptr_t) * 8;
+        common_len = width;
         return;
     }
-    constexpr uintptr_t all_ones = std::numeric_limits<uintptr_t>::max();
     auto diff = ptr ^ common_ptr;
     common_len = std::min(common_len, static_cast<Int8>(std::countl_zero(diff)));
-    uintptr_t prefix_mask = ~(all_ones >> common_len);
+    uintptr_t prefix_mask = common_len == width ? all_ones : ~(all_ones >> common_len);
     common_ptr = ptr & prefix_mask;
 }
 
