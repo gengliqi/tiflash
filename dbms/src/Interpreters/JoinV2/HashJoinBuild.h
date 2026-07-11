@@ -67,6 +67,8 @@ struct alignas(CPU_CACHE_LINE_SIZE) JoinBuildWorkerData
     size_t all_size = 0;
 
     bool enable_tagged_pointer = true;
+    uintptr_t common_prefix_pointer = 0;
+    Int8 common_prefix_pointer_len = -1;
 
     /// Used for checking if late materialization will be enabled.
     size_t lm_row_size = 0;

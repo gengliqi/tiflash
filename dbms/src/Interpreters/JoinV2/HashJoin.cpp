@@ -28,6 +28,7 @@
 #include <ext/scope_guard.h>
 #include <magic_enum.hpp>
 #include <memory>
+#include "Interpreters/JoinV2/HashJoinRowLayout.h"
 
 namespace DB
 {
@@ -467,8 +468,26 @@ void HashJoin::workAfterBuildRowFinish()
         all_build_row_count += build_workers_data[i].row_count;
 
     bool enable_tagged_pointer = settings.enable_tagged_pointer;
+    uintptr_t common_prefix_pointer = 0;
+    Int8 common_prefix_pointer_len = -1;
     for (size_t i = 0; i < build_concurrency; ++i)
-        enable_tagged_pointer &= build_workers_data[i].enable_tagged_pointer;
+    {
+        auto & wd = build_workers_data[i];
+        enable_tagged_pointer &= wd.enable_tagged_pointer;
+        if (wd.common_prefix_pointer_len != -1)
+        {
+            if (common_prefix_pointer_len == -1)
+            {
+                common_prefix_pointer = wd.common_prefix_pointer;
+                common_prefix_pointer_len = wd.common_prefix_pointer_len;
+            }
+            else
+            {
+                common_prefix_pointer_len = std::min(common_prefix_pointer_len, wd.common_prefix_pointer_len);
+                updateCommonPrefix(wd.common_prefix_pointer, common_prefix_pointer, common_prefix_pointer_len);
+            }
+        }
+    }
 
     pointer_table.init(
         method,
@@ -506,13 +525,15 @@ void HashJoin::workAfterBuildRowFinish()
     LOG_INFO(
         log,
         "finish build row and allocate pointer table, rows {}, pointer table size {}, enable (prefetch {}, tagged "
-        "pointer {}, lm {}(avg size {}))",
+        "pointer {}, lm {}(avg size {})), common_prefix_pointer(len {}, val {})",
         all_build_row_count,
         pointer_table.getPointerTableSize(),
         pointer_table.enableProbePrefetch(),
         pointer_table.enableTaggedPointer(),
         late_materialization,
-        avg_lm_row_size);
+        avg_lm_row_size,
+        common_prefix_pointer_len,
+        common_prefix_pointer);
 }
 
 void HashJoin::buildRowFromBlock(const Block & b, size_t stream_index)
