@@ -135,9 +135,9 @@ void NO_INLINE insertBlockToRowContainersTypeImpl(
             auto & container = partition_column_row[i];
             container.data.resize(wd.partition_row_sizes[i], CPU_CACHE_LINE_SIZE);
             wd.enable_tagged_pointer &= isRowPtrTagZero(container.data.data());
-            wd.enable_tagged_pointer &= isRowPtrTagZero(container.data.data() + wd.partition_row_sizes[i]);
+            wd.enable_tagged_pointer &= isRowPtrTagZero(container.data.data() + wd.partition_row_sizes[i] - 1);
             char * start_data = container.data.data();
-            char * end_data = start_data + wd.partition_row_sizes[i];
+            char * end_data = start_data + wd.partition_row_sizes[i] - 1;
             updateCommonPrefix(reinterpret_cast<uintptr_t>(start_data), wd.common_prefix_pointer, wd.common_prefix_pointer_len);
             updateCommonPrefix(reinterpret_cast<uintptr_t>(end_data), wd.common_prefix_pointer, wd.common_prefix_pointer_len);
             
